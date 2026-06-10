@@ -41,6 +41,8 @@ This repository is configured for a single Railway service via [railway.toml](/U
 
 Because the frontend and backend manifests live under `frontend/` and `backend/` instead of the repo root, Railway also needs the root [railpack.json](/Users/sebastienchristian/d/CODE%20LAB/marawa/railpack.json) file so Railpack installs both Node.js and Python before running the build command.
 
+Railway and Railpack already execute the configured commands in a shell, so the commands in `railway.toml` should not be wrapped in `sh -lc`.
+
 ### Recommended Railway setup
 
 1. Create one Railway service from this repository.
