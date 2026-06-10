@@ -39,6 +39,8 @@ The backend stores:
 
 This repository is configured for a single Railway service via [railway.toml](/Users/sebastienchristian/d/CODE%20LAB/marawa/railway.toml). The build step installs backend dependencies, builds the Vite frontend, and the FastAPI app serves the resulting `frontend/dist` files in production.
 
+Because the frontend and backend manifests live under `frontend/` and `backend/` instead of the repo root, Railway also needs the root [railpack.json](/Users/sebastienchristian/d/CODE%20LAB/marawa/railpack.json) file so Railpack installs both Node.js and Python before running the build command.
+
 ### Recommended Railway setup
 
 1. Create one Railway service from this repository.
