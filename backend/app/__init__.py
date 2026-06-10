@@ -1,0 +1,2 @@
+"""Marawa backend application package."""
+
