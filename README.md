@@ -43,7 +43,7 @@ Because the frontend and backend manifests live under `frontend/` and `backend/`
 
 Railway and Railpack already execute the configured commands in a shell, so the commands in `railway.toml` should not be wrapped in `sh -lc`.
 
-Railpack's Python runtime also expects a root [requirements.txt](/Users/sebastienchristian/d/CODE%20LAB/marawa/requirements.txt) file. In this repository it points to `./backend` so the FastAPI, Uvicorn, and related backend dependencies are installed into the deploy image used at runtime.
+Railpack's Python runtime also expects a root [requirements.txt](/Users/sebastienchristian/d/CODE%20LAB/marawa/requirements.txt) file. In this repository that file mirrors `backend/pyproject.toml`'s main dependency list so Railpack can install FastAPI, Uvicorn, and the related backend packages directly into the deploy image.
 
 ### Recommended Railway setup
 
