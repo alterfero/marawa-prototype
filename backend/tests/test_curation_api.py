@@ -126,6 +126,95 @@ def test_merge_tropes_moves_assignments_deduplicates_links_and_queues_rebuild(tm
     assert deleted_source_response.status_code == 404
 
 
+def test_validate_merges_applies_batch_and_queues_one_rebuild(tmp_path) -> None:
+    with build_client(tmp_path, "curation-validate-batch.db") as client:
+        upload_dataset(
+            client,
+            [
+                make_row(title="Story One", tropes="§§ first trope variant"),
+                make_row(title="Story Two", tropes="§§ first trope\n§§ first trope variant"),
+                make_row(title="Story Three", tropes="§§ second trope variant"),
+                make_row(title="Story Four", tropes="§§ second trope\n§§ second trope variant"),
+            ],
+        )
+        process_next_job(client)
+
+        stories = client.get("/api/stories").json()["items"]
+        story_ids = [story["id"] for story in stories]
+        story_tropes = {
+            story_id: client.get(f"/api/stories/{story_id}/tropes").json()["items"] for story_id in story_ids
+        }
+
+        first_variant_id = next(
+            trope["id"]
+            for trope in story_tropes[story_ids[0]]
+            if trope["text"] == "first trope variant"
+        )
+        first_target_id = next(
+            trope["id"]
+            for trope in story_tropes[story_ids[1]]
+            if trope["text"] == "first trope"
+        )
+        second_variant_id = next(
+            trope["id"]
+            for trope in story_tropes[story_ids[2]]
+            if trope["text"] == "second trope variant"
+        )
+        second_target_id = next(
+            trope["id"]
+            for trope in story_tropes[story_ids[3]]
+            if trope["text"] == "second trope"
+        )
+
+        validate_response = client.post(
+            "/api/curation/validate-merges",
+            json={
+                "merges": [
+                    {
+                        "source_trope_id": first_variant_id,
+                        "target_trope_id": first_target_id,
+                    },
+                    {
+                        "source_trope_id": second_variant_id,
+                        "target_trope_id": second_target_id,
+                    },
+                ]
+            },
+        )
+
+        story_details = [client.get(f"/api/stories/{story_id}").json() for story_id in story_ids]
+        jobs = client.get("/api/jobs").json()
+
+    assert validate_response.status_code == 200
+    body = validate_response.json()
+    assert body["merge_count"] == 2
+    assert body["affected_story_count"] == 4
+    assert body["dataset_version"] == 2
+    assert body["queued_job"]["status"] == "queued"
+    assert body["queued_job"]["job_type"] == "full_rebuild"
+    assert len(body["applied_merges"]) == 2
+    assert {merge["source_trope_id"] for merge in body["applied_merges"]} == {first_variant_id, second_variant_id}
+    assert len([job for job in jobs if job["job_type"] == "full_rebuild" and job["status"] == "queued"]) == 1
+
+    first_story_detail, second_story_detail, third_story_detail, fourth_story_detail = story_details
+
+    assert first_story_detail["version"] == 2
+    assert first_story_detail["fields"][TROPE_FIELD] == "§§ first trope"
+    assert [item["text"] for item in first_story_detail["tropes"]] == ["first trope"]
+
+    assert second_story_detail["version"] == 2
+    assert second_story_detail["fields"][TROPE_FIELD] == "§§ first trope"
+    assert [item["text"] for item in second_story_detail["tropes"]] == ["first trope"]
+
+    assert third_story_detail["version"] == 2
+    assert third_story_detail["fields"][TROPE_FIELD] == "§§ second trope"
+    assert [item["text"] for item in third_story_detail["tropes"]] == ["second trope"]
+
+    assert fourth_story_detail["version"] == 2
+    assert fourth_story_detail["fields"][TROPE_FIELD] == "§§ second trope"
+    assert [item["text"] for item in fourth_story_detail["tropes"]] == ["second trope"]
+
+
 def test_delete_trope_requires_explicit_remove_from_all_stories_and_queues_rebuild(tmp_path) -> None:
     with build_client(tmp_path, "curation-delete.db") as client:
         upload_dataset(client, [make_row(title="Story One", tropes="§§ first trope")])

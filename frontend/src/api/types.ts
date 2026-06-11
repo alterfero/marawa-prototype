@@ -145,6 +145,20 @@ export interface MergeTropesResponse {
   queued_job: JobSummary;
 }
 
+export interface AppliedMergeSummary {
+  source_trope_id: string;
+  target_trope_id: string;
+  affected_story_count: number;
+}
+
+export interface ValidateTropesResponse {
+  applied_merges: AppliedMergeSummary[];
+  merge_count: number;
+  affected_story_count: number;
+  dataset_version: number;
+  queued_job: JobSummary;
+}
+
 export interface DeleteTropeResponse {
   deleted_trope_id: string;
   affected_story_count: number;

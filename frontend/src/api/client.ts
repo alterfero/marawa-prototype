@@ -13,6 +13,7 @@ import type {
   StoryListResponse,
   StoryTropeMutationResponse,
   StoryTropesResponse,
+  ValidateTropesResponse,
   SearchResponse,
   TropeSequenceGraphResponse,
   TropeDetail,
@@ -225,6 +226,21 @@ export function mergeTropes(payload: {
   target_trope_id: string;
 }): Promise<MergeTropesResponse> {
   return request<MergeTropesResponse>("/curation/merge-tropes", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function validateTropeMerges(payload: {
+  merges: Array<{
+    source_trope_id: string;
+    target_trope_id: string;
+  }>;
+}): Promise<ValidateTropesResponse> {
+  return request<ValidateTropesResponse>("/curation/validate-merges", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

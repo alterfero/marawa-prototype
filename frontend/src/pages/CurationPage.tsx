@@ -6,7 +6,7 @@ import {
   getErrorMessage,
   getJob,
   getNearDuplicateTropes,
-  mergeTropes,
+  validateTropeMerges,
 } from "../api/client";
 import { TropeCard } from "../components/TropeCard";
 import type {
@@ -24,6 +24,17 @@ interface PageNotice {
   tone: "error" | "success";
   title: string;
   body?: string;
+}
+
+interface PendingMergeDecision {
+  pair_id: string;
+  source_trope_id: string;
+  source_text: string;
+  source_story_count: number;
+  target_trope_id: string;
+  target_text: string;
+  target_story_count: number;
+  similarity_score: number;
 }
 
 type PairDirection = "forward" | "reverse";
@@ -70,11 +81,26 @@ function directionalPair(pair: NearDuplicateTropePair, direction: PairDirection)
   };
 }
 
+function buildPendingMergeDecision(pair: NearDuplicateTropePair, direction: PairDirection): PendingMergeDecision {
+  const { source, target } = directionalPair(pair, direction);
+  return {
+    pair_id: pairKey(pair),
+    source_trope_id: source.id,
+    source_text: source.text,
+    source_story_count: source.story_count,
+    target_trope_id: target.id,
+    target_text: target.text,
+    target_story_count: target.story_count,
+    similarity_score: pair.similarity_score,
+  };
+}
+
 export function CurationPage() {
   const [pairs, setPairs] = useState<NearDuplicateTropeListResponse | null>(null);
   const [unusedQuery, setUnusedQuery] = useState("");
   const [unusedTropes, setUnusedTropes] = useState<CanonicalTropeListItem[]>([]);
   const [pairDirections, setPairDirections] = useState<Record<string, PairDirection>>({});
+  const [pendingMerges, setPendingMerges] = useState<PendingMergeDecision[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<PageNotice | null>(null);
@@ -96,10 +122,12 @@ export function CurationPage() {
     setUnusedTropes(result);
   }
 
-  async function refresh() {
+  async function refresh(options?: { clearNotice?: boolean }) {
     try {
       setLoading(true);
-      setNotice(null);
+      if (options?.clearNotice !== false) {
+        setNotice(null);
+      }
       await Promise.all([loadPairs(), loadUnusedTropes()]);
     } catch (caughtError) {
       setNotice({
@@ -180,13 +208,39 @@ export function CurationPage() {
     };
   }, [currentJobId]);
 
-  async function handleMerge(pair: NearDuplicateTropePair) {
+  function handleStageMerge(pair: NearDuplicateTropePair) {
     const direction = pairDirections[pairKey(pair)] || "forward";
-    const { source, target } = directionalPair(pair, direction);
-    const affectedStoryCount = source.story_count;
+    const nextDecision = buildPendingMergeDecision(pair, direction);
+
+    setPendingMerges((current) => {
+      if (current.some((merge) => merge.pair_id === nextDecision.pair_id)) {
+        return current;
+      }
+      if (current.some((merge) => merge.source_trope_id === nextDecision.source_trope_id)) {
+        return current;
+      }
+      return [...current, nextDecision];
+    });
+    setNotice(null);
+  }
+
+  function handleRemovePendingMerge(pairId: string) {
+    setPendingMerges((current) => current.filter((merge) => merge.pair_id !== pairId));
+    setNotice(null);
+  }
+
+  function handleClearPendingMerges() {
+    setPendingMerges([]);
+    setNotice(null);
+  }
+
+  async function handleValidatePendingMerges() {
+    if (!pendingMerges.length) {
+      return;
+    }
 
     const confirmed = window.confirm(
-      `Merge "${source.text}" into "${target.text}"?\n\nThis will update ${affectedStoryCount} stor${affectedStoryCount === 1 ? "y" : "ies"} in the active dataset and queue a rebuild job.`,
+      `Validate ${pendingMerges.length} merge decision${pendingMerges.length === 1 ? "" : "s"}?\n\nThis will apply the selected merges in one batch and queue a single rebuild job.`,
     );
     if (!confirmed) {
       return;
@@ -195,23 +249,26 @@ export function CurationPage() {
     try {
       setBusy(true);
       setNotice(null);
-      const result = await mergeTropes({
-        source_trope_id: source.id,
-        target_trope_id: target.id,
+      const result = await validateTropeMerges({
+        merges: pendingMerges.map((merge) => ({
+          source_trope_id: merge.source_trope_id,
+          target_trope_id: merge.target_trope_id,
+        })),
       });
       setCurrentJobId(result.queued_job.id);
       setJobDetail(null);
       setJobError(null);
+      setPendingMerges([]);
       setNotice({
         tone: "success",
-        title: "Merge queued",
-        body: `Merged ${source.text} into ${target.text}. ${result.affected_story_count} affected stories will be rebuilt by job ${result.queued_job.id}.`,
+        title: "Merge batch queued",
+        body: `Validated ${result.merge_count} merge decision${result.merge_count === 1 ? "" : "s"} affecting ${result.affected_story_count} stor${result.affected_story_count === 1 ? "y" : "ies"}. Rebuild job ${result.queued_job.id} is now ${result.queued_job.status}.`,
       });
-      await refresh();
+      await refresh({ clearNotice: false });
     } catch (caughtError) {
       setNotice({
         tone: "error",
-        title: "Merge failed",
+        title: "Merge validation failed",
         body: getErrorMessage(caughtError),
       });
     } finally {
@@ -237,7 +294,7 @@ export function CurationPage() {
         title: "Unused trope deleted",
         body: `Deleted ${trope.text}. Job ${result.queued_job.id} is ${result.queued_job.status}.`,
       });
-      await refresh();
+      await refresh({ clearNotice: false });
     } catch (caughtError) {
       setNotice({
         tone: "error",
@@ -252,6 +309,11 @@ export function CurationPage() {
   const effectiveJob = jobDetail ?? null;
   const selectedPairCount = pairs?.items.length ?? 0;
   const unusedCountLabel = useMemo(() => `${unusedTropes.length} unused`, [unusedTropes.length]);
+  const pendingSourceIds = useMemo(() => new Set(pendingMerges.map((merge) => merge.source_trope_id)), [pendingMerges]);
+  const pendingStoryCount = useMemo(
+    () => pendingMerges.reduce((total, merge) => total + merge.source_story_count, 0),
+    [pendingMerges],
+  );
 
   return (
     <div className="page-stack">
@@ -288,7 +350,7 @@ export function CurationPage() {
         <div className="panel-header">
           <div>
             <h2>Latest curation job</h2>
-            <p className="muted">Job status is refreshed automatically after merge or delete actions.</p>
+            <p className="muted">Job status is refreshed automatically after validating merge batches or delete actions.</p>
           </div>
           <span className="pill">{formatJobStatus(effectiveJob)}</span>
         </div>
@@ -313,6 +375,65 @@ export function CurationPage() {
         {jobError ? <p className="notice-inline">Could not refresh job status: {jobError}</p> : null}
       </section>
 
+      <section className="panel">
+        <div className="panel-header">
+          <div>
+            <h2>Pending merge batch</h2>
+            <p className="muted">Stage merge decisions here, then validate once to trigger a single rebuild.</p>
+          </div>
+          <span className="pill">{pendingMerges.length} pending</span>
+        </div>
+
+        {pendingMerges.length ? (
+          <>
+            <div className="stack">
+              {pendingMerges.map((merge) => (
+                <article className="card" key={merge.pair_id}>
+                  <div className="panel-header">
+                    <div>
+                      <h3>
+                        Merge {merge.source_text} into {merge.target_text}
+                      </h3>
+                      <p className="muted">
+                        Similarity {merge.similarity_score.toFixed(2)} · {merge.source_story_count} stor
+                        {merge.source_story_count === 1 ? "y" : "ies"} currently use the source trope.
+                      </p>
+                    </div>
+                    <button
+                      className="button button-ghost"
+                      disabled={busy}
+                      onClick={() => handleRemovePendingMerge(merge.pair_id)}
+                      type="button"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+
+            <div className="button-row wrap-row">
+              <p className="muted">
+                Up to {pendingStoryCount} stor{pendingStoryCount === 1 ? "y is" : "ies are"} touched by the staged sources.
+              </p>
+              <div className="button-row wrap-row">
+                <button className="button button-ghost" disabled={busy} onClick={handleClearPendingMerges} type="button">
+                  Clear batch
+                </button>
+                <button className="button" disabled={busy} onClick={() => void handleValidatePendingMerges()} type="button">
+                  Validate all merges
+                </button>
+              </div>
+            </div>
+          </>
+        ) : (
+          <p className="muted">
+            No merge decisions are staged yet. Add near-duplicate pairs below, then validate the whole batch when you are
+            ready.
+          </p>
+        )}
+      </section>
+
       <section className="two-column-layout">
         <div className="panel">
           <div className="panel-header">
@@ -331,6 +452,9 @@ export function CurationPage() {
                 const direction = pairDirections[pairKey(pair)] || "forward";
                 const { source, target } = directionalPair(pair, direction);
                 const affectedStoryCount = source.story_count;
+                const pendingDecision = pendingMerges.find((merge) => merge.pair_id === pairKey(pair));
+                const sourceAlreadyPending = pendingSourceIds.has(source.id);
+                const canStagePair = !pendingDecision && !sourceAlreadyPending;
 
                 return (
                   <article className="card" key={pairKey(pair)}>
@@ -341,7 +465,7 @@ export function CurationPage() {
                       </div>
                       <button
                         className="button button-ghost"
-                        disabled={busy}
+                        disabled={busy || Boolean(pendingDecision)}
                         onClick={() =>
                           setPairDirections((current) => ({
                             ...current,
@@ -374,13 +498,29 @@ export function CurationPage() {
                     </div>
 
                     <p className="muted">
-                      If merged in this direction, {affectedStoryCount} stor{affectedStoryCount === 1 ? "y" : "ies"} will be updated before the rebuild job runs.
+                      If validated in this direction, {affectedStoryCount} stor{affectedStoryCount === 1 ? "y" : "ies"} will be updated before the rebuild job runs.
                     </p>
 
                     <div className="button-row">
-                      <button className="button" disabled={busy} onClick={() => void handleMerge(pair)} type="button">
-                        Merge source into target
-                      </button>
+                      {pendingDecision ? (
+                        <button
+                          className="button button-ghost"
+                          disabled={busy}
+                          onClick={() => handleRemovePendingMerge(pendingDecision.pair_id)}
+                          type="button"
+                        >
+                          Remove from batch
+                        </button>
+                      ) : (
+                        <button
+                          className="button"
+                          disabled={busy || !canStagePair}
+                          onClick={() => handleStageMerge(pair)}
+                          type="button"
+                        >
+                          {sourceAlreadyPending ? "Source already in batch" : "Add merge to batch"}
+                        </button>
+                      )}
                     </div>
                   </article>
                 );

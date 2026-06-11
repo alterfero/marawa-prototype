@@ -10,6 +10,7 @@ from app.services.curation import (
     CurationValidationError,
     list_near_duplicate_tropes,
     merge_tropes,
+    validate_trope_merges,
 )
 
 
@@ -47,6 +48,24 @@ class MergeTropesRequest(BaseModel):
 class MergeTropesResponse(BaseModel):
     source_trope_id: str
     target_trope_id: str
+    affected_story_count: int
+    dataset_version: int
+    queued_job: JobSummaryResponse
+
+
+class ValidateTropesRequest(BaseModel):
+    merges: list[MergeTropesRequest]
+
+
+class AppliedMergeSummaryResponse(BaseModel):
+    source_trope_id: str
+    target_trope_id: str
+    affected_story_count: int
+
+
+class ValidateTropesResponse(BaseModel):
+    applied_merges: list[AppliedMergeSummaryResponse]
+    merge_count: int
     affected_story_count: int
     dataset_version: int
     queued_job: JobSummaryResponse
@@ -104,6 +123,41 @@ def merge_canonical_tropes(
     return MergeTropesResponse(
         source_trope_id=summary["source_trope_id"],
         target_trope_id=summary["target_trope_id"],
+        affected_story_count=summary["affected_story_count"],
+        dataset_version=dataset.version,
+        queued_job=_queued_job_summary(job),
+    )
+
+
+@router.post("/validate-merges", response_model=ValidateTropesResponse)
+def validate_canonical_trope_merges(
+    payload: ValidateTropesRequest,
+    session: Session = Depends(get_db_session),
+) -> ValidateTropesResponse:
+    try:
+        dataset, summary, job = validate_trope_merges(
+            session,
+            merges=[
+                {
+                    "source_trope_id": merge.source_trope_id,
+                    "target_trope_id": merge.target_trope_id,
+                }
+                for merge in payload.merges
+            ],
+        )
+    except Exception as exc:
+        _raise_curation_error(exc)
+
+    return ValidateTropesResponse(
+        applied_merges=[
+            AppliedMergeSummaryResponse(
+                source_trope_id=merge["source_trope_id"],
+                target_trope_id=merge["target_trope_id"],
+                affected_story_count=merge["affected_story_count"],
+            )
+            for merge in summary["applied_merges"]
+        ],
+        merge_count=summary["merge_count"],
         affected_story_count=summary["affected_story_count"],
         dataset_version=dataset.version,
         queued_job=_queued_job_summary(job),

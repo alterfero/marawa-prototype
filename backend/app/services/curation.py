@@ -215,89 +215,87 @@ def merge_tropes(
     source_trope_id: str,
     target_trope_id: str,
 ) -> tuple[Dataset, dict, object]:
-    active_dataset = _require_active_dataset(session)
-    if source_trope_id == target_trope_id:
-        raise CurationValidationError("Source and target trope IDs must be different.")
-
-    source_trope = session.get(Trope, source_trope_id)
-    if source_trope is None:
-        raise CurationNotFoundError("Source trope not found.")
-    target_trope = session.get(Trope, target_trope_id)
-    if target_trope is None:
-        raise CurationNotFoundError("Target trope not found.")
-
-    source_links = list(
-        session.scalars(
-            select(StoryTrope)
-            .where(StoryTrope.trope_id == source_trope_id)
-            .options(selectinload(StoryTrope.story))
-        ).all()
+    dataset, summary, job = validate_trope_merges(
+        session,
+        merges=[
+            {
+                "source_trope_id": source_trope_id,
+                "target_trope_id": target_trope_id,
+            }
+        ],
+        job_reason="merge_tropes",
+        job_payload={
+            "source_trope_id": source_trope_id,
+            "target_trope_id": target_trope_id,
+        },
     )
-    source_story_ids = [link.story_id for link in source_links]
-    target_links_by_story = {}
-    if source_story_ids:
-        target_links_by_story = {
-            link.story_id: link
-            for link in session.scalars(
-                select(StoryTrope).where(
-                    StoryTrope.trope_id == target_trope_id,
-                    StoryTrope.story_id.in_(source_story_ids),
-                )
-            ).all()
-        }
+    return dataset, summary["applied_merges"][0], job
+
+
+def validate_trope_merges(
+    session: Session,
+    *,
+    merges: list[dict[str, str]],
+    job_reason: str = "validate_trope_merges",
+    job_payload: dict | None = None,
+) -> tuple[Dataset, dict, object]:
+    active_dataset = _require_active_dataset(session)
+    normalized_merges = _normalize_merge_requests(session, merges)
 
     affected_story_ids: set[str] = set()
-    for source_link in source_links:
-        affected_story_ids.add(source_link.story_id)
-        target_link = target_links_by_story.get(source_link.story_id)
-        if target_link is None:
-            session.add(
-                StoryTrope(
-                    story_id=source_link.story_id,
-                    trope_id=target_trope_id,
-                    origin=StoryTropeOrigin.MERGE,
-                    status=source_link.status,
-                    position=source_link.position,
-                )
-            )
-        else:
-            _merge_story_trope_metadata(target_link, source_link)
-        session.delete(source_link)
+    touched_target_ids: set[str] = set()
+    merge_summaries: list[dict[str, int | str]] = []
+
+    for merge_request in normalized_merges:
+        merge_affected_story_ids = _apply_trope_merge(
+            session,
+            source_trope_id=merge_request["source_trope_id"],
+            target_trope_id=merge_request["target_trope_id"],
+        )
+        affected_story_ids.update(merge_affected_story_ids)
+        touched_target_ids.add(merge_request["target_trope_id"])
+        merge_summaries.append(
+            {
+                "source_trope_id": merge_request["source_trope_id"],
+                "target_trope_id": merge_request["target_trope_id"],
+                "affected_story_count": len(merge_affected_story_ids),
+            }
+        )
 
     session.flush()
     session.expire_all()
 
     affected_dataset_ids = _touch_affected_stories(session, affected_story_ids)
-    _refresh_trope_cached_story_count(session, target_trope_id)
-
-    remaining_source_links = session.scalar(
-        select(func.count()).select_from(StoryTrope).where(StoryTrope.trope_id == source_trope_id)
-    )
-    if remaining_source_links:
-        raise CurationConflictError("Source trope still has assignments and cannot be deleted.")
-
-    refreshed_source_trope = session.get(Trope, source_trope_id)
-    if refreshed_source_trope is not None:
-        _delete_trope_artifacts(session, source_trope_id)
-        session.delete(refreshed_source_trope)
+    for target_trope_id in touched_target_ids:
+        _refresh_trope_cached_story_count(session, target_trope_id)
 
     _bump_dataset_versions(session, active_dataset.id, affected_dataset_ids)
+    full_job_payload = {
+        "reason": job_reason,
+        "merge_count": len(merge_summaries),
+        "merges": [
+            {
+                "source_trope_id": merge_summary["source_trope_id"],
+                "target_trope_id": merge_summary["target_trope_id"],
+            }
+            for merge_summary in merge_summaries
+        ],
+    }
+    if job_payload:
+        full_job_payload.update(job_payload)
+
     job = queue_job(
         session,
         job_type="full_rebuild",
         dataset_id=active_dataset.id,
-        payload={
-            "reason": "merge_tropes",
-            "source_trope_id": source_trope_id,
-            "target_trope_id": target_trope_id,
-        },
+        payload=full_job_payload,
     )
     session.commit()
 
     refreshed_active_dataset = session.get(Dataset, active_dataset.id)
     return refreshed_active_dataset, {
-        "source_trope_id": source_trope_id,
-        "target_trope_id": target_trope_id,
+        "applied_merges": merge_summaries,
+        "merge_count": len(merge_summaries),
         "affected_story_count": len(affected_story_ids),
     }, job
 
@@ -364,6 +362,134 @@ def delete_trope(
         "deleted_trope_id": trope_id,
         "affected_story_count": len(affected_story_ids),
     }, job
+
+
+def _normalize_merge_requests(session: Session, merges: list[dict[str, str]]) -> list[dict[str, str]]:
+    if not merges:
+        raise CurationValidationError("At least one merge decision is required.")
+
+    _validate_merge_targets_exist(session, merges)
+
+    source_to_target: dict[str, str] = {}
+    ordered_source_ids: list[str] = []
+    for merge_request in merges:
+        source_trope_id = merge_request["source_trope_id"]
+        target_trope_id = merge_request["target_trope_id"]
+        if source_trope_id == target_trope_id:
+            raise CurationValidationError("Source and target trope IDs must be different.")
+
+        existing_target_id = source_to_target.get(source_trope_id)
+        if existing_target_id is None:
+            source_to_target[source_trope_id] = target_trope_id
+            ordered_source_ids.append(source_trope_id)
+            continue
+
+        if existing_target_id != target_trope_id:
+            raise CurationValidationError(
+                "A source trope can only be merged into one target within the same validation batch."
+            )
+
+    resolved_target_ids: dict[str, str] = {}
+
+    def resolve_target_id(source_trope_id: str, trail: tuple[str, ...]) -> str:
+        cached_target_id = resolved_target_ids.get(source_trope_id)
+        if cached_target_id is not None:
+            return cached_target_id
+
+        if source_trope_id in trail:
+            raise CurationValidationError("Pending merge decisions create a cycle and cannot be validated together.")
+
+        target_trope_id = source_to_target[source_trope_id]
+        if target_trope_id in source_to_target:
+            target_trope_id = resolve_target_id(target_trope_id, (*trail, source_trope_id))
+
+        resolved_target_ids[source_trope_id] = target_trope_id
+        return target_trope_id
+
+    normalized_merges: list[dict[str, str]] = []
+    for source_trope_id in ordered_source_ids:
+        normalized_merges.append(
+            {
+                "source_trope_id": source_trope_id,
+                "target_trope_id": resolve_target_id(source_trope_id, ()),
+            }
+        )
+    return normalized_merges
+
+
+def _validate_merge_targets_exist(session: Session, merges: list[dict[str, str]]) -> None:
+    trope_ids = {
+        trope_id
+        for merge_request in merges
+        for trope_id in (merge_request["source_trope_id"], merge_request["target_trope_id"])
+    }
+    existing_trope_ids = set(session.scalars(select(Trope.id).where(Trope.id.in_(trope_ids))).all())
+
+    for merge_request in merges:
+        if merge_request["source_trope_id"] not in existing_trope_ids:
+            raise CurationNotFoundError("Source trope not found.")
+        if merge_request["target_trope_id"] not in existing_trope_ids:
+            raise CurationNotFoundError("Target trope not found.")
+
+
+def _apply_trope_merge(
+    session: Session,
+    *,
+    source_trope_id: str,
+    target_trope_id: str,
+) -> set[str]:
+    source_links = list(
+        session.scalars(
+            select(StoryTrope)
+            .where(StoryTrope.trope_id == source_trope_id)
+            .options(selectinload(StoryTrope.story))
+        ).all()
+    )
+    source_story_ids = [link.story_id for link in source_links]
+    target_links_by_story = {}
+    if source_story_ids:
+        target_links_by_story = {
+            link.story_id: link
+            for link in session.scalars(
+                select(StoryTrope).where(
+                    StoryTrope.trope_id == target_trope_id,
+                    StoryTrope.story_id.in_(source_story_ids),
+                )
+            ).all()
+        }
+
+    affected_story_ids: set[str] = set()
+    for source_link in source_links:
+        affected_story_ids.add(source_link.story_id)
+        target_link = target_links_by_story.get(source_link.story_id)
+        if target_link is None:
+            session.add(
+                StoryTrope(
+                    story_id=source_link.story_id,
+                    trope_id=target_trope_id,
+                    origin=StoryTropeOrigin.MERGE,
+                    status=source_link.status,
+                    position=source_link.position,
+                )
+            )
+        else:
+            _merge_story_trope_metadata(target_link, source_link)
+        session.delete(source_link)
+
+    session.flush()
+
+    remaining_source_links = session.scalar(
+        select(func.count()).select_from(StoryTrope).where(StoryTrope.trope_id == source_trope_id)
+    )
+    if remaining_source_links:
+        raise CurationConflictError("Source trope still has assignments and cannot be deleted.")
+
+    refreshed_source_trope = session.get(Trope, source_trope_id)
+    if refreshed_source_trope is not None:
+        _delete_trope_artifacts(session, source_trope_id)
+        session.delete(refreshed_source_trope)
+
+    return affected_story_ids
 
 
 def _get_active_dataset(session: Session) -> Dataset | None:
