@@ -1,4 +1,5 @@
 import type {
+  CreateTropeResponse,
   CreateStoryResponse,
   DatasetStatus,
   DatasetUploadResponse,
@@ -132,6 +133,16 @@ export function getTropeDetail(tropeId: string): Promise<TropeDetail> {
   return request<TropeDetail>(`/tropes/${tropeId}`);
 }
 
+export function createCanonicalTrope(text: string): Promise<CreateTropeResponse> {
+  return request<CreateTropeResponse>("/tropes", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ text }),
+  });
+}
+
 export async function uploadDataset(file: File): Promise<DatasetUploadResponse> {
   const formData = new FormData();
   formData.append("file", file);
@@ -182,6 +193,20 @@ export function addStoryTrope(
 ): Promise<StoryTropeMutationResponse> {
   return request<StoryTropeMutationResponse>(`/stories/${storyId}/tropes`, {
     method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function replaceStoryTrope(
+  storyId: string,
+  tropeId: string,
+  payload: { expected_story_version: number; trope_id?: string; text?: string },
+): Promise<StoryTropeMutationResponse> {
+  return request<StoryTropeMutationResponse>(`/stories/${storyId}/tropes/${tropeId}`, {
+    method: "PUT",
     headers: {
       "Content-Type": "application/json",
     },

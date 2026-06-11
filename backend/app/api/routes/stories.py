@@ -19,6 +19,7 @@ from app.services.stories import (
     get_story_detail,
     get_story_tropes,
     list_active_stories,
+    replace_story_trope,
     validate_story_trope,
 )
 
@@ -91,6 +92,12 @@ class AddStoryTropeRequest(BaseModel):
     trope_id: str | None = None
     text: str | None = None
     origin: StoryTropeOrigin = StoryTropeOrigin.HUMAN_ENTERED
+
+
+class ReplaceStoryTropeRequest(BaseModel):
+    expected_story_version: int
+    trope_id: str | None = None
+    text: str | None = None
 
 
 class StoryVersionRequest(BaseModel):
@@ -216,6 +223,41 @@ def create_story_trope(
             trope_id=payload.trope_id,
             text=payload.text,
             origin=payload.origin,
+        )
+    except Exception as exc:
+        _raise_story_service_error(exc)
+
+    return StoryTropeMutationResponse(
+        story_id=story.id,
+        story_version=story.version,
+        dataset_version=dataset.version,
+        trope=StoryTropeResponse(
+            id=link.trope.id,
+            text=link.trope.text,
+            story_count=int(link.trope.cached_story_count or 0),
+            origin=link.origin.value,
+            status=link.status.value,
+            position=link.position,
+        ),
+        queued_job=_queued_job_summary(job),
+    )
+
+
+@router.put("/{story_id}/tropes/{trope_id}", response_model=StoryTropeMutationResponse)
+def update_story_trope(
+    story_id: str,
+    trope_id: str,
+    payload: ReplaceStoryTropeRequest,
+    session: Session = Depends(get_db_session),
+) -> StoryTropeMutationResponse:
+    try:
+        story, dataset, link, job = replace_story_trope(
+            session,
+            story_id,
+            trope_id,
+            expected_story_version=payload.expected_story_version,
+            trope_id=payload.trope_id,
+            text=payload.text,
         )
     except Exception as exc:
         _raise_story_service_error(exc)

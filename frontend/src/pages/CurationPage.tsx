@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 
 import {
+  createCanonicalTrope,
   deleteTrope,
   getCanonicalTropes,
   getErrorMessage,
   getJob,
   getNearDuplicateTropes,
+  searchTropes,
   validateTropeMerges,
 } from "../api/client";
 import { TropeCard } from "../components/TropeCard";
@@ -15,6 +17,8 @@ import type {
   JobSummary,
   NearDuplicateTropeListResponse,
   NearDuplicateTropePair,
+  TropeSearchItem,
+  TropeSummary,
 } from "../api/types";
 
 const TERMINAL_JOB_STATUSES = new Set(["succeeded", "failed", "cancelled"]);
@@ -37,6 +41,12 @@ interface PendingMergeDecision {
   similarity_score: number;
 }
 
+interface PairTargetOverride {
+  id: string;
+  text: string;
+  story_count: number;
+}
+
 type PairDirection = "forward" | "reverse";
 
 function formatJobStatus(job: JobSummary | JobDetail | null): string {
@@ -55,6 +65,20 @@ function explanationLabel(pair: NearDuplicateTropePair): string {
   const threshold =
     typeof pair.metadata.threshold === "number" ? ` · threshold ${pair.metadata.threshold.toFixed(2)}` : "";
   return `${reason}${threshold}`;
+}
+
+function tropeSearchExplanationLabel(item: TropeSearchItem): string {
+  const flags = [];
+  if (item.explanation.matched_query_exactly) {
+    flags.push("exact match");
+  }
+  if (item.explanation.cache_hit) {
+    flags.push("cached");
+  }
+  if (item.explanation.near_duplicate) {
+    flags.push("near duplicate");
+  }
+  return flags.length ? flags.join(" · ") : item.explanation.method.split("_").join(" ");
 }
 
 function pairKey(pair: NearDuplicateTropePair): string {
@@ -81,17 +105,40 @@ function directionalPair(pair: NearDuplicateTropePair, direction: PairDirection)
   };
 }
 
-function buildPendingMergeDecision(pair: NearDuplicateTropePair, direction: PairDirection): PendingMergeDecision {
-  const { source, target } = directionalPair(pair, direction);
+function buildPendingMergeDecision(
+  pairId: string,
+  source: TropeSummary,
+  target: TropeSummary,
+  similarityScore: number,
+): PendingMergeDecision {
   return {
-    pair_id: pairKey(pair),
+    pair_id: pairId,
     source_trope_id: source.id,
     source_text: source.text,
     source_story_count: source.story_count,
     target_trope_id: target.id,
     target_text: target.text,
     target_story_count: target.story_count,
-    similarity_score: pair.similarity_score,
+    similarity_score: similarityScore,
+  };
+}
+
+function resolvePairSelection(
+  pair: NearDuplicateTropePair,
+  direction: PairDirection,
+  targetOverride?: PairTargetOverride,
+): { source: TropeSummary; target: TropeSummary } {
+  const { source, target } = directionalPair(pair, direction);
+  if (!targetOverride || targetOverride.id === source.id) {
+    return { source, target };
+  }
+  return {
+    source,
+    target: {
+      id: targetOverride.id,
+      text: targetOverride.text,
+      story_count: targetOverride.story_count,
+    },
   };
 }
 
@@ -100,13 +147,27 @@ export function CurationPage() {
   const [unusedQuery, setUnusedQuery] = useState("");
   const [unusedTropes, setUnusedTropes] = useState<CanonicalTropeListItem[]>([]);
   const [pairDirections, setPairDirections] = useState<Record<string, PairDirection>>({});
+  const [targetOverrides, setTargetOverrides] = useState<Record<string, PairTargetOverride>>({});
   const [pendingMerges, setPendingMerges] = useState<PendingMergeDecision[]>([]);
+  const [editingPairId, setEditingPairId] = useState<string | null>(null);
+  const [editingTargetQuery, setEditingTargetQuery] = useState("");
+  const [editingTargetResults, setEditingTargetResults] = useState<TropeSearchItem[]>([]);
+  const [editingTargetSearchStatus, setEditingTargetSearchStatus] = useState<"idle" | "loading" | "ready">("idle");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<PageNotice | null>(null);
+  const [modalNotice, setModalNotice] = useState<PageNotice | null>(null);
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
   const [jobDetail, setJobDetail] = useState<JobDetail | null>(null);
   const [jobError, setJobError] = useState<string | null>(null);
+
+  function resetTargetEditor() {
+    setEditingPairId(null);
+    setEditingTargetQuery("");
+    setEditingTargetResults([]);
+    setEditingTargetSearchStatus("idle");
+    setModalNotice(null);
+  }
 
   async function loadPairs() {
     const result = await getNearDuplicateTropes();
@@ -161,6 +222,58 @@ export function CurationPage() {
   }, [unusedQuery]);
 
   useEffect(() => {
+    if (!editingPairId) {
+      setEditingTargetResults([]);
+      setEditingTargetSearchStatus("idle");
+      return;
+    }
+
+    const trimmedQuery = editingTargetQuery.trim();
+    if (!trimmedQuery) {
+      setEditingTargetResults([]);
+      setEditingTargetSearchStatus("idle");
+      return;
+    }
+
+    let cancelled = false;
+    const timeoutId = window.setTimeout(() => {
+      void (async () => {
+        try {
+          setEditingTargetSearchStatus("loading");
+          const result = await searchTropes({ query: trimmedQuery, limit: 8 });
+          if (cancelled) {
+            return;
+          }
+          setEditingTargetResults(result.items);
+          setEditingTargetSearchStatus("ready");
+        } catch (caughtError) {
+          if (cancelled) {
+            return;
+          }
+          setEditingTargetResults([]);
+          setEditingTargetSearchStatus("ready");
+          setModalNotice({
+            tone: "error",
+            title: "Could not search target tropes",
+            body: getErrorMessage(caughtError),
+          });
+        }
+      })();
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [editingPairId, editingTargetQuery]);
+
+  useEffect(() => {
+    if (!editingPairId || !pairs?.items.some((pair) => pairKey(pair) === editingPairId)) {
+      resetTargetEditor();
+    }
+  }, [editingPairId, pairs]);
+
+  useEffect(() => {
     if (!currentJobId) {
       setJobError(null);
       return;
@@ -209,8 +322,10 @@ export function CurationPage() {
   }, [currentJobId]);
 
   function handleStageMerge(pair: NearDuplicateTropePair) {
-    const direction = pairDirections[pairKey(pair)] || "forward";
-    const nextDecision = buildPendingMergeDecision(pair, direction);
+    const pairId = pairKey(pair);
+    const direction = pairDirections[pairId] || "forward";
+    const { source, target } = resolvePairSelection(pair, direction, targetOverrides[pairId]);
+    const nextDecision = buildPendingMergeDecision(pairId, source, target, pair.similarity_score);
 
     setPendingMerges((current) => {
       if (current.some((merge) => merge.pair_id === nextDecision.pair_id)) {
@@ -224,6 +339,82 @@ export function CurationPage() {
     setNotice(null);
   }
 
+  function handleStartEditingTarget(pairId: string, currentTarget: TropeSummary) {
+    setEditingPairId(pairId);
+    setEditingTargetQuery(currentTarget.text);
+    setEditingTargetResults([]);
+    setEditingTargetSearchStatus("idle");
+    setNotice(null);
+    setModalNotice(null);
+  }
+
+  function applyPairTargetSelection(pair: NearDuplicateTropePair, nextTarget: TropeSummary): boolean {
+    const pairId = pairKey(pair);
+    const direction = pairDirections[pairId] || "forward";
+    const defaultPairTerms = directionalPair(pair, direction);
+    const source = defaultPairTerms.source;
+    const defaultTarget = defaultPairTerms.target;
+
+    if (nextTarget.id === source.id) {
+      setModalNotice({
+        tone: "error",
+        title: "Target must differ from source",
+        body: "Choose or create a different trope for this merge target.",
+      });
+      return false;
+    }
+
+    if (nextTarget.id === defaultTarget.id) {
+      handleResetPairTarget(pairId, source, defaultTarget, pair.similarity_score);
+      return true;
+    }
+
+    handleUpdatePairTarget(pairId, source, nextTarget, pair.similarity_score);
+    return true;
+  }
+
+  function handleUpdatePairTarget(
+    pairId: string,
+    source: TropeSummary,
+    target: TropeSummary,
+    similarityScore: number,
+  ) {
+    setTargetOverrides((current) => ({
+      ...current,
+      [pairId]: {
+        id: target.id,
+        text: target.text,
+        story_count: target.story_count,
+      },
+    }));
+    setPendingMerges((current) =>
+      current.map((merge) =>
+        merge.pair_id === pairId ? buildPendingMergeDecision(pairId, source, target, similarityScore) : merge,
+      ),
+    );
+  }
+
+  function handleResetPairTarget(
+    pairId: string,
+    source: TropeSummary,
+    defaultTarget: TropeSummary,
+    similarityScore: number,
+  ) {
+    setTargetOverrides((current) => {
+      if (!(pairId in current)) {
+        return current;
+      }
+      const next = { ...current };
+      delete next[pairId];
+      return next;
+    });
+    setPendingMerges((current) =>
+      current.map((merge) =>
+        merge.pair_id === pairId ? buildPendingMergeDecision(pairId, source, defaultTarget, similarityScore) : merge,
+      ),
+    );
+  }
+
   function handleRemovePendingMerge(pairId: string) {
     setPendingMerges((current) => current.filter((merge) => merge.pair_id !== pairId));
     setNotice(null);
@@ -232,6 +423,42 @@ export function CurationPage() {
   function handleClearPendingMerges() {
     setPendingMerges([]);
     setNotice(null);
+  }
+
+  async function handleKeepTypedTarget() {
+    if (!editingPairId || !editingTargetQuery.trim() || !pairs) {
+      return;
+    }
+
+    const pair = pairs.items.find((item) => pairKey(item) === editingPairId);
+    if (!pair) {
+      return;
+    }
+
+    try {
+      setBusy(true);
+      setNotice(null);
+      const result = await createCanonicalTrope(editingTargetQuery.trim());
+      if (!applyPairTargetSelection(pair, result.trope)) {
+        return;
+      }
+      resetTargetEditor();
+      setNotice({
+        tone: "success",
+        title: result.created ? "Target trope created" : "Existing trope reused",
+        body: result.created
+          ? `Created ${result.trope.text} and set it as the merge target.`
+          : `Set ${result.trope.text} as the merge target.`,
+      });
+    } catch (caughtError) {
+      setModalNotice({
+        tone: "error",
+        title: "Could not set merge target",
+        body: getErrorMessage(caughtError),
+      });
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function handleValidatePendingMerges() {
@@ -314,6 +541,12 @@ export function CurationPage() {
     () => pendingMerges.reduce((total, merge) => total + merge.source_story_count, 0),
     [pendingMerges],
   );
+  const editingPair = editingPairId && pairs ? pairs.items.find((pair) => pairKey(pair) === editingPairId) ?? null : null;
+  const editingPairDirection = editingPair ? pairDirections[pairKey(editingPair)] || "forward" : "forward";
+  const editingDefaultSelection = editingPair ? directionalPair(editingPair, editingPairDirection) : null;
+  const editingSelection = editingPair
+    ? resolvePairSelection(editingPair, editingPairDirection, targetOverrides[pairKey(editingPair)])
+    : null;
 
   return (
     <div className="page-stack">
@@ -449,15 +682,16 @@ export function CurationPage() {
           <div className="stack">
             {pairs?.items.length ? (
               pairs.items.map((pair) => {
-                const direction = pairDirections[pairKey(pair)] || "forward";
-                const { source, target } = directionalPair(pair, direction);
+                const pairId = pairKey(pair);
+                const direction = pairDirections[pairId] || "forward";
+                const { source, target } = resolvePairSelection(pair, direction, targetOverrides[pairId]);
                 const affectedStoryCount = source.story_count;
-                const pendingDecision = pendingMerges.find((merge) => merge.pair_id === pairKey(pair));
+                const pendingDecision = pendingMerges.find((merge) => merge.pair_id === pairId);
                 const sourceAlreadyPending = pendingSourceIds.has(source.id);
                 const canStagePair = !pendingDecision && !sourceAlreadyPending;
 
                 return (
-                  <article className="card" key={pairKey(pair)}>
+                  <article className="card" key={pairId}>
                     <div className="panel-header">
                       <div>
                         <h3>Similarity {pair.similarity_score.toFixed(2)}</h3>
@@ -467,10 +701,23 @@ export function CurationPage() {
                         className="button button-ghost"
                         disabled={busy || Boolean(pendingDecision)}
                         onClick={() =>
-                          setPairDirections((current) => ({
-                            ...current,
-                            [pairKey(pair)]: direction === "forward" ? "reverse" : "forward",
-                          }))
+                          {
+                            setPairDirections((current) => ({
+                              ...current,
+                              [pairId]: direction === "forward" ? "reverse" : "forward",
+                            }));
+                            setTargetOverrides((current) => {
+                              if (!(pairId in current)) {
+                                return current;
+                              }
+                              const next = { ...current };
+                              delete next[pairId];
+                              return next;
+                            });
+                            if (editingPairId === pairId) {
+                              resetTargetEditor();
+                            }
+                          }
                         }
                         type="button"
                       >
@@ -493,6 +740,18 @@ export function CurationPage() {
                           className="subdued"
                           meta="Stories already tagged with this trope."
                           trope={target}
+                          actions={
+                            <button
+                              className="button button-ghost"
+                              disabled={busy}
+                              onClick={() => {
+                                handleStartEditingTarget(pairId, target);
+                              }}
+                              type="button"
+                            >
+                              Edit
+                            </button>
+                          }
                         />
                       </div>
                     </div>
@@ -576,6 +835,170 @@ export function CurationPage() {
           </div>
         </aside>
       </section>
+
+      {editingPair && editingSelection && editingDefaultSelection ? (
+        <div className="modal-backdrop" onClick={resetTargetEditor} role="presentation">
+          <section
+            aria-labelledby="curation-target-modal-title"
+            aria-modal="true"
+            className="modal-shell"
+            onClick={(event) => event.stopPropagation()}
+            role="dialog"
+          >
+            <div className="panel-header">
+              <div>
+                <p className="eyebrow">Curation</p>
+                <h2 id="curation-target-modal-title">Edit merge target</h2>
+                <p className="muted">
+                  {editingSelection.source.text} will be merged into the trope you choose here.
+                </p>
+              </div>
+              <button className="button button-ghost" disabled={busy} onClick={resetTargetEditor} type="button">
+                Close
+              </button>
+            </div>
+
+            {modalNotice ? (
+              <section className={`notice ${modalNotice.tone === "error" ? "notice-error" : "notice-success"}`}>
+                <strong className="notice-title">{modalNotice.title}</strong>
+                {modalNotice.body ? <p>{modalNotice.body}</p> : null}
+              </section>
+            ) : null}
+
+            <div className="field-grid">
+              <div className="stack">
+                <p className="muted">Source trope</p>
+                <TropeCard className="subdued" meta="This trope is removed by the merge." trope={editingSelection.source} />
+              </div>
+              <div className="stack">
+                <p className="muted">Current target</p>
+                <TropeCard className="subdued" meta="This trope will receive the merged assignments." trope={editingSelection.target} />
+              </div>
+            </div>
+
+            <label className="field">
+              <span>Target trope query</span>
+              <input
+                className="input"
+                disabled={busy}
+                onChange={(event) => setEditingTargetQuery(event.target.value)}
+                placeholder="Type a target trope to search or create"
+                value={editingTargetQuery}
+              />
+            </label>
+
+            <div className="card subdued">
+              <div className="card-row">
+                <div>
+                  <h3>Keep typed trope</h3>
+                  <p className="muted">
+                    Create a new canonical trope, or reuse an exact existing trope if the typed text already matches one.
+                  </p>
+                </div>
+                <button
+                  className="button"
+                  disabled={busy || !editingTargetQuery.trim()}
+                  onClick={() => void handleKeepTypedTarget()}
+                  type="button"
+                >
+                  Keep typed trope
+                </button>
+              </div>
+            </div>
+
+            <div className="stack">
+              <div className="panel-header">
+                <h3>Similar existing tropes</h3>
+                <span className="pill">
+                  {editingTargetSearchStatus === "loading" ? "searching" : `${editingTargetResults.length} results`}
+                </span>
+              </div>
+              {!editingTargetQuery.trim() ? <p className="muted">Type to search the existing trope index.</p> : null}
+              {editingTargetQuery.trim() && editingTargetSearchStatus === "loading" ? <p className="muted">Searching tropes...</p> : null}
+              {editingTargetQuery.trim() && editingTargetSearchStatus === "ready" && editingTargetResults.length === 0 ? (
+                <p className="muted">No similar tropes were returned for this query.</p>
+              ) : null}
+              <div className="modal-story-list">
+                {editingTargetResults.map((item) => {
+                  const isCurrentTarget = item.id === editingSelection.target.id;
+                  const isSourceTrope = item.id === editingSelection.source.id;
+                  return (
+                    <TropeCard
+                      key={`curation-modal-${editingPairId}-${item.id}`}
+                      meta={`${tropeSearchExplanationLabel(item)} · ${item.explanation.model_name} · dim ${
+                        item.explanation.vector_dimension ?? "n/a"
+                      }`}
+                      subtitle={`score ${item.score.toFixed(2)}`}
+                      trope={item}
+                      actions={
+                        <button
+                          className="button button-ghost"
+                          disabled={busy || isCurrentTarget || isSourceTrope}
+                          onClick={() => {
+                            if (
+                              applyPairTargetSelection(editingPair, {
+                                id: item.id,
+                                text: item.text,
+                                story_count: item.story_count,
+                              })
+                            ) {
+                              resetTargetEditor();
+                              setNotice({
+                                tone: "success",
+                                title: "Merge target updated",
+                                body: `Set ${item.text} as the merge target for this pair.`,
+                              });
+                            }
+                          }}
+                          type="button"
+                        >
+                          {isCurrentTarget ? "Current target" : isSourceTrope ? "Source trope" : "Use existing trope"}
+                        </button>
+                      }
+                    />
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="button-row wrap-row">
+              <p className="muted">
+                {targetOverrides[pairKey(editingPair)] ? "A custom target is currently selected for this pair." : "The default target from the pair is currently selected."}
+              </p>
+              <div className="button-row wrap-row">
+                {targetOverrides[pairKey(editingPair)] ? (
+                  <button
+                    className="button button-ghost"
+                    disabled={busy}
+                    onClick={() =>
+                      {
+                        handleResetPairTarget(
+                          pairKey(editingPair),
+                          editingDefaultSelection.source,
+                          editingDefaultSelection.target,
+                          editingPair.similarity_score,
+                        );
+                        resetTargetEditor();
+                        setNotice({
+                          tone: "success",
+                          title: "Merge target reset",
+                          body: `Restored ${editingDefaultSelection.target.text} as the merge target.`,
+                        });
+                      }
+                    }
+                    type="button"
+                  >
+                    Reset target
+                  </button>
+                ) : null}
+                <button className="button button-ghost" disabled={busy} onClick={resetTargetEditor} type="button">
+                  Done
+                </button>
+              </div>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }

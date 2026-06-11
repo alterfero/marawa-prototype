@@ -166,6 +166,11 @@ export interface DeleteTropeResponse {
   queued_job: JobSummary;
 }
 
+export interface CreateTropeResponse {
+  trope: TropeSummary;
+  created: boolean;
+}
+
 export interface ExplorationCandidate {
   id: string;
   text: string;

@@ -247,6 +247,10 @@ p {
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
 }
 
+.trope-card-editor {
+  margin-top: 0.5rem;
+}
+
 .stat-label {
   font-size: 0.82rem;
   text-transform: uppercase;

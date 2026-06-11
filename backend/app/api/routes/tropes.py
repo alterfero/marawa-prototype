@@ -1,11 +1,16 @@
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.errors import api_error
 from app.api.deps import get_db_session
 from app.services.curation import CurationConflictError, CurationNotFoundError, delete_trope, list_canonical_tropes
-from app.services.tropes import TropeLookupNotFoundError, get_trope_detail
+from app.services.tropes import (
+    TropeLookupNotFoundError,
+    TropeMutationValidationError,
+    ensure_canonical_trope,
+    get_trope_detail,
+)
 
 
 class JobSummaryResponse(BaseModel):
@@ -25,6 +30,15 @@ class TropeListItemResponse(BaseModel):
     id: str
     text: str
     story_count: int
+
+
+class CreateTropeRequest(BaseModel):
+    text: str = Field(min_length=1)
+
+
+class CreateTropeResponse(BaseModel):
+    trope: TropeListItemResponse
+    created: bool
 
 
 class TropeStorySummaryResponse(BaseModel):
@@ -70,6 +84,22 @@ def read_trope_detail(
         return TropeDetailResponse(**get_trope_detail(session, trope_id))
     except TropeLookupNotFoundError as exc:
         raise api_error(404, "trope_not_found", str(exc)) from exc
+
+
+@router.post("", response_model=CreateTropeResponse)
+def create_canonical_trope(
+    payload: CreateTropeRequest,
+    session: Session = Depends(get_db_session),
+) -> CreateTropeResponse:
+    try:
+        trope, created = ensure_canonical_trope(session, payload.text)
+    except TropeMutationValidationError as exc:
+        raise api_error(400, "trope_mutation_invalid", str(exc)) from exc
+
+    return CreateTropeResponse(
+        trope=TropeListItemResponse(**trope),
+        created=created,
+    )
 
 
 @router.delete("/{trope_id}", response_model=DeleteTropeResponse)

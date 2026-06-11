@@ -276,6 +276,91 @@ def test_validate_story_trope_marks_suggestion_as_human_approved(client: TestCli
     assert detail["tropes"][0]["status"] == "validated"
 
 
+def test_replace_story_trope_with_typed_text_updates_csv_and_preserves_order(client: TestClient) -> None:
+    upload_dataset(client, [make_row(title="Story One", tropes="§§ first trope\n§§ second trope")])
+    story = client.get("/api/stories").json()["items"][0]
+    tropes = client.get(f"/api/stories/{story['id']}/tropes").json()["items"]
+
+    response = client.put(
+        f"/api/stories/{story['id']}/tropes/{tropes[0]['id']}",
+        json={
+            "expected_story_version": 1,
+            "text": "Edited trope",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["story_version"] == 2
+    assert body["dataset_version"] == 2
+    assert body["trope"]["text"] == "Edited trope"
+    assert body["trope"]["origin"] == "human_entered"
+    assert body["trope"]["status"] == "validated"
+    assert body["trope"]["position"] == 0
+    assert body["queued_job"]["status"] == "queued"
+    assert body["queued_job"]["job_type"] == "full_rebuild"
+
+    detail = client.get(f"/api/stories/{story['id']}").json()
+    assert detail["fields"][TROPE_FIELD] == "§§ Edited trope\n§§ second trope"
+    assert [item["text"] for item in detail["tropes"]] == ["Edited trope", "second trope"]
+    assert [item["position"] for item in detail["tropes"]] == [0, 1]
+
+
+def test_replace_story_trope_reuses_existing_canonical_trope_by_id(client: TestClient) -> None:
+    upload_dataset(
+        client,
+        [
+            make_row(title="Story One", tropes="§§ first trope\n§§ second trope"),
+            make_row(title="Story Two", tropes="§§ moon bride"),
+        ],
+    )
+    stories = client.get("/api/stories").json()["items"]
+    first_story_id = stories[0]["id"]
+    second_story_id = stories[1]["id"]
+    first_story_tropes = client.get(f"/api/stories/{first_story_id}/tropes").json()["items"]
+    replacement_trope = client.get(f"/api/stories/{second_story_id}/tropes").json()["items"][0]
+
+    response = client.put(
+        f"/api/stories/{first_story_id}/tropes/{first_story_tropes[0]['id']}",
+        json={
+            "expected_story_version": 1,
+            "trope_id": replacement_trope["id"],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["trope"]["id"] == replacement_trope["id"]
+    assert body["trope"]["text"] == "moon bride"
+    assert body["trope"]["story_count"] == 2
+    assert body["trope"]["position"] == 0
+
+    detail = client.get(f"/api/stories/{first_story_id}").json()
+    assert detail["fields"][TROPE_FIELD] == "§§ moon bride\n§§ second trope"
+    assert [item["text"] for item in detail["tropes"]] == ["moon bride", "second trope"]
+    assert detail["tropes"][0]["story_count"] == 2
+
+
+def test_replace_story_trope_rejects_duplicate_assignment(client: TestClient) -> None:
+    upload_dataset(client, [make_row(title="Story One", tropes="§§ first trope\n§§ second trope")])
+    story = client.get("/api/stories").json()["items"][0]
+    tropes = client.get(f"/api/stories/{story['id']}/tropes").json()["items"]
+
+    response = client.put(
+        f"/api/stories/{story['id']}/tropes/{tropes[0]['id']}",
+        json={
+            "expected_story_version": 1,
+            "trope_id": tropes[1]["id"],
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "code": "story_mutation_invalid",
+        "message": "Story already has this trope assignment.",
+    }
+
+
 def test_delete_story_trope_removes_assignment_hard(client: TestClient) -> None:
     upload_dataset(client, [make_row(title="Story One", tropes="§§ first trope")])
     story = client.get("/api/stories").json()["items"][0]

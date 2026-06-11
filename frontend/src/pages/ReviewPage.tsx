@@ -7,11 +7,13 @@ import {
   getErrorMessage,
   getStories,
   getStory,
+  replaceStoryTrope,
   searchTropes,
   validateStoryTrope,
 } from "../api/client";
 import { TropeCard } from "../components/TropeCard";
 import type { StoryDetail, StorySummary, TropeSearchItem } from "../api/types";
+import { normalizeDraftText } from "../constants/csv";
 import { routeHref, useHashSearch } from "../router";
 
 interface PageNotice {
@@ -84,11 +86,22 @@ export function ReviewPage() {
   const [tropeQuery, setTropeQuery] = useState("");
   const [tropeResults, setTropeResults] = useState<TropeSearchItem[]>([]);
   const [tropeSearchStatus, setTropeSearchStatus] = useState<"idle" | "loading" | "ready">("idle");
+  const [editingTropeId, setEditingTropeId] = useState<string | null>(null);
+  const [editingTropeQuery, setEditingTropeQuery] = useState("");
+  const [editingTropeResults, setEditingTropeResults] = useState<TropeSearchItem[]>([]);
+  const [editingTropeSearchStatus, setEditingTropeSearchStatus] = useState<"idle" | "loading" | "ready">("idle");
   const [storiesLoading, setStoriesLoading] = useState(true);
   const [storyLoading, setStoryLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<PageNotice | null>(null);
   const selectedStoryParam = new URLSearchParams(hashSearch).get("selected_story_id");
+
+  function resetTropeEditor() {
+    setEditingTropeId(null);
+    setEditingTropeQuery("");
+    setEditingTropeResults([]);
+    setEditingTropeSearchStatus("idle");
+  }
 
   async function loadStories(preferredStoryId?: string | null) {
     try {
@@ -138,6 +151,10 @@ export function ReviewPage() {
   useEffect(() => {
     void refresh(selectedStoryParam);
   }, []);
+
+  useEffect(() => {
+    resetTropeEditor();
+  }, [selectedStoryId]);
 
   useEffect(() => {
     if (!selectedStoryParam) {
@@ -208,6 +225,58 @@ export function ReviewPage() {
     };
   }, [tropeQuery]);
 
+  useEffect(() => {
+    if (!editingTropeId) {
+      setEditingTropeResults([]);
+      setEditingTropeSearchStatus("idle");
+      return;
+    }
+
+    const trimmedQuery = editingTropeQuery.trim();
+    if (!trimmedQuery) {
+      setEditingTropeResults([]);
+      setEditingTropeSearchStatus("idle");
+      return;
+    }
+
+    let cancelled = false;
+    const timeoutId = window.setTimeout(() => {
+      void (async () => {
+        try {
+          setEditingTropeSearchStatus("loading");
+          const result = await searchTropes({ query: trimmedQuery, limit: 8 });
+          if (cancelled) {
+            return;
+          }
+          setEditingTropeResults(result.items);
+          setEditingTropeSearchStatus("ready");
+        } catch (caughtError) {
+          if (cancelled) {
+            return;
+          }
+          setEditingTropeResults([]);
+          setEditingTropeSearchStatus("ready");
+          setNotice({
+            tone: "error",
+            title: "Could not search replacement tropes",
+            body: getErrorMessage(caughtError),
+          });
+        }
+      })();
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [editingTropeId, editingTropeQuery]);
+
+  useEffect(() => {
+    if (editingTropeId && detail && !detail.tropes.some((trope) => trope.id === editingTropeId)) {
+      resetTropeEditor();
+    }
+  }, [detail, editingTropeId]);
+
   async function handleStoryConflict(error: ApiError, storyId: string) {
     const currentVersion = extractConflictVersion(error);
     await refresh(storyId);
@@ -225,12 +294,14 @@ export function ReviewPage() {
     storyId: string,
     action: () => Promise<unknown>,
     successNotice: PageNotice,
+    onSuccess?: () => void,
   ) {
     try {
       setBusy(true);
       setNotice(null);
       await action();
       await refresh(storyId);
+      onSuccess?.();
       setNotice(successNotice);
     } catch (caughtError) {
       if (caughtError instanceof ApiError && caughtError.status === 409) {
@@ -245,6 +316,14 @@ export function ReviewPage() {
     } finally {
       setBusy(false);
     }
+  }
+
+  function handleStartEditingTrope(trope: StoryDetail["tropes"][number]) {
+    setEditingTropeId(trope.id);
+    setEditingTropeQuery(trope.text);
+    setEditingTropeResults([]);
+    setEditingTropeSearchStatus("idle");
+    setNotice(null);
   }
 
   async function handleUseExistingTrope(tropeId: string) {
@@ -263,6 +342,46 @@ export function ReviewPage() {
         title: "Trope assigned",
         body: "The existing canonical trope was added to the story.",
       },
+    );
+  }
+
+  async function handleKeepEditedTrope(tropeId: string) {
+    if (!detail || !editingTropeQuery.trim()) {
+      return;
+    }
+    await runStoryMutation(
+      detail.id,
+      () =>
+        replaceStoryTrope(detail.id, tropeId, {
+          expected_story_version: detail.version,
+          text: editingTropeQuery.trim(),
+        }),
+      {
+        tone: "success",
+        title: "Trope edited",
+        body: "The story trope was updated from the inline editor.",
+      },
+      resetTropeEditor,
+    );
+  }
+
+  async function handleUseExistingEditedTrope(currentTropeId: string, replacementTropeId: string) {
+    if (!detail) {
+      return;
+    }
+    await runStoryMutation(
+      detail.id,
+      () =>
+        replaceStoryTrope(detail.id, currentTropeId, {
+          expected_story_version: detail.version,
+          trope_id: replacementTropeId,
+        }),
+      {
+        tone: "success",
+        title: "Trope edited",
+        body: "The story trope was replaced with an existing canonical trope.",
+      },
+      resetTropeEditor,
     );
   }
 
@@ -317,6 +436,7 @@ export function ReviewPage() {
 
   const filteredStories = stories.filter((story) => storyMatchesQuery(story, storyQuery));
   const assignedTropeIds = new Set(detail?.tropes.map((trope) => trope.id) ?? []);
+  const editingTrope = detail?.tropes.find((trope) => trope.id === editingTropeId) ?? null;
   const interactionDisabled = busy || storiesLoading || storyLoading;
 
   return (
@@ -455,6 +575,20 @@ export function ReviewPage() {
                     trope={trope}
                     actions={
                       <>
+                        <button
+                          className="button button-ghost"
+                          disabled={interactionDisabled}
+                          onClick={() => {
+                            if (editingTropeId === trope.id) {
+                              resetTropeEditor();
+                              return;
+                            }
+                            handleStartEditingTrope(trope);
+                          }}
+                          type="button"
+                        >
+                          {editingTropeId === trope.id ? "Cancel edit" : "Edit"}
+                        </button>
                         {trope.status !== "validated" ? (
                           <button
                             className="button button-ghost"
@@ -475,7 +609,97 @@ export function ReviewPage() {
                         </button>
                       </>
                     }
-                  />
+                  >
+                    {editingTropeId === trope.id ? (
+                      <div
+                        className="card subdued trope-card-editor"
+                        onClick={(event) => event.stopPropagation()}
+                        onKeyDown={(event) => event.stopPropagation()}
+                      >
+                        <label className="field">
+                          <span>Edit trope</span>
+                          <input
+                            className="input"
+                            disabled={interactionDisabled}
+                            onChange={(event) => setEditingTropeQuery(event.target.value)}
+                            placeholder="Type a replacement trope or reuse a similar existing one"
+                            value={editingTropeQuery}
+                          />
+                        </label>
+
+                        <div className="card-row wrap-row">
+                          <p className="muted">
+                            Search similar existing tropes or keep the typed wording as a manual correction.
+                          </p>
+                          <div className="button-row wrap-row">
+                            <button
+                              className="button"
+                              disabled={
+                                interactionDisabled ||
+                                !editingTropeQuery.trim() ||
+                                (editingTrope ? normalizeDraftText(editingTropeQuery) === normalizeDraftText(editingTrope.text) : true)
+                              }
+                              onClick={() => void handleKeepEditedTrope(trope.id)}
+                              type="button"
+                            >
+                              Save typed trope
+                            </button>
+                            <button
+                              className="button button-ghost"
+                              disabled={interactionDisabled}
+                              onClick={resetTropeEditor}
+                              type="button"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="stack">
+                          <div className="panel-header">
+                            <h3>Similar existing tropes</h3>
+                            <span className="pill">
+                              {editingTropeSearchStatus === "loading" ? "searching" : `${editingTropeResults.length} results`}
+                            </span>
+                          </div>
+                          {!editingTropeQuery.trim() ? <p className="muted">Type to search the existing trope index.</p> : null}
+                          {editingTropeQuery.trim() && editingTropeSearchStatus === "loading" ? (
+                            <p className="muted">Searching tropes...</p>
+                          ) : null}
+                          {editingTropeQuery.trim() &&
+                          editingTropeSearchStatus === "ready" &&
+                          editingTropeResults.length === 0 ? (
+                            <p className="muted">No similar tropes were returned for this query.</p>
+                          ) : null}
+                          {editingTropeResults.map((item) => {
+                            const isCurrentTrope = item.id === trope.id;
+                            const alreadyAssignedElsewhere = assignedTropeIds.has(item.id) && item.id !== trope.id;
+                            return (
+                              <TropeCard
+                                compact
+                                key={`edit-${trope.id}-${item.id}`}
+                                meta={`${explanationLabel(item)} · ${item.explanation.model_name} · dim ${
+                                  item.explanation.vector_dimension ?? "n/a"
+                                }`}
+                                subtitle={`score ${item.score.toFixed(2)}`}
+                                trope={item}
+                                actions={
+                                  <button
+                                    className="button button-ghost"
+                                    disabled={interactionDisabled || isCurrentTrope || alreadyAssignedElsewhere}
+                                    onClick={() => void handleUseExistingEditedTrope(trope.id, item.id)}
+                                    type="button"
+                                  >
+                                    {isCurrentTrope ? "Current trope" : alreadyAssignedElsewhere ? "Already assigned" : "Use existing trope"}
+                                  </button>
+                                }
+                              />
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ) : null}
+                  </TropeCard>
                 ))
               ) : (
                 <p className="muted">No tropes on this story yet.</p>

@@ -207,6 +207,57 @@ def add_story_trope(
     return story, active_dataset, link, job
 
 
+def replace_story_trope(
+    session: Session,
+    story_id: str,
+    current_trope_id: str,
+    *,
+    expected_story_version: int,
+    trope_id: str | None = None,
+    text: str | None = None,
+) -> tuple[Story, Dataset, StoryTrope, object]:
+    active_dataset, story = _get_active_story(session, story_id)
+    _assert_story_version(story, expected_story_version)
+
+    link = next((item for item in story.trope_links if item.trope_id == current_trope_id), None)
+    if link is None:
+        raise StoryTropeNotFoundError("Trope assignment not found on this story.")
+
+    replacement_trope = _resolve_trope(session, trope_id=trope_id, text=text)
+    if replacement_trope.id == current_trope_id:
+        raise StoryMutationValidationError("Edited trope matches the current trope assignment.")
+    if any(item.trope_id == replacement_trope.id for item in story.trope_links if item.trope_id != current_trope_id):
+        raise StoryMutationValidationError("Story already has this trope assignment.")
+
+    previous_trope_id = link.trope_id
+    previous_position = link.position
+    story.trope_links.remove(link)
+    session.flush()
+
+    replacement_link = StoryTrope(
+        trope=replacement_trope,
+        origin=StoryTropeOrigin.HUMAN_ENTERED,
+        status=AssignmentStatus.VALIDATED,
+        position=previous_position,
+    )
+    story.trope_links.append(replacement_link)
+    session.flush()
+
+    _refresh_trope_cached_story_count(session, active_dataset.id, previous_trope_id)
+    _refresh_trope_cached_story_count(session, active_dataset.id, replacement_trope.id)
+    sync_story_derived_fields(story)
+    _increment_versions(story, active_dataset)
+    job = _queue_story_rebuild(
+        session,
+        dataset_id=active_dataset.id,
+        story_id=story.id,
+        reason="story_trope_replaced",
+        trope_id=replacement_trope.id,
+    )
+    session.commit()
+    return story, active_dataset, replacement_link, job
+
+
 def delete_story_trope(
     session: Session,
     story_id: str,

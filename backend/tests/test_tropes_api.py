@@ -60,3 +60,46 @@ def test_trope_detail_lists_story_titles_for_active_dataset(tmp_path) -> None:
     assert body["text"] == "first trope"
     assert body["story_count"] == 2
     assert [item["title"] for item in body["stories"]] == ["Story One", "Story Two"]
+
+
+def test_create_canonical_trope_creates_unused_trope(tmp_path) -> None:
+    db_path = tmp_path / "tropes-create-api.db"
+    engine = build_engine(f"sqlite:///{db_path}")
+    session_factory = build_session_factory(engine)
+    app = create_app(db_engine=engine, session_factory=session_factory, job_runner_enabled=False)
+
+    with TestClient(app) as client:
+        upload_dataset(client, [make_row(title="Story One", tropes="§§ first trope")])
+
+        response = client.post("/api/tropes", json={"text": "Moon Bride"})
+
+        trope_list = client.get("/api/tropes").json()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["created"] is True
+    assert body["trope"]["text"] == "Moon Bride"
+    assert body["trope"]["story_count"] == 0
+    assert any(item["id"] == body["trope"]["id"] and item["text"] == "Moon Bride" for item in trope_list)
+
+
+def test_create_canonical_trope_reuses_existing_trope_by_normalized_text(tmp_path) -> None:
+    db_path = tmp_path / "tropes-reuse-api.db"
+    engine = build_engine(f"sqlite:///{db_path}")
+    session_factory = build_session_factory(engine)
+    app = create_app(db_engine=engine, session_factory=session_factory, job_runner_enabled=False)
+
+    with TestClient(app) as client:
+        upload_dataset(client, [make_row(title="Story One", tropes="§§ moon bride")])
+
+        trope_list = client.get("/api/tropes").json()
+        existing = next(item for item in trope_list if item["text"] == "moon bride")
+
+        response = client.post("/api/tropes", json={"text": "  Moon Bride  "})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["created"] is False
+    assert body["trope"]["id"] == existing["id"]
+    assert body["trope"]["text"] == "moon bride"
+    assert body["trope"]["story_count"] == 1
