@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.db.models import (
@@ -14,6 +14,7 @@ from app.db.models import (
     StoryTrope,
     TermEmbedding,
     TermKind,
+    TermSimilarityCache,
     Trope,
 )
 from app.services.csv_io import import_csv_bytes
@@ -239,3 +240,16 @@ def upload_dataset_csv(
     session.refresh(dataset)
     session.refresh(job)
     return dataset, job
+
+
+def clear_dataset_data(session: Session) -> None:
+    session.execute(delete(TermSimilarityCache))
+    session.execute(delete(TermEmbedding))
+    session.execute(delete(StoryTrope))
+    session.execute(delete(StoryKeyword))
+    session.execute(delete(Job))
+    session.execute(delete(Story))
+    session.execute(delete(Trope))
+    session.execute(delete(Keyword))
+    session.execute(delete(Dataset))
+    session.commit()

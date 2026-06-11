@@ -1,6 +1,14 @@
 import { FormEvent, useEffect, useState } from "react";
 
-import { ApiError, getDatasetExportUrl, getDatasetStatus, getErrorMessage, getJob, uploadDataset } from "../api/client";
+import {
+  ApiError,
+  clearDatasetData,
+  getDatasetExportUrl,
+  getDatasetStatus,
+  getErrorMessage,
+  getJob,
+  uploadDataset,
+} from "../api/client";
 import type { DatasetStatus, EmbeddingStatus, JobDetail, JobSummary } from "../api/types";
 
 const TERMINAL_JOB_STATUSES = new Set(["succeeded", "failed", "cancelled"]);
@@ -65,10 +73,6 @@ function formatJobStatus(job: JobSummary | JobDetail | null): string {
   return job.status.split("_").join(" ");
 }
 
-function isJobDetail(job: JobSummary | JobDetail | null): job is JobDetail {
-  return Boolean(job && "attempts" in job);
-}
-
 function formatEmbeddingState(status: EmbeddingStatus | null | undefined): string {
   if (!status) {
     return "unknown";
@@ -122,6 +126,7 @@ export function DatasetPage() {
   const [file, setFile] = useState<File | null>(null);
   const [fileInputKey, setFileInputKey] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const [backendUnavailable, setBackendUnavailable] = useState(false);
   const [statusNotice, setStatusNotice] = useState<PageNotice | null>(null);
   const [actionNotice, setActionNotice] = useState<PageNotice | null>(null);
@@ -194,7 +199,13 @@ export function DatasetPage() {
         if (cancelled) {
           return;
         }
-        setJobError(`GET /api/jobs/${currentJobId} failed: ${getErrorMessage(caughtError)}`);
+        const message = `GET /api/jobs/${currentJobId} failed: ${getErrorMessage(caughtError)}`;
+        setJobError(message);
+        setStatusNotice({
+          tone: "warning",
+          title: "Could not refresh rebuild status",
+          body: message,
+        });
       }
     };
 
@@ -271,6 +282,44 @@ export function DatasetPage() {
     }
   }
 
+  async function handleClearData() {
+    if (status?.active_dataset_version == null) {
+      return;
+    }
+
+    if (
+      !window.confirm(
+        "This will permanently remove the current dataset, stories, trope assignments, jobs, and computed artifacts. Continue?",
+      )
+    ) {
+      return;
+    }
+
+    try {
+      setClearing(true);
+      setActionNotice(null);
+
+      const emptyStatus = await clearDatasetData();
+      setStatus(emptyStatus);
+      setBackendUnavailable(false);
+      setStatusNotice(null);
+      setCurrentJobId(emptyStatus.latest_job?.id ?? null);
+      setJobDetail(null);
+      setJobError(null);
+      setFile(null);
+      setFileInputKey((value) => value + 1);
+      setActionNotice({
+        tone: "success",
+        title: "Data cleared",
+        body: "The dataset and all derived data were removed. The app is back in its empty initial state.",
+      });
+    } catch (caughtError) {
+      setActionNotice(buildRequestNotice("DELETE /api/dataset", caughtError));
+    } finally {
+      setClearing(false);
+    }
+  }
+
   const effectiveJob = jobDetail ?? (status?.latest_job ?? null);
   const latestRebuildStatus = formatJobStatus(effectiveJob);
   const notice = actionNotice ?? statusNotice;
@@ -288,8 +337,7 @@ export function DatasetPage() {
           </button>
         </div>
         <p className="muted">
-          Upload a legacy-compatible CSV, confirm replacement when needed, watch the rebuild job settle, and export the
-          currently active dataset.
+          Upload a legacy-compatible CSV, confirm replacement when needed, and export the currently active dataset.
         </p>
         <div className="stats-grid">
           <article className="stat-card">
@@ -394,7 +442,7 @@ export function DatasetPage() {
             ) : (
               <p className="muted">No active dataset yet. The first upload will create one.</p>
             )}
-            <button className="button" disabled={busy || backendUnavailable} type="submit">
+            <button className="button" disabled={busy || clearing || backendUnavailable} type="submit">
               {busy ? "Uploading..." : "Upload dataset"}
             </button>
           </form>
@@ -412,32 +460,25 @@ export function DatasetPage() {
               Download export
             </span>
           )}
-          <div className="card subdued">
-            <div className="panel-header">
-              <h3>Latest rebuild job</h3>
-              {effectiveJob ? <span className="pill">{formatJobStatus(effectiveJob)}</span> : null}
-            </div>
-            {effectiveJob ? (
-              <div className="stack">
-                <p className="mono">{effectiveJob.job_type} · {effectiveJob.id}</p>
-                {isJobDetail(effectiveJob) ? (
-                  <>
-                    <p className="muted">
-                      Attempts {effectiveJob.attempts} · started {effectiveJob.started_at || "not yet"} · finished{" "}
-                      {effectiveJob.finished_at || "not yet"}
-                    </p>
-                    {effectiveJob.error_message ? <p className="notice-inline">{effectiveJob.error_message}</p> : null}
-                  </>
-                ) : (
-                  <p className="muted">Waiting for detailed job status...</p>
-                )}
-              </div>
-            ) : (
-              <p className="muted">No rebuild job has been recorded yet.</p>
-            )}
-            {jobError ? <p className="notice-inline">Could not refresh job status: {jobError}</p> : null}
-          </div>
         </div>
+      </section>
+
+      <section className="panel stack">
+        <h2>Clear data</h2>
+        <p className="muted">
+          Remove the current dataset and re-initialize the app to its empty starting state before leaving this page.
+        </p>
+        <div className="button-row wrap-row">
+          <button
+            className="button button-danger"
+            disabled={busy || clearing || backendUnavailable || status?.active_dataset_version == null}
+            onClick={() => void handleClearData()}
+            type="button"
+          >
+            {clearing ? "Clearing..." : "Clear data"}
+          </button>
+        </div>
+        {jobError ? <p className="notice-inline">Could not refresh rebuild status: {jobError}</p> : null}
       </section>
     </div>
   );

@@ -3,10 +3,23 @@ import io
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import func, select
 
 from app.core.config import get_settings
 from app.core.csv_schema import CSV_COLUMNS, KEYWORD_FIELD, TROPE_FIELD
-from app.db import build_engine, build_session_factory
+from app.db import (
+    Dataset,
+    Job,
+    Keyword,
+    Story,
+    StoryKeyword,
+    StoryTrope,
+    TermEmbedding,
+    TermSimilarityCache,
+    Trope,
+    build_engine,
+    build_session_factory,
+)
 from app.main import create_app
 from tests.search_fakes import FakeEmbeddingBackend
 
@@ -242,3 +255,64 @@ def test_dataset_export_downloads_current_dataset_as_csv(client: TestClient) -> 
     assert rows[0]["Story title (Eng)"] == "Exported Story"
     assert rows[0][KEYWORD_FIELD] == "canoe ; sea"
     assert rows[0][TROPE_FIELD] == "§§ first trope\n§§ second trope"
+
+
+def test_clear_dataset_removes_current_data_and_returns_empty_state(client: TestClient) -> None:
+    row = {column: "" for column in CSV_COLUMNS}
+    row["Story title (Eng)"] = "Story to clear"
+    row[KEYWORD_FIELD] = "canoe ; sea"
+    row[TROPE_FIELD] = "§§ first trope\n§§ second trope"
+
+    upload_response = client.post(
+        "/api/dataset/upload",
+        files={"file": ("stories.csv", make_csv_bytes([row]), "text/csv")},
+    )
+    assert upload_response.status_code == 201
+    assert client.app.state.job_runner.process_next_job() is True
+
+    clear_response = client.delete("/api/dataset")
+
+    assert clear_response.status_code == 200
+    assert clear_response.json() == {
+        "story_count": 0,
+        "trope_count": 0,
+        "keyword_count": 0,
+        "active_dataset_version": None,
+        "latest_job": None,
+        "embedding_status": {
+            "state": "missing",
+            "ready": False,
+            "current": False,
+            "model_name": FakeEmbeddingBackend.model_name,
+            "artifact_version": None,
+            "rebuilt_dataset_version": None,
+            "indexed_trope_count": 0,
+            "indexed_keyword_count": 0,
+            "last_built_at": None,
+            "last_error_message": None,
+            "latest_rebuild_job": None,
+        },
+    }
+
+    with client.app.state.session_factory() as session:
+        assert session.scalar(select(func.count()).select_from(Dataset)) == 0
+        assert session.scalar(select(func.count()).select_from(Story)) == 0
+        assert session.scalar(select(func.count()).select_from(StoryTrope)) == 0
+        assert session.scalar(select(func.count()).select_from(StoryKeyword)) == 0
+        assert session.scalar(select(func.count()).select_from(Trope)) == 0
+        assert session.scalar(select(func.count()).select_from(Keyword)) == 0
+        assert session.scalar(select(func.count()).select_from(Job)) == 0
+        assert session.scalar(select(func.count()).select_from(TermEmbedding)) == 0
+        assert session.scalar(select(func.count()).select_from(TermSimilarityCache)) == 0
+
+    export_response = client.get("/api/dataset/export.csv")
+    assert export_response.status_code == 404
+    assert export_response.json()["code"] == "active_dataset_not_found"
+
+    reupload_response = client.post(
+        "/api/dataset/upload",
+        files={"file": ("stories.csv", make_csv_bytes([row]), "text/csv")},
+    )
+
+    assert reupload_response.status_code == 201
+    assert reupload_response.json()["active_dataset_version"] == 1

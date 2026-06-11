@@ -98,6 +98,12 @@ export function getDatasetStatus(): Promise<DatasetStatus> {
   return request<DatasetStatus>("/dataset/status");
 }
 
+export function clearDatasetData(): Promise<DatasetStatus> {
+  return request<DatasetStatus>("/dataset", {
+    method: "DELETE",
+  });
+}
+
 export function getJob(jobId: string): Promise<JobDetail> {
   return request<JobDetail>(`/jobs/${jobId}`);
 }

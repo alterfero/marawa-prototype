@@ -7,7 +7,7 @@ from app.api.errors import api_error
 from app.api.deps import get_db_session
 from app.core.config import get_settings
 from app.services.csv_io import CSVImportValidationError, export_active_dataset_to_csv_bytes
-from app.services.dataset import get_dataset_status, upload_dataset_csv
+from app.services.dataset import clear_dataset_data, get_dataset_status, upload_dataset_csv
 
 
 class JobSummaryResponse(BaseModel):
@@ -88,6 +88,17 @@ async def upload_dataset(
     return DatasetUploadResponse(
         active_dataset_version=dataset.version,
         latest_job=JobSummaryResponse(id=job.id, status=job.status.value, job_type=job.job_type),
+    )
+
+
+@router.delete("", response_model=DatasetStatusResponse)
+def clear_dataset(
+    request: Request,
+    session: Session = Depends(get_db_session),
+) -> DatasetStatusResponse:
+    clear_dataset_data(session)
+    return DatasetStatusResponse(
+        **get_dataset_status(session, model_name=request.app.state.search_service.model_name)
     )
 
 
