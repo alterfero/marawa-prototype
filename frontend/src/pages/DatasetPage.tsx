@@ -9,7 +9,7 @@ import {
   getJob,
   uploadDataset,
 } from "../api/client";
-import type { DatasetStatus, EmbeddingStatus, JobDetail, JobSummary } from "../api/types";
+import type { DatasetStatus, JobDetail, JobSummary } from "../api/types";
 
 const TERMINAL_JOB_STATUSES = new Set(["succeeded", "failed", "cancelled"]);
 const JOB_POLL_INTERVAL_MS = 2000;
@@ -71,54 +71,6 @@ function formatJobStatus(job: JobSummary | JobDetail | null): string {
     return "none";
   }
   return job.status.split("_").join(" ");
-}
-
-function formatEmbeddingState(status: EmbeddingStatus | null | undefined): string {
-  if (!status) {
-    return "unknown";
-  }
-
-  switch (status.state) {
-    case "ready":
-      return "Ready and current";
-    case "running":
-      return "Rebuilding now";
-    case "queued":
-      return "Rebuild queued";
-    case "stale":
-      return "Ready but stale";
-    case "failed":
-      return "Rebuild failed";
-    case "missing":
-      return "Not built yet";
-    default:
-      return status.state.split("_").join(" ");
-  }
-}
-
-function embeddingSummary(status: EmbeddingStatus | null | undefined, activeDatasetVersion: number | null | undefined): string {
-  if (!status) {
-    return "Embedding status is not available yet.";
-  }
-
-  switch (status.state) {
-    case "ready":
-      return `Artifacts are ready for active dataset version ${activeDatasetVersion ?? "n/a"}.`;
-    case "running":
-      return "A rebuild job is running. Existing artifacts may still be usable, but they are not current yet.";
-    case "queued":
-      return "A rebuild job is queued. Similarity search will become current when that job succeeds.";
-    case "stale":
-      return "Embeddings exist, but they were built for an older dataset version.";
-    case "failed":
-      return "The latest rebuild failed, so embeddings are not current.";
-    case "missing":
-      return activeDatasetVersion == null
-        ? "No active dataset yet."
-        : "No successful embedding rebuild has completed for the active dataset yet.";
-    default:
-      return "Embedding status is available but not recognized by the current UI.";
-  }
 }
 
 export function DatasetPage() {
@@ -329,16 +281,12 @@ export function DatasetPage() {
       <section className="panel">
         <div className="panel-header">
           <div>
-            <p className="eyebrow">Dataset</p>
-            <h1>Load and inspect the active dataset</h1>
+            <h1>Dataset</h1>
           </div>
           <button className="button button-ghost" onClick={() => void handleRefresh()} type="button">
             Refresh
           </button>
         </div>
-        <p className="muted">
-          Upload a legacy-compatible CSV, confirm replacement when needed, and export the currently active dataset.
-        </p>
         <div className="stats-grid">
           <article className="stat-card">
             <span className="stat-label">Stories</span>
@@ -361,55 +309,6 @@ export function DatasetPage() {
             <strong>{backendUnavailable && !status ? "unavailable" : latestRebuildStatus}</strong>
           </article>
         </div>
-        <article className="card subdued">
-          <div className="panel-header">
-            <div>
-              <h2>Embeddings</h2>
-              <p className="muted">
-                {backendUnavailable && !status
-                  ? "Backend unavailable"
-                  : status?.embedding_status.model_name || "No embedding model reported"}
-              </p>
-            </div>
-            <span className="pill">
-              {backendUnavailable && !status ? "unavailable" : formatEmbeddingState(status?.embedding_status)}
-            </span>
-          </div>
-          <p className="muted">
-            {backendUnavailable && !status
-              ? "Start the backend to load embedding readiness and currentness."
-              : embeddingSummary(status?.embedding_status, status?.active_dataset_version)}
-          </p>
-          <div className="stats-grid">
-            <article className="stat-card">
-              <span className="stat-label">Ready</span>
-              <strong>{backendUnavailable && !status ? "—" : status?.embedding_status.ready ? "yes" : "no"}</strong>
-            </article>
-            <article className="stat-card">
-              <span className="stat-label">Current</span>
-              <strong>{backendUnavailable && !status ? "—" : status?.embedding_status.current ? "yes" : "no"}</strong>
-            </article>
-            <article className="stat-card">
-              <span className="stat-label">Built For Dataset</span>
-              <strong>{backendUnavailable && !status ? "—" : status?.embedding_status.rebuilt_dataset_version ?? "none"}</strong>
-            </article>
-            <article className="stat-card">
-              <span className="stat-label">Artifact Version</span>
-              <strong>{backendUnavailable && !status ? "—" : status?.embedding_status.artifact_version ?? "none"}</strong>
-            </article>
-            <article className="stat-card">
-              <span className="stat-label">Indexed Tropes</span>
-              <strong>{backendUnavailable && !status ? "—" : status?.embedding_status.indexed_trope_count ?? 0}</strong>
-            </article>
-            <article className="stat-card">
-              <span className="stat-label">Indexed Keywords</span>
-              <strong>{backendUnavailable && !status ? "—" : status?.embedding_status.indexed_keyword_count ?? 0}</strong>
-            </article>
-          </div>
-          {!backendUnavailable && status?.embedding_status.last_error_message ? (
-            <p className="notice-inline">Latest rebuild error: {status.embedding_status.last_error_message}</p>
-          ) : null}
-        </article>
       </section>
 
       {notice && (
@@ -437,11 +336,6 @@ export function DatasetPage() {
                 type="file"
               />
             </label>
-            {status?.active_dataset_version != null ? (
-              <p className="muted">Uploading will replace the current active dataset after confirmation.</p>
-            ) : (
-              <p className="muted">No active dataset yet. The first upload will create one.</p>
-            )}
             <button className="button" disabled={busy || clearing || backendUnavailable} type="submit">
               {busy ? "Uploading..." : "Upload dataset"}
             </button>
@@ -450,7 +344,6 @@ export function DatasetPage() {
 
         <div className="stack">
           <h2>Export CSV</h2>
-          <p className="muted">Export the current active dataset using the exact legacy column names and order.</p>
           {status?.active_dataset_version ? (
             <a className="button button-ghost" href={getDatasetExportUrl()}>
               Download export
@@ -465,9 +358,6 @@ export function DatasetPage() {
 
       <section className="panel stack">
         <h2>Clear data</h2>
-        <p className="muted">
-          Remove the current dataset and re-initialize the app to its empty starting state before leaving this page.
-        </p>
         <div className="button-row wrap-row">
           <button
             className="button button-danger"

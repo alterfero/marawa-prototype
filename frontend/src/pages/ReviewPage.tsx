@@ -63,18 +63,14 @@ function summarizeStory(detail: StoryDetail): string {
   );
 }
 
-function explanationLabel(item: TropeSearchItem): string {
-  const flags = [];
-  if (item.explanation.matched_query_exactly) {
-    flags.push("exact match");
+function storyListPreview(story: StorySummary): string {
+  if (story.summary) {
+    return story.summary;
   }
-  if (item.explanation.cache_hit) {
-    flags.push("cached");
+  if (story.territory) {
+    return story.territory;
   }
-  if (item.explanation.near_duplicate) {
-    flags.push("near duplicate");
-  }
-  return flags.length ? flags.join(" · ") : item.explanation.method.split("_").join(" ");
+  return `${story.trope_count} tropes · ${story.keyword_count} keywords`;
 }
 
 export function ReviewPage() {
@@ -444,17 +440,12 @@ export function ReviewPage() {
       <section className="panel">
         <div className="panel-header">
           <div>
-            <p className="eyebrow">Review</p>
             <h1>Inspect stories and manage trope assignments</h1>
           </div>
           <button className="button button-ghost" disabled={storiesLoading || storyLoading} onClick={() => void refresh()} type="button">
             {storiesLoading || storyLoading ? "Loading..." : "Refresh"}
           </button>
         </div>
-        <p className="muted">
-          Filter stories locally, inspect the selected story, search for similar existing tropes, and apply review
-          changes against the backend version checks.
-        </p>
       </section>
 
       {notice && (
@@ -496,12 +487,7 @@ export function ReviewPage() {
                 type="button"
               >
                 <strong>{story.title || `Story ${story.source_row_number ?? "?"}`}</strong>
-                <span className="muted">
-                  {story.territory || "No territory"} · v{story.version}
-                </span>
-                <span className="muted">
-                  {story.summary || `${story.trope_count} tropes · ${story.keyword_count} keywords`}
-                </span>
+                <span className="muted">{storyListPreview(story)}</span>
               </button>
             ))}
           </div>
@@ -510,14 +496,8 @@ export function ReviewPage() {
         <div className="page-stack review-detail-column">
           <section className="panel">
             <div className="panel-header">
-              <div>
-                <h2>{detail?.fields["Story title (Eng)"] || detail?.id || "No story selected"}</h2>
-                {detail ? (
-                  <p className="muted">
-                    Story version {detail.version} · source row {detail.source_row_number ?? "n/a"}
-                  </p>
-                ) : null}
-              </div>
+              <h2>{detail?.fields["Story title (Eng)"] || detail?.id || "No story selected"}</h2>
+              {detail ? <span className="pill">Row {detail.source_row_number ?? "n/a"}</span> : null}
             </div>
 
             {detail ? (
@@ -627,10 +607,7 @@ export function ReviewPage() {
                           />
                         </label>
 
-                        <div className="card-row wrap-row">
-                          <p className="muted">
-                            Search similar existing tropes or keep the typed wording as a manual correction.
-                          </p>
+                        <div className="button-row wrap-row">
                           <div className="button-row wrap-row">
                             <button
                               className="button"
@@ -662,7 +639,6 @@ export function ReviewPage() {
                               {editingTropeSearchStatus === "loading" ? "searching" : `${editingTropeResults.length} results`}
                             </span>
                           </div>
-                          {!editingTropeQuery.trim() ? <p className="muted">Type to search the existing trope index.</p> : null}
                           {editingTropeQuery.trim() && editingTropeSearchStatus === "loading" ? (
                             <p className="muted">Searching tropes...</p>
                           ) : null}
@@ -678,10 +654,6 @@ export function ReviewPage() {
                               <TropeCard
                                 compact
                                 key={`edit-${trope.id}-${item.id}`}
-                                meta={`${explanationLabel(item)} · ${item.explanation.model_name} · dim ${
-                                  item.explanation.vector_dimension ?? "n/a"
-                                }`}
-                                subtitle={`score ${item.score.toFixed(2)}`}
                                 trope={item}
                                 actions={
                                   <button
@@ -709,10 +681,7 @@ export function ReviewPage() {
 
           <section className="panel">
             <div className="panel-header">
-              <div>
-                <h2>Add trope</h2>
-                <p className="muted">Search similar tropes before keeping your typed text.</p>
-              </div>
+              <h2>Add trope</h2>
             </div>
 
             <label className="field">
@@ -727,12 +696,7 @@ export function ReviewPage() {
 
             <div className="card subdued">
               <div className="card-row">
-                <div>
-                  <h3>Keep typed trope</h3>
-                  <p className="muted">
-                    Use this when the typed trope should stay as written, even if you do not select an existing result.
-                  </p>
-                </div>
+                <h3>Keep typed trope</h3>
                 <button
                   className="button"
                   disabled={!detail || interactionDisabled || !tropeQuery.trim()}
@@ -751,7 +715,6 @@ export function ReviewPage() {
                   {tropeSearchStatus === "loading" ? "searching" : `${tropeResults.length} results`}
                 </span>
               </div>
-              {!tropeQuery.trim() ? <p className="muted">Start typing to search the existing trope index.</p> : null}
               {tropeQuery.trim() && tropeSearchStatus === "loading" ? <p className="muted">Searching tropes...</p> : null}
               {tropeQuery.trim() && tropeSearchStatus === "ready" && tropeResults.length === 0 ? (
                 <p className="muted">No similar tropes were returned for this query.</p>
@@ -761,10 +724,6 @@ export function ReviewPage() {
                 return (
                   <TropeCard
                     key={item.id}
-                    meta={`${explanationLabel(item)} · ${item.explanation.model_name} · dim ${
-                      item.explanation.vector_dimension ?? "n/a"
-                    }`}
-                    subtitle={`score ${item.score.toFixed(2)}`}
                     trope={item}
                     actions={
                       <button

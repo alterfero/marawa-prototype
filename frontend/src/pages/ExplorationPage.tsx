@@ -124,8 +124,7 @@ function markerPopupHtml(marker: ExplorationMarker): string {
   const matchedTropes = marker.matched_tropes.length
     ? marker.matched_tropes
         .map(
-          (trope) =>
-            `<span class="pill">${escapeHtml(trope.text)} · ${trope.score.toFixed(2)}</span>`,
+          (trope) => `<span class="pill">${escapeHtml(trope.text)}</span>`,
         )
         .join("")
     : `<p class="muted">No matched tropes in this network response.</p>`;
@@ -134,9 +133,8 @@ function markerPopupHtml(marker: ExplorationMarker): string {
     <div class="map-popup-content popup-stack">
       <div>
         <strong>${escapeHtml(marker.title)}</strong>
-        <p class="muted">${marker.kind === "original" ? "Original story" : "Related story"}</p>
       </div>
-      <p class="muted">Row ${marker.source_row_number ?? "unknown"} · ${escapeHtml(formatCoordinateLabel(marker))}</p>
+      <p class="muted">${escapeHtml(formatCoordinateLabel(marker))}</p>
       <p>${escapeHtml(marker.abstract || "No abstract available.")}</p>
       <div class="stack">
         <strong>Matched tropes</strong>
@@ -220,16 +218,7 @@ function MissingLocationList({
     <div className="stack">
       {markers.map((marker) => (
         <article className="card subdued" key={marker.story_id}>
-          <div className="card-row">
-            <div>
-              <h3>{marker.title}</h3>
-              <p className="muted">
-                {marker.kind === "original" ? "Original story" : "Related story"} · row{" "}
-                {marker.source_row_number ?? "unknown"}
-              </p>
-            </div>
-            <span className="pill">{marker.kind}</span>
-          </div>
+          <h3>{marker.title}</h3>
           <p>{marker.abstract || "No abstract available."}</p>
           <div className="stack">
             <strong>Matched tropes</strong>
@@ -249,12 +238,7 @@ function renderRelatedTropes(candidates: ExplorationCandidate[]) {
   return (
     <div className="trope-card-grid">
       {candidates.map((candidate) => (
-        <TropeCard
-          compact
-          key={candidate.id}
-          subtitle={`score ${candidate.score.toFixed(2)}`}
-          trope={candidate}
-        />
+        <TropeCard compact key={candidate.id} trope={candidate} />
       ))}
     </div>
   );
@@ -266,12 +250,7 @@ function renderCandidateCards(
   onSelect: (candidate: ExplorationCandidate) => void,
 ) {
   if (!candidates.length) {
-    return (
-      <p className="muted">
-        No candidate tropes matched this phrase yet. If you just uploaded a dataset, wait for the rebuild job to finish
-        or try a more exact trope phrase.
-      </p>
-    );
+    return <p className="muted">No candidate tropes matched this phrase.</p>;
   }
 
   return (
@@ -279,7 +258,6 @@ function renderCandidateCards(
       {candidates.map((candidate) => (
         <TropeCard
           key={candidate.id}
-          subtitle={`score ${candidate.score.toFixed(2)}`}
           trope={candidate}
           actions={
             <button className="button" disabled={busy} onClick={() => onSelect(candidate)} type="button">
@@ -314,7 +292,7 @@ function renderMatchedTropeCards(tropes: ExplorationMatchedTrope[], emptyLabel: 
   return (
     <div className="trope-card-grid">
       {tropes.map((trope) => (
-        <TropeCard compact key={trope.id} subtitle={`score ${trope.score.toFixed(2)}`} trope={trope} />
+        <TropeCard compact key={trope.id} trope={trope} />
       ))}
     </div>
   );
@@ -531,7 +509,6 @@ export function ExplorationPage() {
       <section className="panel">
         <div className="panel-header">
           <div>
-            <p className="eyebrow">Exploration</p>
             <h1>Explore the story network around a trope</h1>
           </div>
         </div>
@@ -578,10 +555,6 @@ export function ExplorationPage() {
             type="range"
             value={threshold}
           />
-          <p className="muted">
-            Higher values keep only more similar related tropes and stories. When a trope is selected, moving the slider
-            refreshes the network automatically.
-          </p>
         </div>
       </section>
 
@@ -593,21 +566,10 @@ export function ExplorationPage() {
           </p>
         </section>
       ) : null}
-      {!busy && !error && !network ? (
-        <section className="panel">
-          <p className="muted">
-            Start with a phrase query to find candidate tropes, then select one to render the exploration map.
-          </p>
-        </section>
-      ) : null}
-
       {network && !network.selected_trope ? (
         <section className="panel">
           <div className="panel-header">
-            <div>
-              <h2>Candidate similar tropes</h2>
-              <p className="muted">Choose a canonical trope to build the map network.</p>
-            </div>
+            <h2>Candidate similar tropes</h2>
           </div>
           {renderCandidateCards(network.selected_trope_candidates, busy, handleSelectCandidate)}
         </section>
@@ -617,13 +579,7 @@ export function ExplorationPage() {
         <ExplorationResultBoundary key={network.selected_trope.id}>
           <section className="panel">
             <div className="panel-header">
-              <div>
-                <h2>{network.selected_trope.text}</h2>
-                <p className="muted">
-                  {network.selected_trope.story_count} stories · {network.related_tropes.length} related tropes above the
-                  threshold
-                </p>
-              </div>
+              <h2>{network.selected_trope.text}</h2>
             </div>
             <div className="stats-grid">
               <article className="stat-card">
@@ -651,13 +607,7 @@ export function ExplorationPage() {
 
           <section className="panel">
             <div className="panel-header">
-              <div>
-                <h2>Map</h2>
-                <p className="muted">
-                  Only stories with valid coordinates are placed on the map. Stories with missing or malformed coordinates
-                  stay in the review list below.
-                </p>
-              </div>
+              <h2>Map</h2>
             </div>
             <ExplorationMap bounds={mapBounds} connections={visibleConnections} markers={visibleMarkers} />
           </section>
@@ -668,15 +618,8 @@ export function ExplorationPage() {
               <div className="stack">
                 {network.original_markers.map((marker) => (
                   <article className="card" key={marker.story_id}>
-                    <div className="card-row">
-                      <div>
-                        <h3>{marker.title}</h3>
-                        <p className="muted">
-                          {formatCoordinateLabel(marker)} · score {marker.similarity.toFixed(2)}
-                        </p>
-                      </div>
-                      <span className="pill">original</span>
-                    </div>
+                    <h3>{marker.title}</h3>
+                    <p className="muted">{formatCoordinateLabel(marker)}</p>
                     <p>{marker.abstract || "No abstract available."}</p>
                     <div className="stack">
                       <strong>Story tropes</strong>
@@ -692,15 +635,8 @@ export function ExplorationPage() {
                 {network.related_markers.length ? (
                   network.related_markers.map((marker) => (
                     <article className="card" key={marker.story_id}>
-                      <div className="card-row">
-                        <div>
-                          <h3>{marker.title}</h3>
-                          <p className="muted">
-                            {formatCoordinateLabel(marker)} · score {marker.similarity.toFixed(2)}
-                          </p>
-                        </div>
-                        <span className="pill">related</span>
-                      </div>
+                      <h3>{marker.title}</h3>
+                      <p className="muted">{formatCoordinateLabel(marker)}</p>
                       <p>{marker.abstract || "No abstract available."}</p>
                       <div className="stack">
                         <strong>Matched tropes</strong>

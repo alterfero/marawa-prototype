@@ -13,17 +13,13 @@ import { ReviewPage } from "./pages/ReviewPage";
 
 const SIDEBAR_STATUS_POLL_INTERVAL_MS = 5000;
 
-const NAV_ITEMS: Array<{ route: AppRoute; label: string; caption: string }> = [
-  { route: "/dataset", label: "Dataset", caption: "Import, export, and status" },
-  { route: "/create", label: "Create new entry", caption: "Add story metadata and tropes" },
-  { route: "/review", label: "Review", caption: "Stories and trope assignments" },
-  { route: "/curation", label: "Curation", caption: "Merge or remove tropes" },
-  { route: "/exploration", label: "Exploration", caption: "Search and network preview" },
-  {
-    route: "/experimental/trope-force-3d",
-    label: "Experimental visualization",
-    caption: "3D trope-sequence force prototype",
-  },
+const NAV_ITEMS: Array<{ route: AppRoute; label: string }> = [
+  { route: "/dataset", label: "Dataset" },
+  { route: "/create", label: "Create new entry" },
+  { route: "/review", label: "Review" },
+  { route: "/curation", label: "Curation" },
+  { route: "/exploration", label: "Exploration" },
+  { route: "/experimental/trope-force-3d", label: "Experimental visualization" },
 ];
 
 type SidebarStatusTone = "ready" | "rebuilding" | "unavailable";
@@ -31,13 +27,11 @@ type SidebarStatusTone = "ready" | "rebuilding" | "unavailable";
 function sidebarEmbeddingState(status: DatasetStatus | null): {
   label: string;
   tone: SidebarStatusTone;
-  detail: string;
 } {
   if (!status) {
     return {
       label: "Checking",
       tone: "rebuilding",
-      detail: "Loading embedding readiness.",
     };
   }
 
@@ -45,7 +39,6 @@ function sidebarEmbeddingState(status: DatasetStatus | null): {
     return {
       label: "Ready",
       tone: "ready",
-      detail: `Dataset v${status.active_dataset_version ?? "n/a"} is current.`,
     };
   }
 
@@ -53,14 +46,12 @@ function sidebarEmbeddingState(status: DatasetStatus | null): {
     return {
       label: "Rebuilding",
       tone: "rebuilding",
-      detail: "No active dataset yet.",
     };
   }
 
   return {
     label: "Rebuilding",
     tone: "rebuilding",
-    detail: `Dataset v${status.active_dataset_version} is waiting for current embeddings.`,
   };
 }
 
@@ -128,7 +119,6 @@ export default function App() {
     ? {
         label: "Unavailable",
         tone: "unavailable" as SidebarStatusTone,
-        detail: "Backend status could not be loaded.",
       }
     : sidebarEmbeddingState(datasetStatus);
 
@@ -136,18 +126,13 @@ export default function App() {
     <div className="app-shell">
       <aside className="app-sidebar">
         <div className="brand-block">
-          <p className="eyebrow">Marawa</p>
-          <h1>Oral mythology workbench</h1>
+          <h1>Marawa</h1>
           <div className="sidebar-status-card">
             <div className="sidebar-status-row">
               <strong>Embeddings</strong>
               <span className={`sidebar-status-pill sidebar-status-${sidebarStatus.tone}`}>{sidebarStatus.label}</span>
             </div>
-            <p className="muted">{sidebarStatus.detail}</p>
           </div>
-          <p className="muted">
-            Minimal frontend scaffold for the FastAPI rewrite. Each page calls the live backend, but the UI is still intentionally light.
-          </p>
         </div>
 
         <nav className="nav-list" aria-label="Primary">
@@ -158,7 +143,6 @@ export default function App() {
               key={item.route}
             >
               <strong>{item.label}</strong>
-              <span>{item.caption}</span>
             </a>
           ))}
         </nav>

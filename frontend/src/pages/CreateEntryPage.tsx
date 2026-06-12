@@ -3,7 +3,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { ApiError, createStory, getDatasetStatus, getErrorMessage, searchKeywords, searchTropes } from "../api/client";
 import { TermCard } from "../components/TermCard";
 import { TropeCard } from "../components/TropeCard";
-import { buildBlankStoryFields, KEYWORD_FIELD, LEGACY_METADATA_SECTIONS, LONG_TEXT_FIELDS, normalizeDraftText } from "../constants/csv";
+import { buildBlankStoryFields, LEGACY_METADATA_SECTIONS, LONG_TEXT_FIELDS, normalizeDraftText } from "../constants/csv";
 import type { DatasetStatus, SearchItem } from "../api/types";
 
 interface PageNotice {
@@ -29,20 +29,6 @@ function extractConflictVersion(error: ApiError): number | null {
   }
   const currentDatasetVersion = (nestedDetails as { current_dataset_version?: unknown }).current_dataset_version;
   return typeof currentDatasetVersion === "number" ? currentDatasetVersion : null;
-}
-
-function explanationLabel(item: SearchItem): string {
-  const flags = [];
-  if (item.explanation.matched_query_exactly) {
-    flags.push("exact match");
-  }
-  if (item.explanation.cache_hit) {
-    flags.push("cached");
-  }
-  if (item.explanation.near_duplicate) {
-    flags.push("near duplicate");
-  }
-  return flags.length ? flags.join(" · ") : item.explanation.method.split("_").join(" ");
 }
 
 function buildErrorNotice(title: string, error: unknown): PageNotice {
@@ -337,7 +323,6 @@ export function CreateEntryPage() {
       <section className="panel">
         <div className="panel-header">
           <div>
-            <p className="eyebrow">Create</p>
             <h1>Create new entry</h1>
           </div>
           <div className="button-row wrap-row">
@@ -352,10 +337,6 @@ export function CreateEntryPage() {
             </button>
           </div>
         </div>
-        <p className="muted">
-          Create a manual story inside the active dataset, keep the legacy CSV metadata fields intact, and queue a full
-          rebuild after saving.
-        </p>
       </section>
 
       {notice && (
@@ -380,10 +361,7 @@ export function CreateEntryPage() {
         <div className="page-stack">
           <section className="panel">
             <div className="panel-header">
-              <div>
-                <h2>Active dataset</h2>
-                <p className="muted">New stories are appended to the current active dataset and exported with the legacy CSV schema.</p>
-              </div>
+              <h2>Active dataset</h2>
             </div>
             <div className="stats-grid">
               <article className="stat-card">
@@ -443,10 +421,7 @@ export function CreateEntryPage() {
         <div className="page-stack">
           <section className="panel">
             <div className="panel-header">
-              <div>
-                <h2>Current keywords</h2>
-                <p className="muted">The export still writes these values into the legacy `{KEYWORD_FIELD}` column.</p>
-              </div>
+              <h2>Current keywords</h2>
               <span className="pill">{draftKeywords.length} selected</span>
             </div>
             <div className="stack">
@@ -454,8 +429,6 @@ export function CreateEntryPage() {
                 draftKeywords.map((keyword) => (
                   <TermCard
                     key={keyword.id}
-                    meta={keyword.id.startsWith("draft:") ? "New keyword typed in this draft." : "Existing keyword reused."}
-                    minimumStoryCount={0}
                     term={keyword}
                     actions={
                       <button
@@ -477,10 +450,7 @@ export function CreateEntryPage() {
 
           <section className="panel">
             <div className="panel-header">
-              <div>
-                <h2>Add keyword</h2>
-                <p className="muted">Search similar keywords before keeping your typed text.</p>
-              </div>
+              <h2>Add keyword</h2>
             </div>
 
             <label className="field">
@@ -496,12 +466,7 @@ export function CreateEntryPage() {
 
             <div className="card subdued">
               <div className="card-row">
-                <div>
-                  <h3>Keep typed keyword</h3>
-                  <p className="muted">
-                    Use this when the typed keyword should stay as written, even if you do not select an existing result.
-                  </p>
-                </div>
+                <h3>Keep typed keyword</h3>
                 <button className="button" disabled={busy || !keywordQuery.trim()} onClick={() => handleKeepTypedKeyword()} type="button">
                   Keep typed keyword
                 </button>
@@ -515,7 +480,6 @@ export function CreateEntryPage() {
                   {keywordSearchStatus === "loading" ? "searching" : `${keywordResults.length} results`}
                 </span>
               </div>
-              {!keywordQuery.trim() ? <p className="muted">Start typing to search the existing keyword index.</p> : null}
               {keywordQuery.trim() && keywordSearchStatus === "loading" ? <p className="muted">Searching keywords...</p> : null}
               {keywordQuery.trim() && keywordSearchStatus === "ready" && keywordResults.length === 0 ? (
                 <p className="muted">No similar keywords were returned for this query.</p>
@@ -525,10 +489,6 @@ export function CreateEntryPage() {
                 return (
                   <TermCard
                     key={item.id}
-                    meta={`${explanationLabel(item)} · ${item.explanation.model_name} · dim ${
-                      item.explanation.vector_dimension ?? "n/a"
-                    }`}
-                    subtitle={`score ${item.score.toFixed(2)}`}
                     term={item}
                     actions={
                       <button
@@ -556,7 +516,6 @@ export function CreateEntryPage() {
                 draftTropes.map((trope) => (
                   <TropeCard
                     key={trope.id}
-                    meta={trope.id.startsWith("draft:") ? "New trope typed in this draft." : "Existing canonical trope reused."}
                     minimumStoryCount={0}
                     trope={trope}
                     actions={
@@ -579,10 +538,7 @@ export function CreateEntryPage() {
 
           <section className="panel">
             <div className="panel-header">
-              <div>
-                <h2>Add trope</h2>
-                <p className="muted">Search similar tropes before keeping your typed text.</p>
-              </div>
+              <h2>Add trope</h2>
             </div>
 
             <label className="field">
@@ -598,12 +554,7 @@ export function CreateEntryPage() {
 
             <div className="card subdued">
               <div className="card-row">
-                <div>
-                  <h3>Keep typed trope</h3>
-                  <p className="muted">
-                    Use this when the typed trope should stay as written, even if you do not select an existing result.
-                  </p>
-                </div>
+                <h3>Keep typed trope</h3>
                 <button className="button" disabled={busy || !tropeQuery.trim()} onClick={() => handleKeepTypedTrope()} type="button">
                   Keep typed trope
                 </button>
@@ -617,7 +568,6 @@ export function CreateEntryPage() {
                   {tropeSearchStatus === "loading" ? "searching" : `${tropeResults.length} results`}
                 </span>
               </div>
-              {!tropeQuery.trim() ? <p className="muted">Start typing to search the existing trope index.</p> : null}
               {tropeQuery.trim() && tropeSearchStatus === "loading" ? <p className="muted">Searching tropes...</p> : null}
               {tropeQuery.trim() && tropeSearchStatus === "ready" && tropeResults.length === 0 ? (
                 <p className="muted">No similar tropes were returned for this query.</p>
@@ -627,10 +577,6 @@ export function CreateEntryPage() {
                 return (
                   <TropeCard
                     key={item.id}
-                    meta={`${explanationLabel(item)} · ${item.explanation.model_name} · dim ${
-                      item.explanation.vector_dimension ?? "n/a"
-                    }`}
-                    subtitle={`score ${item.score.toFixed(2)}`}
                     trope={item}
                     actions={
                       <button

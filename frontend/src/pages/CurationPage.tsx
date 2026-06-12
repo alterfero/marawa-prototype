@@ -60,34 +60,13 @@ function isJobDetail(job: JobSummary | JobDetail | null): job is JobDetail {
   return Boolean(job && "attempts" in job);
 }
 
-function explanationLabel(pair: NearDuplicateTropePair): string {
-  const reason = typeof pair.metadata.reason === "string" ? pair.metadata.reason.split("_").join(" ") : "similarity cache";
-  const threshold =
-    typeof pair.metadata.threshold === "number" ? ` · threshold ${pair.metadata.threshold.toFixed(2)}` : "";
-  return `${reason}${threshold}`;
-}
-
-function tropeSearchExplanationLabel(item: TropeSearchItem): string {
-  const flags = [];
-  if (item.explanation.matched_query_exactly) {
-    flags.push("exact match");
-  }
-  if (item.explanation.cache_hit) {
-    flags.push("cached");
-  }
-  if (item.explanation.near_duplicate) {
-    flags.push("near duplicate");
-  }
-  return flags.length ? flags.join(" · ") : item.explanation.method.split("_").join(" ");
-}
-
 function pairKey(pair: NearDuplicateTropePair): string {
   return `${pair.source_trope.id}:${pair.target_trope.id}`;
 }
 
 function nearDuplicateEmptyLabel(pairs: NearDuplicateTropeListResponse | null): string {
   if (!pairs || pairs.artifact_version === null) {
-    return "No near-duplicate trope pairs are available yet. The similarity cache is not ready yet; wait for a rebuild job to finish, then refresh.";
+    return "No near-duplicate trope pairs are available yet. Wait for a rebuild to finish, then refresh.";
   }
   return "No near-duplicate trope pairs are available for the current dataset.";
 }
@@ -537,10 +516,6 @@ export function CurationPage() {
   const selectedPairCount = pairs?.items.length ?? 0;
   const unusedCountLabel = useMemo(() => `${unusedTropes.length} unused`, [unusedTropes.length]);
   const pendingSourceIds = useMemo(() => new Set(pendingMerges.map((merge) => merge.source_trope_id)), [pendingMerges]);
-  const pendingStoryCount = useMemo(
-    () => pendingMerges.reduce((total, merge) => total + merge.source_story_count, 0),
-    [pendingMerges],
-  );
   const editingPair = editingPairId && pairs ? pairs.items.find((pair) => pairKey(pair) === editingPairId) ?? null : null;
   const editingPairDirection = editingPair ? pairDirections[pairKey(editingPair)] || "forward" : "forward";
   const editingDefaultSelection = editingPair ? directionalPair(editingPair, editingPairDirection) : null;
@@ -553,17 +528,12 @@ export function CurationPage() {
       <section className="panel">
         <div className="panel-header">
           <div>
-            <p className="eyebrow">Curation</p>
             <h1>Merge near-duplicate tropes and delete unused ones</h1>
           </div>
           <button className="button button-ghost" disabled={loading || busy} onClick={() => void refresh()} type="button">
             {loading ? "Loading..." : "Refresh"}
           </button>
         </div>
-        <p className="muted">
-          Review near-duplicate pairs from the similarity cache, choose which trope should merge into which target, and
-          remove unused canonical tropes without exposing any story deletion path.
-        </p>
       </section>
 
       {notice && (
@@ -581,27 +551,11 @@ export function CurationPage() {
 
       <section className="panel">
         <div className="panel-header">
-          <div>
-            <h2>Latest curation job</h2>
-            <p className="muted">Job status is refreshed automatically after validating merge batches or delete actions.</p>
-          </div>
+          <h2>Latest curation job</h2>
           <span className="pill">{formatJobStatus(effectiveJob)}</span>
         </div>
         {effectiveJob ? (
-          <div className="stack">
-            <p className="mono">
-              {effectiveJob.job_type} · {effectiveJob.id}
-            </p>
-            {isJobDetail(effectiveJob) ? (
-              <p className="muted">
-                Attempts {effectiveJob.attempts} · started {effectiveJob.started_at || "not yet"} · finished{" "}
-                {effectiveJob.finished_at || "not yet"}
-              </p>
-            ) : null}
-            {isJobDetail(effectiveJob) && effectiveJob.error_message ? (
-              <p className="notice-inline">{effectiveJob.error_message}</p>
-            ) : null}
-          </div>
+          isJobDetail(effectiveJob) && effectiveJob.error_message ? <p className="notice-inline">{effectiveJob.error_message}</p> : null
         ) : (
           <p className="muted">No curation job has been queued in this session yet.</p>
         )}
@@ -610,10 +564,7 @@ export function CurationPage() {
 
       <section className="panel">
         <div className="panel-header">
-          <div>
-            <h2>Pending merge batch</h2>
-            <p className="muted">Stage merge decisions here, then validate once to trigger a single rebuild.</p>
-          </div>
+          <h2>Pending merge batch</h2>
           <span className="pill">{pendingMerges.length} pending</span>
         </div>
 
@@ -628,8 +579,7 @@ export function CurationPage() {
                         Merge {merge.source_text} into {merge.target_text}
                       </h3>
                       <p className="muted">
-                        Similarity {merge.similarity_score.toFixed(2)} · {merge.source_story_count} stor
-                        {merge.source_story_count === 1 ? "y" : "ies"} currently use the source trope.
+                        {merge.source_story_count} stor{merge.source_story_count === 1 ? "y" : "ies"} affected
                       </p>
                     </div>
                     <button
@@ -646,36 +596,23 @@ export function CurationPage() {
             </div>
 
             <div className="button-row wrap-row">
-              <p className="muted">
-                Up to {pendingStoryCount} stor{pendingStoryCount === 1 ? "y is" : "ies are"} touched by the staged sources.
-              </p>
-              <div className="button-row wrap-row">
-                <button className="button button-ghost" disabled={busy} onClick={handleClearPendingMerges} type="button">
-                  Clear batch
-                </button>
-                <button className="button" disabled={busy} onClick={() => void handleValidatePendingMerges()} type="button">
-                  Validate all merges
-                </button>
-              </div>
+              <button className="button button-ghost" disabled={busy} onClick={handleClearPendingMerges} type="button">
+                Clear batch
+              </button>
+              <button className="button" disabled={busy} onClick={() => void handleValidatePendingMerges()} type="button">
+                Validate all merges
+              </button>
             </div>
           </>
         ) : (
-          <p className="muted">
-            No merge decisions are staged yet. Add near-duplicate pairs below, then validate the whole batch when you are
-            ready.
-          </p>
+          <p className="muted">No merge decisions are staged yet.</p>
         )}
       </section>
 
       <section className="two-column-layout">
         <div className="panel">
           <div className="panel-header">
-            <div>
-              <h2>Near-duplicate trope pairs</h2>
-              <p className="muted">
-                {pairs?.model_name || "No model"} · artifact {pairs?.artifact_version ?? "n/a"}
-              </p>
-            </div>
+            <h2>Near-duplicate trope pairs</h2>
             <span className="pill">{selectedPairCount} pairs</span>
           </div>
 
@@ -693,10 +630,7 @@ export function CurationPage() {
                 return (
                   <article className="card" key={pairId}>
                     <div className="panel-header">
-                      <div>
-                        <h3>Similarity {pair.similarity_score.toFixed(2)}</h3>
-                        <p className="muted">{explanationLabel(pair)}</p>
-                      </div>
+                      <h3>Similarity {pair.similarity_score.toFixed(2)}</h3>
                       <button
                         className="button button-ghost"
                         disabled={busy || Boolean(pendingDecision)}
@@ -727,18 +661,13 @@ export function CurationPage() {
 
                     <div className="field-grid">
                       <div className="stack">
-                        <p className="muted">Source trope</p>
-                        <TropeCard
-                          className="subdued"
-                          meta="Stories affected by this merge."
-                          trope={source}
-                        />
+                        <strong>Source</strong>
+                        <TropeCard className="subdued" trope={source} />
                       </div>
                       <div className="stack">
-                        <p className="muted">Target trope</p>
+                        <strong>Target</strong>
                         <TropeCard
                           className="subdued"
-                          meta="Stories already tagged with this trope."
                           trope={target}
                           actions={
                             <button
@@ -757,7 +686,7 @@ export function CurationPage() {
                     </div>
 
                     <p className="muted">
-                      If validated in this direction, {affectedStoryCount} stor{affectedStoryCount === 1 ? "y" : "ies"} will be updated before the rebuild job runs.
+                      {affectedStoryCount} stor{affectedStoryCount === 1 ? "y" : "ies"} affected
                     </p>
 
                     <div className="button-row">
@@ -792,10 +721,7 @@ export function CurationPage() {
 
         <aside className="panel">
           <div className="panel-header">
-            <div>
-              <h2>Unused tropes</h2>
-              <p className="muted">Only zero-assignment tropes are shown here, so deleting them does not touch stories.</p>
-            </div>
+            <h2>Unused tropes</h2>
             <span className="pill">{unusedCountLabel}</span>
           </div>
 
@@ -814,7 +740,6 @@ export function CurationPage() {
               unusedTropes.map((trope) => (
                 <TropeCard
                   key={trope.id}
-                  meta={trope.id}
                   minimumStoryCount={0}
                   trope={trope}
                   actions={
@@ -846,13 +771,7 @@ export function CurationPage() {
             role="dialog"
           >
             <div className="panel-header">
-              <div>
-                <p className="eyebrow">Curation</p>
-                <h2 id="curation-target-modal-title">Edit merge target</h2>
-                <p className="muted">
-                  {editingSelection.source.text} will be merged into the trope you choose here.
-                </p>
-              </div>
+              <h2 id="curation-target-modal-title">Edit merge target</h2>
               <button className="button button-ghost" disabled={busy} onClick={resetTargetEditor} type="button">
                 Close
               </button>
@@ -867,12 +786,12 @@ export function CurationPage() {
 
             <div className="field-grid">
               <div className="stack">
-                <p className="muted">Source trope</p>
-                <TropeCard className="subdued" meta="This trope is removed by the merge." trope={editingSelection.source} />
+                <strong>Source</strong>
+                <TropeCard className="subdued" trope={editingSelection.source} />
               </div>
               <div className="stack">
-                <p className="muted">Current target</p>
-                <TropeCard className="subdued" meta="This trope will receive the merged assignments." trope={editingSelection.target} />
+                <strong>Target</strong>
+                <TropeCard className="subdued" trope={editingSelection.target} />
               </div>
             </div>
 
@@ -889,12 +808,7 @@ export function CurationPage() {
 
             <div className="card subdued">
               <div className="card-row">
-                <div>
-                  <h3>Keep typed trope</h3>
-                  <p className="muted">
-                    Create a new canonical trope, or reuse an exact existing trope if the typed text already matches one.
-                  </p>
-                </div>
+                <h3>Keep typed trope</h3>
                 <button
                   className="button"
                   disabled={busy || !editingTargetQuery.trim()}
@@ -913,7 +827,6 @@ export function CurationPage() {
                   {editingTargetSearchStatus === "loading" ? "searching" : `${editingTargetResults.length} results`}
                 </span>
               </div>
-              {!editingTargetQuery.trim() ? <p className="muted">Type to search the existing trope index.</p> : null}
               {editingTargetQuery.trim() && editingTargetSearchStatus === "loading" ? <p className="muted">Searching tropes...</p> : null}
               {editingTargetQuery.trim() && editingTargetSearchStatus === "ready" && editingTargetResults.length === 0 ? (
                 <p className="muted">No similar tropes were returned for this query.</p>
@@ -925,10 +838,6 @@ export function CurationPage() {
                   return (
                     <TropeCard
                       key={`curation-modal-${editingPairId}-${item.id}`}
-                      meta={`${tropeSearchExplanationLabel(item)} · ${item.explanation.model_name} · dim ${
-                        item.explanation.vector_dimension ?? "n/a"
-                      }`}
-                      subtitle={`score ${item.score.toFixed(2)}`}
                       trope={item}
                       actions={
                         <button
@@ -962,39 +871,34 @@ export function CurationPage() {
             </div>
 
             <div className="button-row wrap-row">
-              <p className="muted">
-                {targetOverrides[pairKey(editingPair)] ? "A custom target is currently selected for this pair." : "The default target from the pair is currently selected."}
-              </p>
-              <div className="button-row wrap-row">
-                {targetOverrides[pairKey(editingPair)] ? (
-                  <button
-                    className="button button-ghost"
-                    disabled={busy}
-                    onClick={() =>
-                      {
-                        handleResetPairTarget(
-                          pairKey(editingPair),
-                          editingDefaultSelection.source,
-                          editingDefaultSelection.target,
-                          editingPair.similarity_score,
-                        );
-                        resetTargetEditor();
-                        setNotice({
-                          tone: "success",
-                          title: "Merge target reset",
-                          body: `Restored ${editingDefaultSelection.target.text} as the merge target.`,
-                        });
-                      }
+              {targetOverrides[pairKey(editingPair)] ? (
+                <button
+                  className="button button-ghost"
+                  disabled={busy}
+                  onClick={() =>
+                    {
+                      handleResetPairTarget(
+                        pairKey(editingPair),
+                        editingDefaultSelection.source,
+                        editingDefaultSelection.target,
+                        editingPair.similarity_score,
+                      );
+                      resetTargetEditor();
+                      setNotice({
+                        tone: "success",
+                        title: "Merge target reset",
+                        body: `Restored ${editingDefaultSelection.target.text} as the merge target.`,
+                      });
                     }
-                    type="button"
-                  >
-                    Reset target
-                  </button>
-                ) : null}
-                <button className="button button-ghost" disabled={busy} onClick={resetTargetEditor} type="button">
-                  Done
+                  }
+                  type="button"
+                >
+                  Reset target
                 </button>
-              </div>
+              ) : null}
+              <button className="button button-ghost" disabled={busy} onClick={resetTargetEditor} type="button">
+                Done
+              </button>
             </div>
           </section>
         </div>

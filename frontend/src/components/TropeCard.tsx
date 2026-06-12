@@ -5,7 +5,6 @@ import { useTropeBrowser } from "./TropeBrowser";
 
 interface TropeCardProps {
   trope: TropeReference;
-  subtitle?: string;
   meta?: string;
   actions?: ReactNode;
   compact?: boolean;
@@ -16,7 +15,6 @@ interface TropeCardProps {
 
 export function TropeCard({
   trope,
-  subtitle,
   meta,
   actions,
   compact = false,
@@ -25,10 +23,7 @@ export function TropeCard({
   children,
 }: TropeCardProps) {
   const { openTrope } = useTropeBrowser();
-  const rawStoryCount = typeof trope.story_count === "number" ? trope.story_count : minimumStoryCount;
-  const storyCount = Math.max(rawStoryCount, minimumStoryCount);
-  const storyLabel = `${storyCount} stor${storyCount === 1 ? "y" : "ies"}`;
-  const detailLabel = [storyLabel, subtitle].filter(Boolean).join(" · ");
+  const storyCount = Math.max(typeof trope.story_count === "number" ? trope.story_count : minimumStoryCount, minimumStoryCount);
   const normalizedTrope = {
     ...trope,
     story_count: storyCount,
@@ -53,7 +48,6 @@ export function TropeCard({
       <div className="card-row">
         <div>
           <h3>{trope.text}</h3>
-          <p className="muted">{detailLabel}</p>
         </div>
         {actions ? (
           <div

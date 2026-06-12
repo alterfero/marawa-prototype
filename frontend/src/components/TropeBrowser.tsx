@@ -111,11 +111,6 @@ export function TropeBrowserProvider({ children }: { children: ReactNode }) {
   );
 
   const effectiveDetail = detail ?? selectedTrope;
-  const selectedStoryCount =
-    selectedTrope && typeof selectedTrope.story_count === "number" ? selectedTrope.story_count : 0;
-  const detailStoryCount = detail && typeof detail.story_count === "number" ? detail.story_count : 0;
-  const listedStoryCount = detail?.stories.length ?? 0;
-  const effectiveStoryCount = Math.max(selectedStoryCount, detailStoryCount, listedStoryCount);
   const mapHref = selectedTrope ? routeHref("/exploration", { selected_trope_id: selectedTrope.id }) : routeHref("/exploration");
 
   return (
@@ -132,11 +127,7 @@ export function TropeBrowserProvider({ children }: { children: ReactNode }) {
             role="dialog"
           >
             <div className="panel-header">
-              <div>
-                <p className="eyebrow">Trope</p>
-                <h2 id="trope-browser-title">{effectiveDetail?.text || selectedTrope.text}</h2>
-                <p className="muted">{effectiveStoryCount} stories</p>
-              </div>
+              <h2 id="trope-browser-title">{effectiveDetail?.text || selectedTrope.text}</h2>
               <button className="button button-ghost" onClick={closeTrope} type="button">
                 Close
               </button>
@@ -159,7 +150,6 @@ export function TropeBrowserProvider({ children }: { children: ReactNode }) {
                       type="button"
                     >
                       <strong>{story.title}</strong>
-                      <span className="muted">Open in Review</span>
                     </button>
                   ))
                 ) : (
