@@ -8,7 +8,7 @@ import json
 from sqlalchemy import case, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.core.csv_schema import CSV_COLUMNS, KEYWORD_FIELD, TROPE_FIELD
+from app.core.csv_schema import CSV_COLUMNS, CSV_IMPORT_ALIASES, KEYWORD_FIELD, TROPE_FIELD
 from app.core.parsing import clean_text, normalize_text, serialize_keywords, serialize_tropes, split_keywords, split_tropes
 from app.db.models import (
     AssignmentStatus,
@@ -31,26 +31,38 @@ def _normalize_header(fieldnames: list[str | None]) -> list[str]:
     return [clean_text(name) for name in fieldnames if name is not None]
 
 
-def _validate_exact_legacy_header(fieldnames: list[str]) -> None:
-    if fieldnames == CSV_COLUMNS:
-        return
+def _resolve_import_columns(fieldnames: list[str]) -> list[str | None]:
+    resolved_columns: list[str | None] = []
+    seen_targets: dict[str, str] = {}
+    duplicate_targets: list[str] = []
 
-    missing_columns = [column for column in CSV_COLUMNS if column not in fieldnames]
-    extra_columns = [column for column in fieldnames if column not in CSV_COLUMNS]
+    for fieldname in fieldnames:
+        target = fieldname if fieldname in CSV_COLUMNS else CSV_IMPORT_ALIASES.get(fieldname)
+        resolved_columns.append(target)
+        if target is None:
+            continue
+        previous_fieldname = seen_targets.get(target)
+        if previous_fieldname is not None:
+            duplicate_targets.append(target)
+            continue
+        seen_targets[target] = fieldname
+
+    missing_columns = [column for column in CSV_COLUMNS if column not in seen_targets]
     if missing_columns:
         preview = ", ".join(missing_columns[:5])
         suffix = "..." if len(missing_columns) > 5 else ""
         raise CSVImportValidationError(f"The uploaded CSV is missing required legacy columns: {preview}{suffix}")
 
-    if extra_columns:
-        preview = ", ".join(extra_columns[:5])
-        suffix = "..." if len(extra_columns) > 5 else ""
+    if duplicate_targets:
+        unique_duplicates = list(dict.fromkeys(duplicate_targets))
+        preview = ", ".join(unique_duplicates[:5])
+        suffix = "..." if len(unique_duplicates) > 5 else ""
         raise CSVImportValidationError(
-            "The uploaded CSV contains unsupported extra columns: "
-            f"{preview}{suffix}. Exact legacy export is guaranteed only for the canonical legacy header."
+            "The uploaded CSV maps multiple header columns to the same legacy field: "
+            f"{preview}{suffix}."
         )
 
-    raise CSVImportValidationError("The uploaded CSV header must match the exact legacy column order.")
+    return resolved_columns
 
 
 def _load_csv_rows(csv_bytes: bytes) -> list[tuple[int, dict[str, str]]]:
@@ -72,25 +84,26 @@ def _load_csv_rows(csv_bytes: bytes) -> list[tuple[int, dict[str, str]]]:
         if not fieldnames:
             raise CSVImportValidationError("The uploaded file does not contain a readable CSV header row.")
 
-        _validate_exact_legacy_header(fieldnames)
+        resolved_columns = _resolve_import_columns(fieldnames)
 
         rows: list[tuple[int, dict[str, str]]] = []
         for row_number, row_values in enumerate(reader, start=1):
-            extra_values = row_values[len(CSV_COLUMNS) :]
+            extra_values = row_values[len(fieldnames) :]
             if any(clean_text(value) for value in extra_values):
                 raise CSVImportValidationError(
                     f"Data row {row_number} has more values than the header defines. "
                     "Please check quoting and separators in the uploaded CSV."
                 )
 
-            padded_values = list(row_values[: len(CSV_COLUMNS)])
-            if len(padded_values) < len(CSV_COLUMNS):
-                padded_values.extend([""] * (len(CSV_COLUMNS) - len(padded_values)))
+            padded_values = list(row_values[: len(fieldnames)])
+            if len(padded_values) < len(fieldnames):
+                padded_values.extend([""] * (len(fieldnames) - len(padded_values)))
 
-            normalized_row = {
-                column: clean_text(value)
-                for column, value in zip(CSV_COLUMNS, padded_values, strict=True)
-            }
+            normalized_row = {column: "" for column in CSV_COLUMNS}
+            for column, value in zip(resolved_columns, padded_values, strict=True):
+                if column is None:
+                    continue
+                normalized_row[column] = clean_text(value)
             if not any(normalized_row.values()):
                 continue
             rows.append((row_number, {column: normalized_row.get(column, "") for column in CSV_COLUMNS}))

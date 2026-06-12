@@ -2,6 +2,10 @@
 
 TROPE_FIELD = "Motifs (Eng)"
 KEYWORD_FIELD = "Keywords (Eng)"
+TROPE_PROPOSAL_FIELD = "proposition de nouveaux motifs"
+CSV_IMPORT_ALIASES = {
+    "motifs inhabituels à une version": TROPE_PROPOSAL_FIELD,
+}
 
 CSV_COLUMNS = [
     "Entered by",
@@ -29,7 +33,7 @@ CSV_COLUMNS = [
     "Abstract (Fr)",
     KEYWORD_FIELD,
     TROPE_FIELD,
-    "proposition de nouveaux motifs",
+    TROPE_PROPOSAL_FIELD,
     "species",
     "non-human",
     "placenames",
@@ -44,4 +48,3 @@ CSV_COLUMNS = [
     "ATU conte-type(AI ?)",
     "ATU motifs (AI?)",
 ]
-

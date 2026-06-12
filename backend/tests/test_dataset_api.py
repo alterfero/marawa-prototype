@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
 from app.core.config import get_settings
-from app.core.csv_schema import CSV_COLUMNS, KEYWORD_FIELD, TROPE_FIELD
+from app.core.csv_schema import CSV_COLUMNS, KEYWORD_FIELD, TROPE_FIELD, TROPE_PROPOSAL_FIELD
 from app.db import (
     Dataset,
     Job,
@@ -29,13 +29,60 @@ pytestmark = pytest.mark.filterwarnings(
 )
 
 
-def make_csv_bytes(rows: list[dict[str, str]]) -> bytes:
+def make_csv_bytes(rows: list[dict[str, str]], *, fieldnames: list[str] | None = None) -> bytes:
     buffer = io.StringIO(newline="")
-    writer = csv.DictWriter(buffer, fieldnames=CSV_COLUMNS, lineterminator="\n")
+    writer = csv.DictWriter(buffer, fieldnames=fieldnames or CSV_COLUMNS, lineterminator="\n")
     writer.writeheader()
     for row in rows:
         writer.writerow(row)
     return buffer.getvalue().encode("utf-8-sig")
+
+
+def make_current_template_fieldnames() -> list[str]:
+    return [
+        "Entered by",
+        "Source first or second hand",
+        "Source",
+        "pages",
+        "Other source",
+        "URL ?",
+        "territory",
+        "lg group",
+        "original language",
+        "lg of publication",
+        "bilingual?",
+        "storyteller",
+        "date of recording ",
+        "place of recording",
+        "space coord",
+        "editor",
+        "translator",
+        "Story title (Eng)",
+        "Story title (French)",
+        "Story title (other)",
+        "1-sentence summary",
+        "Abstracts : AI or Human ?",
+        "Abstract (Eng)",
+        "Abstract (Fr)",
+        "Keywords (Eng)",
+        "Motifs (Eng)",
+        "motifs inhabituels à une version",
+        "Motifs validés ",
+        "species",
+        "non-human",
+        "placenames",
+        "named characters",
+        "external link",
+        "description of link",
+        "Connection to other stories",
+        "Megamotifs",
+        "Thème ",
+        "Conte type",
+        "Autres infos données dans le texte, pour la fiche conte ",
+        "ATU conte-type(AI ?)",
+        "ATU motifs (AI?)",
+        "motifs Pacifique  ?",
+    ]
 
 
 @pytest.fixture
@@ -113,6 +160,35 @@ def test_dataset_upload_imports_csv_and_queues_placeholder_rebuild_job(client: T
     assert status_response.json()["embedding_status"]["ready"] is False
     assert status_response.json()["embedding_status"]["current"] is False
     assert status_response.json()["embedding_status"]["latest_rebuild_job"]["status"] == "queued"
+
+
+def test_dataset_upload_accepts_current_template_and_preserves_legacy_export_fields(client: TestClient) -> None:
+    fieldnames = make_current_template_fieldnames()
+    row = {column: "" for column in fieldnames}
+    row["Story title (Eng)"] = "Template Story"
+    row[KEYWORD_FIELD] = "wolf ; moon"
+    row[TROPE_FIELD] = "§§ first trope\n§§ second trope"
+    row["motifs inhabituels à une version"] = "new trope idea"
+    row["Abstracts : AI or Human ?"] = "Human"
+    row["Motifs validés "] = "ok"
+
+    response = client.post(
+        "/api/dataset/upload",
+        files={"file": ("template.csv", make_csv_bytes([row], fieldnames=fieldnames), "text/csv")},
+    )
+
+    assert response.status_code == 201
+
+    stories_response = client.get("/api/stories")
+    assert stories_response.status_code == 200
+    story = stories_response.json()["items"][0]
+    detail_response = client.get(f"/api/stories/{story['id']}")
+    assert detail_response.status_code == 200
+    detail = detail_response.json()
+
+    assert detail["fields"]["Story title (Eng)"] == "Template Story"
+    assert detail["fields"][TROPE_PROPOSAL_FIELD] == "new trope idea"
+    assert "Abstracts : AI or Human ?" not in detail["fields"]
 
 
 def test_dataset_status_reports_embeddings_ready_and_current_after_rebuild(client: TestClient) -> None:

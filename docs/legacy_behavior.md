@@ -85,8 +85,9 @@ Vocabulary note:
 - A readable header row is required.
 - Header names are cleaned with whitespace trimming and BOM removal before validation.
 - The import requires every legacy canonical column to be present.
+- `motifs inhabituels à une version` is accepted as an import alias for `proposition de nouveaux motifs`.
 - Column order is not validated on import.
-- Extra columns are tolerated on import.
+- Extra columns are tolerated on import, including current template-only columns such as `Abstracts : AI or Human ?`, `Motifs validés`, and `motifs Pacifique  ?`.
 - Blank data rows are skipped.
 - A row that has more values than the header defines is rejected as malformed.
 - A file with a header but no non-empty data rows is rejected.

@@ -4,7 +4,7 @@ import io
 import pytest
 from sqlalchemy import select
 
-from app.core.csv_schema import CSV_COLUMNS, KEYWORD_FIELD, TROPE_FIELD
+from app.core.csv_schema import CSV_COLUMNS, KEYWORD_FIELD, TROPE_FIELD, TROPE_PROPOSAL_FIELD
 from app.db import (
     Dataset,
     DatasetStatus,
@@ -36,6 +36,53 @@ def make_session(tmp_path, filename: str = "service.db"):
     return build_session_factory(engine)()
 
 
+def make_current_template_fieldnames() -> list[str]:
+    return [
+        "Entered by",
+        "Source first or second hand",
+        "Source",
+        "pages",
+        "Other source",
+        "URL ?",
+        "territory",
+        "lg group",
+        "original language",
+        "lg of publication",
+        "bilingual?",
+        "storyteller",
+        "date of recording ",
+        "place of recording",
+        "space coord",
+        "editor",
+        "translator",
+        "Story title (Eng)",
+        "Story title (French)",
+        "Story title (other)",
+        "1-sentence summary",
+        "Abstracts : AI or Human ?",
+        "Abstract (Eng)",
+        "Abstract (Fr)",
+        "Keywords (Eng)",
+        "Motifs (Eng)",
+        "motifs inhabituels à une version",
+        "Motifs validés ",
+        "species",
+        "non-human",
+        "placenames",
+        "named characters",
+        "external link",
+        "description of link",
+        "Connection to other stories",
+        "Megamotifs",
+        "Thème ",
+        "Conte type",
+        "Autres infos données dans le texte, pour la fiche conte ",
+        "ATU conte-type(AI ?)",
+        "ATU motifs (AI?)",
+        "motifs Pacifique  ?",
+    ]
+
+
 def test_import_csv_rejects_missing_required_legacy_columns(tmp_path) -> None:
     csv_bytes = make_csv_bytes(
         [{"Story title (Eng)": "Story", "Keywords (Eng)": "wolf"}],
@@ -50,33 +97,69 @@ def test_import_csv_rejects_missing_required_legacy_columns(tmp_path) -> None:
     assert "Entered by" in str(exc_info.value)
 
 
-def test_import_csv_rejects_extra_columns_to_preserve_exact_export_contract(tmp_path) -> None:
-    fieldnames = list(CSV_COLUMNS) + ["Extra Column"]
+def test_import_csv_accepts_extra_columns_and_reordered_legacy_fields(tmp_path) -> None:
+    fieldnames = list(CSV_COLUMNS)
+    fieldnames[0], fieldnames[1] = fieldnames[1], fieldnames[0]
+    fieldnames.append("Extra Column")
     csv_bytes = make_csv_bytes(
         [{**{column: "" for column in CSV_COLUMNS}, "Story title (Eng)": "Story", "Extra Column": "keep me"}],
         fieldnames=fieldnames,
     )
 
     with make_session(tmp_path) as session:
-        with pytest.raises(CSVImportValidationError) as exc_info:
-            import_csv_bytes(session, csv_bytes, source_filename="extra.csv")
+        dataset = import_csv_bytes(session, csv_bytes, source_filename="extra.csv")
+        story = session.scalar(select(Story).where(Story.dataset_id == dataset.id))
+        exported_bytes = export_active_dataset_to_csv_bytes(session)
 
-    assert "unsupported extra columns" in str(exc_info.value)
-    assert "Exact legacy export is guaranteed only for the canonical legacy header" in str(exc_info.value)
+    assert story is not None
+    assert story.fields_json["Story title (Eng)"] == "Story"
+    reader = csv.DictReader(io.StringIO(exported_bytes.decode("utf-8-sig")))
+    assert reader.fieldnames == CSV_COLUMNS
+    assert "Extra Column" not in reader.fieldnames
 
 
-def test_import_csv_rejects_reordered_legacy_header(tmp_path) -> None:
-    reordered = list(CSV_COLUMNS)
-    reordered[0], reordered[1] = reordered[1], reordered[0]
+def test_import_csv_maps_current_template_aliases_back_to_legacy_export_fields(tmp_path) -> None:
+    fieldnames = make_current_template_fieldnames()
+    row = {column: "" for column in fieldnames}
+    row["Story title (Eng)"] = "Template Story"
+    row["Abstracts : AI or Human ?"] = "Human"
+    row[KEYWORD_FIELD] = "wolf ; moon"
+    row[TROPE_FIELD] = "§§ first trope\n§§ second trope"
+    row["motifs inhabituels à une version"] = "new trope idea"
+    row["Motifs validés "] = "ok"
+    row["motifs Pacifique  ?"] = "yes"
+    csv_bytes = make_csv_bytes([row], fieldnames=fieldnames)
+
+    with make_session(tmp_path) as session:
+        dataset = import_csv_bytes(session, csv_bytes, source_filename="template.csv")
+        story = session.scalar(select(Story).where(Story.dataset_id == dataset.id))
+        exported_bytes = export_active_dataset_to_csv_bytes(session)
+
+    assert story is not None
+    assert story.fields_json["Story title (Eng)"] == "Template Story"
+    assert story.fields_json[TROPE_PROPOSAL_FIELD] == "new trope idea"
+    assert "Abstracts : AI or Human ?" not in story.fields_json
+
+    reader = csv.DictReader(io.StringIO(exported_bytes.decode("utf-8-sig")))
+    rows = list(reader)
+    assert reader.fieldnames == CSV_COLUMNS
+    assert rows[0][TROPE_PROPOSAL_FIELD] == "new trope idea"
+    assert "Abstracts : AI or Human ?" not in reader.fieldnames
+
+
+def test_import_csv_rejects_duplicate_headers_that_map_to_the_same_legacy_field(tmp_path) -> None:
+    fieldnames = list(CSV_COLUMNS) + ["motifs inhabituels à une version"]
     row = {column: "" for column in CSV_COLUMNS}
     row["Story title (Eng)"] = "Story"
-    csv_bytes = make_csv_bytes([row], fieldnames=reordered)
+    row["motifs inhabituels à une version"] = "duplicate"
+    csv_bytes = make_csv_bytes([row], fieldnames=fieldnames)
 
     with make_session(tmp_path) as session:
         with pytest.raises(CSVImportValidationError) as exc_info:
-            import_csv_bytes(session, csv_bytes, source_filename="reordered.csv")
+            import_csv_bytes(session, csv_bytes, source_filename="duplicate.csv")
 
-    assert "exact legacy column order" in str(exc_info.value)
+    assert "maps multiple header columns to the same legacy field" in str(exc_info.value)
+    assert TROPE_PROPOSAL_FIELD in str(exc_info.value)
 
 
 def test_import_csv_rejects_malformed_csv_content(tmp_path) -> None:

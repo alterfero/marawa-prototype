@@ -1,4 +1,4 @@
-from app.core.csv_schema import CSV_COLUMNS, KEYWORD_FIELD, TROPE_FIELD
+from app.core.csv_schema import CSV_COLUMNS, CSV_IMPORT_ALIASES, KEYWORD_FIELD, TROPE_FIELD, TROPE_PROPOSAL_FIELD
 from app.core.parsing import (
     clean_text,
     dedupe_preserve_order,
@@ -13,6 +13,8 @@ from app.core.parsing import (
 def test_csv_schema_preserves_exact_legacy_field_names_and_order() -> None:
     assert KEYWORD_FIELD == "Keywords (Eng)"
     assert TROPE_FIELD == "Motifs (Eng)"
+    assert TROPE_PROPOSAL_FIELD == "proposition de nouveaux motifs"
+    assert CSV_IMPORT_ALIASES == {"motifs inhabituels à une version": TROPE_PROPOSAL_FIELD}
     assert CSV_COLUMNS == [
         "Entered by",
         "Source first or second hand",
@@ -39,7 +41,7 @@ def test_csv_schema_preserves_exact_legacy_field_names_and_order() -> None:
         "Abstract (Fr)",
         "Keywords (Eng)",
         "Motifs (Eng)",
-        "proposition de nouveaux motifs",
+        TROPE_PROPOSAL_FIELD,
         "species",
         "non-human",
         "placenames",
@@ -93,4 +95,3 @@ def test_split_keywords_deduplicates_values() -> None:
 
 def test_serialize_keywords_uses_legacy_separator() -> None:
     assert serialize_keywords(["wolf", "moon", "wolf"]) == "wolf ; moon"
-

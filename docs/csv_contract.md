@@ -63,10 +63,12 @@ The exported CSV must preserve the exact legacy column names and exact column or
 
 - All canonical columns above are required on import.
 - Header matching is exact after trimming surrounding whitespace and removing any BOM character.
+- `motifs inhabituels à une version` is accepted as an import alias for the canonical legacy field `proposition de nouveaux motifs`.
 
 ### Extra Columns
 
 - Extra non-canonical columns may be accepted on import for legacy compatibility.
+- Known template-only columns such as `Abstracts : AI or Human ?`, `Motifs validés`, and `motifs Pacifique  ?` are accepted on import and ignored on export.
 - Extra columns are not part of the supported round-trip contract.
 - Export writes only the canonical columns listed above.
 
