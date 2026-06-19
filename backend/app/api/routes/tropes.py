@@ -2,8 +2,10 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from app.api.deps import get_db_session, require_minimum_role, require_minimum_role_with_csrf
 from app.api.errors import api_error
-from app.api.deps import get_db_session
+from app.db.models import UserRole
+from app.services.auth import AuthSessionContext
 from app.services.curation import CurationConflictError, CurationNotFoundError, delete_trope, list_canonical_tropes
 from app.services.tropes import (
     TropeLookupNotFoundError,
@@ -70,6 +72,7 @@ def read_tropes(
     unused_only: bool = Query(default=False),
     q: str | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
+    _: object = Depends(require_minimum_role(UserRole.GUEST)),
     session: Session = Depends(get_db_session),
 ) -> list[TropeListItemResponse]:
     return [TropeListItemResponse(**item) for item in list_canonical_tropes(session, unused_only=unused_only, query=q, limit=limit)]
@@ -78,6 +81,7 @@ def read_tropes(
 @router.get("/{trope_id}", response_model=TropeDetailResponse)
 def read_trope_detail(
     trope_id: str,
+    _: object = Depends(require_minimum_role(UserRole.GUEST)),
     session: Session = Depends(get_db_session),
 ) -> TropeDetailResponse:
     try:
@@ -89,10 +93,16 @@ def read_trope_detail(
 @router.post("", response_model=CreateTropeResponse)
 def create_canonical_trope(
     payload: CreateTropeRequest,
+    auth_context: AuthSessionContext = Depends(require_minimum_role_with_csrf(UserRole.CONTRIBUTOR)),
     session: Session = Depends(get_db_session),
 ) -> CreateTropeResponse:
     try:
-        trope, created = ensure_canonical_trope(session, payload.text)
+        trope, created = ensure_canonical_trope(
+            session,
+            payload.text,
+            actor_user_id=auth_context.user.id,
+            actor_role=auth_context.user.role,
+        )
     except TropeMutationValidationError as exc:
         raise api_error(400, "trope_mutation_invalid", str(exc)) from exc
 
@@ -106,6 +116,7 @@ def create_canonical_trope(
 def remove_canonical_trope(
     trope_id: str,
     remove_from_all_stories: bool = Query(default=False),
+    auth_context: AuthSessionContext = Depends(require_minimum_role_with_csrf(UserRole.ADMIN)),
     session: Session = Depends(get_db_session),
 ) -> DeleteTropeResponse:
     try:
@@ -113,6 +124,7 @@ def remove_canonical_trope(
             session,
             trope_id=trope_id,
             remove_from_all_stories=remove_from_all_stories,
+            actor_user_id=auth_context.user.id,
         )
     except CurationNotFoundError as exc:
         raise api_error(404, "trope_not_found", str(exc)) from exc

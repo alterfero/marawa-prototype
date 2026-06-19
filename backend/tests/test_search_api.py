@@ -3,6 +3,7 @@ from fastapi.testclient import TestClient
 from app.core.csv_schema import CSV_COLUMNS, KEYWORD_FIELD, TROPE_FIELD
 from app.db import build_engine, build_session_factory
 from app.main import create_app
+from tests.auth_helpers import authenticate_admin, configure_auth_env
 from tests.search_fakes import FakeEmbeddingBackend
 
 
@@ -18,7 +19,8 @@ def make_csv_bytes(rows: list[dict[str, str]]) -> bytes:
     return buffer.getvalue().encode("utf-8-sig")
 
 
-def test_search_api_returns_similar_tropes_and_keywords(tmp_path) -> None:
+def test_search_api_returns_similar_tropes_and_keywords(monkeypatch, tmp_path) -> None:
+    configure_auth_env(monkeypatch)
     db_path = tmp_path / "search-api.db"
     engine = build_engine(f"sqlite:///{db_path}")
     session_factory = build_session_factory(engine)
@@ -35,6 +37,7 @@ def test_search_api_returns_similar_tropes_and_keywords(tmp_path) -> None:
     row[KEYWORD_FIELD] = "wolf ; moon ; river"
 
     with TestClient(app) as client:
+        authenticate_admin(client)
         upload_response = client.post(
             "/api/dataset/upload",
             files={"file": ("search.csv", make_csv_bytes([row]), "text/csv")},

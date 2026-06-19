@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from app.core.csv_schema import CSV_COLUMNS, KEYWORD_FIELD, TROPE_FIELD
 from app.db import build_engine, build_session_factory
 from app.main import create_app
+from tests.auth_helpers import authenticate_admin, configure_auth_env
 from tests.search_fakes import FakeEmbeddingBackend
 
 
@@ -51,8 +52,10 @@ def process_next_job(client: TestClient) -> None:
     assert client.app.state.job_runner.process_next_job() is True
 
 
-def test_near_duplicate_tropes_route_uses_similarity_cache(tmp_path) -> None:
+def test_near_duplicate_tropes_route_uses_similarity_cache(monkeypatch, tmp_path) -> None:
+    configure_auth_env(monkeypatch)
     with build_client(tmp_path, "curation-near-duplicates.db") as client:
+        authenticate_admin(client)
         upload_dataset(
             client,
             [make_row(title="Story One", tropes="§§ first trope\n§§ first trope variant\n§§ second trope")],
@@ -73,8 +76,10 @@ def test_near_duplicate_tropes_route_uses_similarity_cache(tmp_path) -> None:
     assert body["items"][0]["similarity_score"] > 0.9
 
 
-def test_merge_tropes_moves_assignments_deduplicates_links_and_queues_rebuild(tmp_path) -> None:
+def test_merge_tropes_moves_assignments_deduplicates_links_and_queues_rebuild(monkeypatch, tmp_path) -> None:
+    configure_auth_env(monkeypatch)
     with build_client(tmp_path, "curation-merge.db") as client:
+        authenticate_admin(client)
         upload_dataset(
             client,
             [
@@ -126,8 +131,10 @@ def test_merge_tropes_moves_assignments_deduplicates_links_and_queues_rebuild(tm
     assert deleted_source_response.status_code == 404
 
 
-def test_validate_merges_applies_batch_and_queues_one_rebuild(tmp_path) -> None:
+def test_validate_merges_applies_batch_and_queues_one_rebuild(monkeypatch, tmp_path) -> None:
+    configure_auth_env(monkeypatch)
     with build_client(tmp_path, "curation-validate-batch.db") as client:
+        authenticate_admin(client)
         upload_dataset(
             client,
             [
@@ -215,9 +222,12 @@ def test_validate_merges_applies_batch_and_queues_one_rebuild(tmp_path) -> None:
     assert [item["text"] for item in fourth_story_detail["tropes"]] == ["second trope"]
 
 
-def test_delete_trope_requires_explicit_remove_from_all_stories_and_queues_rebuild(tmp_path) -> None:
+def test_delete_trope_requires_explicit_remove_from_all_stories_and_queues_rebuild(monkeypatch, tmp_path) -> None:
+    configure_auth_env(monkeypatch)
     with build_client(tmp_path, "curation-delete.db") as client:
+        authenticate_admin(client)
         upload_dataset(client, [make_row(title="Story One", tropes="§§ first trope")])
+        process_next_job(client)
         story = client.get("/api/stories").json()["items"][0]
         trope = client.get(f"/api/stories/{story['id']}/tropes").json()["items"][0]
 
@@ -242,9 +252,12 @@ def test_delete_trope_requires_explicit_remove_from_all_stories_and_queues_rebui
     assert story_detail["tropes"] == []
 
 
-def test_delete_unassigned_trope_succeeds_without_remove_from_all_stories(tmp_path) -> None:
+def test_delete_unassigned_trope_succeeds_without_remove_from_all_stories(monkeypatch, tmp_path) -> None:
+    configure_auth_env(monkeypatch)
     with build_client(tmp_path, "curation-delete-unassigned.db") as client:
+        authenticate_admin(client)
         upload_dataset(client, [make_row(title="Story One")])
+        process_next_job(client)
         story = client.get("/api/stories").json()["items"][0]
 
         add_response = client.post(
@@ -271,9 +284,12 @@ def test_delete_unassigned_trope_succeeds_without_remove_from_all_stories(tmp_pa
     assert delete_body["queued_job"]["status"] == "queued"
 
 
-def test_tropes_route_lists_unused_tropes(tmp_path) -> None:
+def test_tropes_route_lists_unused_tropes(monkeypatch, tmp_path) -> None:
+    configure_auth_env(monkeypatch)
     with build_client(tmp_path, "curation-unused-list.db") as client:
+        authenticate_admin(client)
         upload_dataset(client, [make_row(title="Story One", tropes="§§ first trope")])
+        process_next_job(client)
         story = client.get("/api/stories").json()["items"][0]
 
         add_response = client.post(

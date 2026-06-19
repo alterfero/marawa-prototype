@@ -49,6 +49,7 @@ def upgrade() -> None:
         ["status"],
         unique=True,
         sqlite_where=sa.text("status = 'active'"),
+        postgresql_where=sa.text("status = 'active'"),
     )
 
     op.create_table(
@@ -94,7 +95,6 @@ def upgrade() -> None:
         "stories",
         ["dataset_id", "source_row_number"],
         unique=True,
-        sqlite_where=sa.text("source_row_number IS NOT NULL"),
     )
 
     op.create_table(
@@ -174,14 +174,12 @@ def upgrade() -> None:
         "term_embeddings",
         ["trope_id", "model_name"],
         unique=True,
-        sqlite_where=sa.text("trope_id IS NOT NULL"),
     )
     op.create_index(
         "uq_term_embeddings_keyword_model",
         "term_embeddings",
         ["keyword_id", "model_name"],
         unique=True,
-        sqlite_where=sa.text("keyword_id IS NOT NULL"),
     )
 
     op.create_table(

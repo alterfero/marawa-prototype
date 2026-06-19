@@ -36,6 +36,14 @@ def make_session(tmp_path, filename: str = "service.db"):
     return build_session_factory(engine)()
 
 
+def activate_dataset(session, dataset: Dataset) -> None:
+    active_dataset = session.scalar(select(Dataset).where(Dataset.status == DatasetStatus.ACTIVE))
+    if active_dataset is not None and active_dataset.id != dataset.id:
+        active_dataset.status = DatasetStatus.ARCHIVED
+    dataset.status = DatasetStatus.ACTIVE
+    session.commit()
+
+
 def make_current_template_fieldnames() -> list[str]:
     return [
         "Entered by",
@@ -108,6 +116,7 @@ def test_import_csv_accepts_extra_columns_and_reordered_legacy_fields(tmp_path) 
 
     with make_session(tmp_path) as session:
         dataset = import_csv_bytes(session, csv_bytes, source_filename="extra.csv")
+        activate_dataset(session, dataset)
         story = session.scalar(select(Story).where(Story.dataset_id == dataset.id))
         exported_bytes = export_active_dataset_to_csv_bytes(session)
 
@@ -132,6 +141,7 @@ def test_import_csv_maps_current_template_aliases_back_to_legacy_export_fields(t
 
     with make_session(tmp_path) as session:
         dataset = import_csv_bytes(session, csv_bytes, source_filename="template.csv")
+        activate_dataset(session, dataset)
         story = session.scalar(select(Story).where(Story.dataset_id == dataset.id))
         exported_bytes = export_active_dataset_to_csv_bytes(session)
 
@@ -173,7 +183,7 @@ def test_import_csv_rejects_malformed_csv_content(tmp_path) -> None:
     assert "malformed" in str(exc_info.value).lower()
 
 
-def test_import_csv_creates_active_dataset_and_preserves_story_row_order(tmp_path) -> None:
+def test_import_csv_creates_staged_dataset_and_preserves_story_row_order(tmp_path) -> None:
     row_one = {column: "" for column in CSV_COLUMNS}
     row_one["Story title (Eng)"] = "Story One"
     row_one[KEYWORD_FIELD] = "wolf ; moon"
@@ -188,6 +198,7 @@ def test_import_csv_creates_active_dataset_and_preserves_story_row_order(tmp_pat
         dataset = import_csv_bytes(session, make_csv_bytes([row_one, row_two]), source_filename="stories.csv")
 
         active_datasets = session.scalars(select(Dataset).where(Dataset.status == DatasetStatus.ACTIVE)).all()
+        staged_datasets = session.scalars(select(Dataset).where(Dataset.status == DatasetStatus.STAGED)).all()
         stories = session.scalars(
             select(Story).where(Story.dataset_id == dataset.id).order_by(Story.source_row_number)
         ).all()
@@ -198,8 +209,9 @@ def test_import_csv_creates_active_dataset_and_preserves_story_row_order(tmp_pat
             select(StoryKeyword).join(Story).where(Story.dataset_id == dataset.id).order_by(Story.source_row_number, StoryKeyword.position)
         ).all()
 
-    assert len(active_datasets) == 1
-    assert active_datasets[0].id == dataset.id
+    assert active_datasets == []
+    assert len(staged_datasets) == 1
+    assert staged_datasets[0].id == dataset.id
     assert [story.source_row_number for story in stories] == [1, 2]
     assert [story.fields_json["Story title (Eng)"] for story in stories] == ["Story One", "Story Two"]
     assert [link.origin for link in story_tropes] == [
@@ -217,7 +229,7 @@ def test_import_csv_creates_active_dataset_and_preserves_story_row_order(tmp_pat
     assert len(story_keywords) == 3
 
 
-def test_import_csv_replaces_one_active_dataset(tmp_path) -> None:
+def test_import_csv_keeps_the_existing_active_dataset_until_promotion(tmp_path) -> None:
     first_row = {column: "" for column in CSV_COLUMNS}
     first_row["Story title (Eng)"] = "First Dataset Story"
     first_row[TROPE_FIELD] = "§§ first trope"
@@ -228,18 +240,24 @@ def test_import_csv_replaces_one_active_dataset(tmp_path) -> None:
 
     with make_session(tmp_path) as session:
         first_dataset = import_csv_bytes(session, make_csv_bytes([first_row]), source_filename="first.csv")
+        activate_dataset(session, first_dataset)
         second_dataset = import_csv_bytes(session, make_csv_bytes([second_row]), source_filename="second.csv")
 
         datasets = session.scalars(select(Dataset).order_by(Dataset.created_at, Dataset.id)).all()
         active_dataset = session.scalar(select(Dataset).where(Dataset.status == DatasetStatus.ACTIVE))
-        active_stories = session.scalars(select(Story).where(Story.dataset_id == second_dataset.id)).all()
+        staged_dataset = session.scalar(select(Dataset).where(Dataset.id == second_dataset.id))
+        active_stories = session.scalars(select(Story).where(Story.dataset_id == first_dataset.id)).all()
+        staged_stories = session.scalars(select(Story).where(Story.dataset_id == second_dataset.id)).all()
 
     assert len(datasets) == 2
     assert first_dataset.id != second_dataset.id
-    assert [dataset.status for dataset in datasets] == [DatasetStatus.ARCHIVED, DatasetStatus.ACTIVE]
+    assert [dataset.status for dataset in datasets] == [DatasetStatus.ACTIVE, DatasetStatus.STAGED]
     assert active_dataset is not None
-    assert active_dataset.id == second_dataset.id
-    assert [story.fields_json["Story title (Eng)"] for story in active_stories] == ["Second Dataset Story"]
+    assert staged_dataset is not None
+    assert active_dataset.id == first_dataset.id
+    assert staged_dataset.id == second_dataset.id
+    assert [story.fields_json["Story title (Eng)"] for story in active_stories] == ["First Dataset Story"]
+    assert [story.fields_json["Story title (Eng)"] for story in staged_stories] == ["Second Dataset Story"]
 
 
 def test_export_csv_uses_exact_legacy_header_and_reconstructs_terms_from_links(tmp_path) -> None:
@@ -249,7 +267,8 @@ def test_export_csv_uses_exact_legacy_header_and_reconstructs_terms_from_links(t
     row[TROPE_FIELD] = "first trope ; second trope\nfirst trope"
 
     with make_session(tmp_path) as session:
-        import_csv_bytes(session, make_csv_bytes([row]), source_filename="roundtrip.csv")
+        dataset = import_csv_bytes(session, make_csv_bytes([row]), source_filename="roundtrip.csv")
+        activate_dataset(session, dataset)
         exported_bytes = export_active_dataset_to_csv_bytes(session)
 
     exported_text = exported_bytes.decode("utf-8-sig")
@@ -277,7 +296,8 @@ def test_import_export_round_trip_preserves_story_order_and_canonical_term_seria
     second_row[TROPE_FIELD] = "younger sibling wins ; younger sibling wins\neldest loses"
 
     with make_session(tmp_path) as session:
-        import_csv_bytes(session, make_csv_bytes([first_row, second_row]), source_filename="input.csv")
+        dataset = import_csv_bytes(session, make_csv_bytes([first_row, second_row]), source_filename="input.csv")
+        activate_dataset(session, dataset)
         exported_bytes = export_active_dataset_to_csv_bytes(session)
 
     reader = csv.DictReader(io.StringIO(exported_bytes.decode("utf-8-sig")))

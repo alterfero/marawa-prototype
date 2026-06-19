@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.compute.job_runner import JobRunner
-from app.db import Job, JobStatus, build_engine, build_session_factory, initialize_database
+from app.db import Dataset, DatasetStatus, Job, JobStatus, build_engine, build_session_factory, initialize_database
 from app.main import create_app
 from app.services.jobs import get_job, queue_job
 
@@ -91,7 +91,7 @@ def test_rebuild_job_failure_is_persisted(tmp_path) -> None:
         assert failed_job.error_message == "rebuild exploded"
 
 
-def test_job_runner_coalesces_queued_rebuild_jobs_and_runs_only_latest(tmp_path) -> None:
+def test_job_runner_coalesces_rebuild_jobs_within_the_same_dataset_only(tmp_path) -> None:
     db_path = tmp_path / "jobs-coalesce.db"
     engine = build_engine(f"sqlite:///{db_path}")
     initialize_database(engine)
@@ -99,31 +99,48 @@ def test_job_runner_coalesces_queued_rebuild_jobs_and_runs_only_latest(tmp_path)
     runner = JobRunner(session_factory)
 
     with session_factory() as session:
-        older = queue_job(session, job_type="full_rebuild", payload={"label": "older"})
-        newer = queue_job(session, job_type="full_rebuild", payload={"label": "newer"})
+        first_dataset = Dataset(status=DatasetStatus.ACTIVE)
+        second_dataset = Dataset(status=DatasetStatus.STAGED)
+        session.add_all([first_dataset, second_dataset])
+        session.commit()
+        older = queue_job(session, job_type="full_rebuild", dataset_id=first_dataset.id, payload={"label": "older"})
+        newer = queue_job(session, job_type="full_rebuild", dataset_id=first_dataset.id, payload={"label": "newer"})
+        other_dataset_job = queue_job(
+            session,
+            job_type="full_rebuild",
+            dataset_id=second_dataset.id,
+            payload={"label": "other-dataset"},
+        )
         session.commit()
         older_id = older.id
         newer_id = newer.id
+        other_dataset_job_id = other_dataset_job.id
 
     claimed_job_id = runner.claim_next_job()
-    assert claimed_job_id == newer_id
+    assert claimed_job_id == older_id
 
     with session_factory() as session:
         older_job = get_job(session, older_id)
         newer_job = get_job(session, newer_id)
+        other_job = get_job(session, other_dataset_job_id)
         assert older_job is not None
         assert newer_job is not None
-        assert older_job.status == JobStatus.CANCELLED
-        assert older_job.result_json["coalesced"] is True
-        assert older_job.result_json["superseded_by_job_id"] == newer_id
-        assert newer_job.status == JobStatus.RUNNING
+        assert other_job is not None
+        assert older_job.status == JobStatus.RUNNING
+        assert newer_job.status == JobStatus.CANCELLED
+        assert newer_job.result_json["coalesced"] is True
+        assert newer_job.result_json["superseded_by_job_id"] == older_id
+        assert other_job.status == JobStatus.QUEUED
 
-    runner.execute_job(newer_id)
+    runner.execute_job(older_id)
 
     with session_factory() as session:
-        newer_job = get_job(session, newer_id)
-        assert newer_job is not None
-        assert newer_job.status == JobStatus.SUCCEEDED
+        completed_job = get_job(session, older_id)
+        remaining_other_job = get_job(session, other_dataset_job_id)
+        assert completed_job is not None
+        assert remaining_other_job is not None
+        assert completed_job.status == JobStatus.SUCCEEDED
+        assert remaining_other_job.status == JobStatus.QUEUED
 
 
 def test_stale_running_jobs_are_requeued_on_app_startup(tmp_path) -> None:

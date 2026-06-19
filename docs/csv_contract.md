@@ -90,7 +90,7 @@ The exported CSV must preserve the exact legacy column names and exact column or
 
 - Export always includes every canonical column, even when a value is empty.
 - Export always uses the canonical header order.
-- Export always serializes from the active dataset in SQLite, not from the original uploaded file bytes.
+- Export always serializes from the active dataset in PostgreSQL, not from the original uploaded file bytes.
 - Internal metadata such as story IDs, versions, job IDs, timestamps, and dataset IDs is never exported.
 
 ## Field Value Normalization

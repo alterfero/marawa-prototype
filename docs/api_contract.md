@@ -2,13 +2,16 @@
 
 ## Overview
 
-This document defines the initial HTTP API contract for the Marawa web app.
+This document defines the target HTTP API contract for the authenticated Marawa web app.
 
 The API is JSON-first, except for CSV upload and CSV download. It is designed for:
 - a shared multi-user application;
 - one active dataset at a time;
+- anonymous public exploration access;
+- role-based authenticated access for guests, contributors, and admins;
 - optimistic concurrency on mutable resources;
-- durable background jobs for dataset import and full rebuilds.
+- durable background jobs for dataset import and full rebuilds;
+- durable review and audit workflows.
 
 Base path:
 
@@ -16,7 +19,33 @@ Base path:
 /api
 ```
 
-No authentication is used in the initial product.
+## Authentication Model
+
+- Authentication uses built-in email/password accounts.
+- Accounts are admin-created or invite-only.
+- There is no self-signup endpoint.
+- Authenticated sessions are cookie-based.
+- Mutating authenticated requests must include CSRF protection.
+- Anonymous users may access only the public exploration experience and its minimum supporting endpoints.
+
+## Access Matrix
+
+| Surface | Anonymous | Guest | Contributor | Admin |
+| --- | --- | --- | --- | --- |
+| Health | Yes | Yes | Yes | Yes |
+| Public exploration endpoints | Yes | Yes | Yes | Yes |
+| Dataset read | No | Yes | Yes | Yes |
+| Stories read | No | Yes | Yes | Yes |
+| Search read | No | Yes | Yes | Yes |
+| Jobs read | No | Yes | Yes | Yes |
+| Story create and edit | No | No | Yes | Yes |
+| Story trope and keyword assignment changes | No | No | Yes | Yes |
+| Canonical trope and keyword create | No | No | Yes | Yes |
+| CSV import and export | No | No | No | Yes |
+| Canonical trope merge and delete | No | No | No | Yes |
+| Canonical keyword curation | No | No | No | Yes |
+| User management | No | No | No | Yes |
+| Review queue and review resolution | No | No | No | Yes |
 
 ## Conventions
 
@@ -41,6 +70,12 @@ No authentication is used in the initial product.
 - Mutating requests must include the relevant optimistic concurrency token such as `expected_version` or `expected_dataset_version`.
 - On mismatch, the API returns `409 Conflict`.
 
+### Review Visibility
+
+- Contributor-created and contributor-edited content may be reviewed later by admins.
+- Normal read models do not need to expose review-state markers to non-admin users.
+- Admin review endpoints may expose review state and resolution metadata.
+
 ### Error Shape
 
 ```json
@@ -55,20 +90,37 @@ No authentication is used in the initial product.
 }
 ```
 
+Common auth and access errors:
+- `401 Unauthorized` for missing or invalid authenticated sessions.
+- `403 Forbidden` for authenticated users who lack the required role.
+- `409 Conflict` for optimistic concurrency failures or curation conflicts.
+
 ## Shared Schemas
+
+### CurrentUser
+
+```json
+{
+  "id": "user_001",
+  "email": "admin@example.org",
+  "display_name": "Admin User",
+  "role": "admin",
+  "status": "active"
+}
+```
 
 ### DatasetSummary
 
 ```json
 {
-  "id": "dataset_20260608_001",
+  "id": "dataset_20260617_001",
   "version": 12,
   "status": "active",
   "source_filename": "20260417_mmp.csv",
   "story_count": 1284,
   "trope_count": 530,
   "keyword_count": 744,
-  "last_successful_rebuild_at": "2026-06-08T18:30:00Z",
+  "last_successful_rebuild_at": "2026-06-17T18:30:00Z",
   "latest_job": {
     "id": "job_01",
     "job_type": "full_rebuild",
@@ -78,69 +130,23 @@ No authentication is used in the initial product.
 }
 ```
 
-### Term
-
-```json
-{
-  "id": "trope_001",
-  "text": "younger sibling outwits elder",
-  "story_count": 18,
-  "version": 3
-}
-```
-
 ### Story
 
 ```json
 {
   "id": "story_001",
-  "dataset_id": "dataset_20260608_001",
+  "dataset_id": "dataset_20260617_001",
   "version": 4,
   "record_origin": "csv_import",
   "source_row_number": 17,
   "label": "The pandanus woman [story_001]",
-  "created_at": "2026-06-08T18:30:00Z",
-  "updated_at": "2026-06-08T18:42:00Z",
+  "created_at": "2026-06-17T18:30:00Z",
+  "updated_at": "2026-06-17T18:42:00Z",
   "fields": {
-    "Entered by": "Clothilde Volk",
-    "Source first or second hand": "",
-    "Source": "Bensa & Rivierre 1983",
-    "pages": "16-31",
-    "Other source": "",
-    "URL ?": "",
-    "territory": "New Caledonia",
-    "lg group": "Cèmuhî",
-    "original language": "Cèmuhî",
-    "lg of publication": "French",
-    "bilingual?": "yes",
-    "storyteller": "Maurice Kodèm",
-    "date of recording": "1971",
-    "place of recording": "Kokingone",
-    "space coord": "-20.859062, 165.258667",
-    "editor": "",
-    "translator": "",
     "Story title (Eng)": "The pandanus woman",
-    "Story title (French)": "",
-    "Story title (other)": "",
-    "1-sentence summary": "",
     "Abstract (Eng)": "",
-    "Abstract (Fr)": "",
     "Keywords (Eng)": "pandanus ; woman",
-    "Motifs (Eng)": "§§ woman becomes tree",
-    "proposition de nouveaux motifs": "",
-    "species": "",
-    "non-human": "",
-    "placenames": "",
-    "named characters": "",
-    "external link": "",
-    "description of link": "",
-    "Connection to other stories": "",
-    "Megamotifs": "",
-    "Thème": "",
-    "Conte type": "",
-    "Autres infos données dans le texte, pour la fiche conte": "",
-    "ATU conte-type(AI ?)": "",
-    "ATU motifs (AI?)": ""
+    "Motifs (Eng)": "woman becomes tree"
   },
   "tropes": [
     {
@@ -161,15 +167,27 @@ No authentication is used in the initial product.
 }
 ```
 
+### CanonicalTerm
+
+```json
+{
+  "id": "trope_001",
+  "dataset_id": "dataset_20260617_001",
+  "text": "woman becomes tree",
+  "story_count": 18,
+  "version": 3
+}
+```
+
 ### Job
 
 ```json
 {
   "id": "job_01",
-  "dataset_id": "dataset_20260608_001",
+  "dataset_id": "dataset_20260617_001",
   "job_type": "full_rebuild",
   "status": "queued",
-  "requested_at": "2026-06-08T18:45:00Z",
+  "requested_at": "2026-06-17T18:45:00Z",
   "started_at": null,
   "finished_at": null,
   "error_code": null,
@@ -179,572 +197,480 @@ No authentication is used in the initial product.
 }
 ```
 
+### ReviewItem
+
+```json
+{
+  "id": "review_001",
+  "dataset_id": "dataset_20260617_001",
+  "review_type": "trope_pending",
+  "subject_table": "tropes",
+  "subject_id": "trope_001",
+  "status": "pending",
+  "created_by_user_id": "user_002",
+  "resolved_by_user_id": null,
+  "created_at": "2026-06-17T18:45:00Z",
+  "resolved_at": null,
+  "metadata": {}
+}
+```
+
 ## Endpoints
 
 ## Health
 
 ### `GET /api/health`
 
+Access:
+- public
+
 Purpose:
 - liveness and basic readiness check.
 
-Response `200 OK`:
+## Authentication
 
-```json
-{
-  "status": "ok"
-}
-```
+### `POST /api/auth/login`
 
-## Active Dataset
-
-### `GET /api/dataset`
+Access:
+- public
 
 Purpose:
-- fetch the currently active dataset summary.
+- authenticate a user with email and password and create a session.
 
-Response `200 OK`:
-- `DatasetSummary`
+Notes:
+- no self-signup companion endpoint exists.
+
+### `POST /api/auth/redeem-token`
+
+Access:
+- public
+
+Purpose:
+- redeem an admin-issued invite token or admin-issued reset token, set a new password, and create a session.
+
+### `POST /api/auth/logout`
+
+Access:
+- authenticated users
+
+Purpose:
+- revoke the current session.
+
+### `GET /api/auth/me`
+
+Access:
+- authenticated users
+
+Purpose:
+- fetch the currently authenticated user and role.
+
+## User Management
+
+### `GET /api/admin/users`
+
+Access:
+- admin
+
+Purpose:
+- list users and their statuses.
+
+### `POST /api/admin/users`
+
+Access:
+- admin
+
+Purpose:
+- create a new user account or invite.
+
+Notes:
+- the response may include invite or reset metadata needed for first login.
+
+### `PATCH /api/admin/users/{user_id}`
+
+Access:
+- admin
+
+Purpose:
+- update display name, role, or account metadata.
+
+### `POST /api/admin/users/{user_id}/deactivate`
+
+Access:
+- admin
+
+Purpose:
+- deactivate the user and revoke active sessions.
+
+### `POST /api/admin/users/{user_id}/activate`
+
+Access:
+- admin
+
+Purpose:
+- reactivate a previously deactivated user.
+
+### `POST /api/admin/users/{user_id}/reset-password`
+
+Access:
+- admin
+
+Purpose:
+- create an admin-triggered password reset flow.
+
+## Dataset
+
+### `GET /api/dataset/status`
+
+Access:
+- guest, contributor, admin
+
+Purpose:
+- fetch the currently active dataset summary and rebuild status.
+
+### `POST /api/dataset/upload`
+
+Access:
+- admin
+
+Purpose:
+- upload a CSV and queue a staged dataset replacement job.
+
+Contract notes:
+- import is whole-dataset replacement only;
+- the active dataset must remain unchanged until the staged import succeeds.
+
+### `GET /api/dataset/export.csv`
+
+Access:
+- admin
+
+Purpose:
+- export the active dataset as a legacy-compatible CSV.
+
+### `DELETE /api/dataset`
+
+Access:
+- admin only
+
+Purpose:
+- destructive maintenance or debug action.
+
+Contract notes:
+- should be disabled or tightly controlled in production.
 
 ## Jobs
 
 ### `GET /api/jobs`
 
+Access:
+- guest, contributor, admin
+
 Purpose:
 - list recent import and rebuild jobs.
 
-Query parameters:
-- `limit` optional, default `20`
-- `status` optional
-- `job_type` optional
-
-Response `200 OK`:
-
-```json
-{
-  "items": [
-    {
-      "id": "job_01",
-      "dataset_id": "dataset_20260608_001",
-      "job_type": "full_rebuild",
-      "status": "running",
-      "requested_at": "2026-06-08T18:45:00Z",
-      "started_at": "2026-06-08T18:45:01Z",
-      "finished_at": null,
-      "error_code": null,
-      "error_message": null,
-      "payload": {},
-      "result": {}
-    }
-  ]
-}
-```
-
 ### `GET /api/jobs/{job_id}`
+
+Access:
+- guest, contributor, admin
 
 Purpose:
 - fetch one job with its latest status.
-
-Response `200 OK`:
-- `Job`
-
-Response `404 Not Found`:
-- unknown job ID.
-
-## Dataset Import And Rebuild
-
-### `POST /api/imports`
-
-Purpose:
-- upload a CSV and queue a staged dataset replacement job.
-
-Request:
-- `multipart/form-data`
-- fields:
-  - `file`: CSV file
-  - `expected_dataset_version`: integer
-
-Response `202 Accepted`:
-
-```json
-{
-  "job": {
-    "id": "job_import_01",
-    "dataset_id": "dataset_staged_20260608_002",
-    "job_type": "import_dataset",
-    "status": "queued",
-    "requested_at": "2026-06-08T19:00:00Z",
-    "started_at": null,
-    "finished_at": null,
-    "error_code": null,
-    "error_message": null,
-    "payload": {
-      "source_filename": "20260417_mmp.csv"
-    },
-    "result": {}
-  }
-}
-```
-
-Response `409 Conflict`:
-- active dataset version does not match `expected_dataset_version`.
-
-Response `422 Unprocessable Entity`:
-- missing file;
-- invalid import parameters.
-
-### `POST /api/rebuilds`
-
-Purpose:
-- queue a full rebuild for the active dataset.
-
-Request:
-
-```json
-{
-  "expected_dataset_version": 12,
-  "reason": "manual_rebuild"
-}
-```
-
-Response `202 Accepted`:
-- `Job`
-
-Response `409 Conflict`:
-- active dataset version mismatch.
 
 ## Stories
 
 ### `GET /api/stories`
 
+Access:
+- guest, contributor, admin
+
 Purpose:
 - list stories in the active dataset.
 
-Query parameters:
-- `q` optional free-text filter over titles and summaries
-- `trope` optional exact trope text or trope ID
-- `keyword` optional exact keyword text or keyword ID
-- `territory` optional
-- `limit` optional, default `50`
-- `offset` optional, default `0`
-
-Response `200 OK`:
-
-```json
-{
-  "items": [
-    {
-      "id": "story_001",
-      "dataset_id": "dataset_20260608_001",
-      "version": 4,
-      "record_origin": "csv_import",
-      "source_row_number": 17,
-      "label": "The pandanus woman [story_001]",
-      "created_at": "2026-06-08T18:30:00Z",
-      "updated_at": "2026-06-08T18:42:00Z",
-      "fields": {
-        "Story title (Eng)": "The pandanus woman",
-        "territory": "New Caledonia",
-        "1-sentence summary": ""
-      },
-      "tropes": [
-        {
-          "id": "trope_001",
-          "text": "woman becomes tree"
-        }
-      ],
-      "keywords": [
-        {
-          "id": "keyword_001",
-          "text": "pandanus"
-        }
-      ]
-    }
-  ],
-  "total": 1,
-  "limit": 50,
-  "offset": 0
-}
-```
-
 ### `GET /api/stories/{story_id}`
 
+Access:
+- guest, contributor, admin
+
 Purpose:
-- fetch the full story representation.
-
-Response `200 OK`:
-- `Story`
-
-Response `404 Not Found`:
-- unknown story ID in the active dataset.
+- fetch one story detail record.
 
 ### `POST /api/stories`
 
-Purpose:
-- create a new story in the active dataset.
-
-Request:
-
-```json
-{
-  "expected_dataset_version": 12,
-  "fields": {
-    "Entered by": "Researcher",
-    "Source first or second hand": "",
-    "Source": "",
-    "pages": "",
-    "Other source": "",
-    "URL ?": "",
-    "territory": "",
-    "lg group": "",
-    "original language": "",
-    "lg of publication": "",
-    "bilingual?": "",
-    "storyteller": "",
-    "date of recording": "",
-    "place of recording": "",
-    "space coord": "",
-    "editor": "",
-    "translator": "",
-    "Story title (Eng)": "New story",
-    "Story title (French)": "",
-    "Story title (other)": "",
-    "1-sentence summary": "",
-    "Abstract (Eng)": "",
-    "Abstract (Fr)": "",
-    "Keywords (Eng)": "",
-    "Motifs (Eng)": "",
-    "proposition de nouveaux motifs": "",
-    "species": "",
-    "non-human": "",
-    "placenames": "",
-    "named characters": "",
-    "external link": "",
-    "description of link": "",
-    "Connection to other stories": "",
-    "Megamotifs": "",
-    "Thème": "",
-    "Conte type": "",
-    "Autres infos données dans le texte, pour la fiche conte": "",
-    "ATU conte-type(AI ?)": "",
-    "ATU motifs (AI?)": ""
-  },
-  "tropes": [
-    "woman becomes tree"
-  ],
-  "keywords": [
-    "pandanus"
-  ]
-}
-```
-
-Response `201 Created`:
-
-```json
-{
-  "story": {},
-  "queued_job": {
-    "id": "job_rebuild_01",
-    "dataset_id": "dataset_20260608_001",
-    "job_type": "full_rebuild",
-    "status": "queued",
-    "requested_at": "2026-06-08T19:10:00Z",
-    "started_at": null,
-    "finished_at": null,
-    "error_code": null,
-    "error_message": null,
-    "payload": {},
-    "result": {}
-  }
-}
-```
-
-Response `409 Conflict`:
-- active dataset version mismatch.
-
-### `PUT /api/stories/{story_id}`
+Access:
+- contributor, admin
 
 Purpose:
-- replace the editable content of an existing story.
+- create a story in the active dataset.
 
-Request:
+Contract notes:
+- contributor-created stories save immediately;
+- contributor-created stories also create review work for admins.
 
-```json
-{
-  "expected_version": 4,
-  "fields": {},
-  "tropes": [
-    "woman becomes tree",
-    "jealous sibling causes exile"
-  ],
-  "keywords": [
-    "pandanus",
-    "jealousy"
-  ]
-}
-```
+### `PATCH /api/stories/{story_id}`
 
-Response `200 OK`:
-
-```json
-{
-  "story": {},
-  "queued_job": {
-    "id": "job_rebuild_02",
-    "dataset_id": "dataset_20260608_001",
-    "job_type": "full_rebuild",
-    "status": "queued",
-    "requested_at": "2026-06-08T19:15:00Z",
-    "started_at": null,
-    "finished_at": null,
-    "error_code": null,
-    "error_message": null,
-    "payload": {},
-    "result": {}
-  }
-}
-```
-
-Response `404 Not Found`:
-- unknown story ID.
-
-Response `409 Conflict`:
-- story version mismatch.
-
-Notes:
-- This endpoint may add or remove trope assignments and keyword assignments.
-- There is intentionally no story delete endpoint.
-
-## Tropes And Keywords
-
-### `POST /api/search/tropes`
+Access:
+- contributor, admin
 
 Purpose:
-- semantic and lexical search over indexed tropes only.
+- partially update a story's editable CSV-backed fields in an optimistic-concurrency-protected workflow.
 
-Request:
+Contract notes:
+- contributor edits save immediately;
+- contributor edits also create or update review work for admins.
+- trope and keyword assignment changes use the dedicated assignment endpoints below.
 
-```json
-{
-  "query": "someone drifts at sea inside a fruit",
-  "limit": 10
-}
-```
+### `GET /api/stories/{story_id}/tropes`
 
-Response `200 OK`:
-
-```json
-{
-  "items": [
-    {
-      "id": "trope_012",
-      "text": "hero hides inside coconut and drifts at sea",
-      "story_count": 6,
-      "version": 1,
-      "score": 0.83
-    }
-  ],
-  "model_name": "sentence-transformers/paraphrase-multilingual-mpnet-base-v2",
-  "search_status": "ready"
-}
-```
-
-### `POST /api/search/keywords`
+Access:
+- guest, contributor, admin
 
 Purpose:
-- semantic and lexical search over indexed keywords only.
+- list trope assignments for a story.
 
-Request:
+### `POST /api/stories/{story_id}/tropes`
 
-```json
-{
-  "query": "canoe",
-  "limit": 10
-}
-```
+Access:
+- contributor, admin
 
-Response `200 OK`:
-- same shape as trope search, with keyword terms.
+Purpose:
+- add a trope assignment to a story.
+
+### `PUT /api/stories/{story_id}/tropes/{trope_id}`
+
+Access:
+- contributor, admin
+
+Purpose:
+- replace a trope assignment on a story.
+
+### `DELETE /api/stories/{story_id}/tropes/{trope_id}`
+
+Access:
+- contributor, admin
+
+Purpose:
+- hard-delete a trope assignment from a story.
+
+### `GET /api/stories/{story_id}/keywords`
+
+Access:
+- guest, contributor, admin
+
+Purpose:
+- list keyword assignments for a story.
+
+### `POST /api/stories/{story_id}/keywords`
+
+Access:
+- contributor, admin
+
+Purpose:
+- add a keyword assignment to a story.
+
+### `PUT /api/stories/{story_id}/keywords/{keyword_id}`
+
+Access:
+- contributor, admin
+
+Purpose:
+- replace a keyword assignment on a story.
+
+### `DELETE /api/stories/{story_id}/keywords/{keyword_id}`
+
+Access:
+- contributor, admin
+
+Purpose:
+- remove a keyword assignment from a story.
+
+## Canonical Tropes
 
 ### `GET /api/tropes`
+
+Access:
+- guest, contributor, admin
 
 Purpose:
 - list canonical tropes in the active dataset.
 
-Query parameters:
-- `q` optional substring filter
-- `limit` optional, default `50`
-- `offset` optional, default `0`
+### `GET /api/tropes/{trope_id}`
 
-Response `200 OK`:
-
-```json
-{
-  "items": [
-    {
-      "id": "trope_001",
-      "text": "woman becomes tree",
-      "story_count": 18,
-      "version": 3
-    }
-  ],
-  "total": 1,
-  "limit": 50,
-  "offset": 0
-}
-```
-
-### `POST /api/tropes/{trope_id}/remove`
+Access:
+- guest, contributor, admin
 
 Purpose:
-- remove a canonical trope.
+- fetch one canonical trope detail record.
 
-Request:
+### `POST /api/tropes`
 
-```json
-{
-  "expected_version": 3,
-  "remove_assignments": false
-}
-```
+Access:
+- contributor, admin
 
-Behavior:
-- if `remove_assignments` is `false`, the server removes the trope only when it has no story assignments;
-- if `remove_assignments` is `true`, the server removes all story assignments to that trope, deletes the canonical trope, increments affected story versions, and queues a full rebuild.
+Purpose:
+- create a canonical trope in the active dataset.
 
-Response `200 OK`:
+Contract notes:
+- contributor-created tropes become visible immediately and enter `pending_review`.
 
-```json
-{
-  "removed_trope_id": "trope_001",
-  "affected_story_count": 0,
-  "queued_job": {
-    "id": "job_rebuild_03",
-    "dataset_id": "dataset_20260608_001",
-    "job_type": "full_rebuild",
-    "status": "queued",
-    "requested_at": "2026-06-08T19:20:00Z",
-    "started_at": null,
-    "finished_at": null,
-    "error_code": null,
-    "error_message": null,
-    "payload": {},
-    "result": {}
-  }
-}
-```
+### `DELETE /api/tropes/{trope_id}`
 
-Response `404 Not Found`:
-- unknown trope ID.
+Access:
+- admin
 
-Response `409 Conflict`:
-- trope version mismatch;
-- trope still has assignments while `remove_assignments` is `false`.
+Purpose:
+- delete a canonical trope when safe or through an explicit curation action that removes its assignments.
+
+## Canonical Keywords
+
+### `GET /api/keywords`
+
+Access:
+- guest, contributor, admin
+
+Purpose:
+- list canonical keywords in the active dataset.
+
+### `GET /api/keywords/{keyword_id}`
+
+Access:
+- guest, contributor, admin
+
+Purpose:
+- fetch one canonical keyword detail record.
+
+### `POST /api/keywords`
+
+Access:
+- contributor, admin
+
+Purpose:
+- create a canonical keyword in the active dataset.
+
+Contract notes:
+- contributor-created keywords become visible immediately and enter `pending_review`.
+
+## Search
+
+### `POST /api/search/tropes`
+
+Access:
+- guest, contributor, admin
+
+Purpose:
+- return the closest indexed trope terms in the active dataset.
+
+### `POST /api/search/keywords`
+
+Access:
+- guest, contributor, admin
+
+Purpose:
+- return the closest indexed keyword terms in the active dataset.
 
 ## Exploration
 
-### `POST /api/exploration/trope-candidates`
-
-Purpose:
-- find the closest indexed tropes for a free-text exploration prompt.
-
-Request:
-
-```json
-{
-  "query": "someone gets inside a coconut and drifts at sea",
-  "limit": 12
-}
-```
-
-Response `200 OK`:
-
-```json
-{
-  "items": [
-    {
-      "id": "trope_012",
-      "text": "hero hides inside coconut and drifts at sea",
-      "story_count": 6,
-      "version": 1,
-      "score": 0.83
-    }
-  ],
-  "model_name": "sentence-transformers/paraphrase-multilingual-mpnet-base-v2",
-  "search_status": "ready"
-}
-```
-
 ### `POST /api/exploration/network`
 
-Purpose:
-- build the map-ready exploration network for one selected trope and a similarity threshold.
-
-Request:
-
-```json
-{
-  "selected_trope_id": "trope_012",
-  "min_similarity": 0.62,
-  "related_limit": 60
-}
-```
-
-Response `200 OK`:
-
-```json
-{
-  "selected_trope": {
-    "id": "trope_012",
-    "text": "hero hides inside coconut and drifts at sea",
-    "story_count": 6,
-    "version": 1
-  },
-  "related_tropes": [
-    {
-      "id": "trope_044",
-      "text": "person crosses ocean in floating shell",
-      "story_count": 4,
-      "version": 1,
-      "score": 0.74
-    }
-  ],
-  "original_markers": [],
-  "related_markers": [],
-  "connections": [],
-  "bounds": null,
-  "missing_original_coords": 0,
-  "missing_related_coords": 0
-}
-```
-
-Notes:
-- `original_markers` are stories tagged with the selected trope.
-- `related_markers` are stories tagged with related tropes, excluding stories already in the original set.
-- The response shape is intended to be directly consumable by the frontend map layer.
-
-## CSV Export
-
-### `GET /api/exports/csv`
+Access:
+- public
 
 Purpose:
-- download the active dataset as a legacy-compatible CSV.
+- build the public exploration response for a trope phrase or selected trope.
 
-Response `200 OK`:
-- body is `text/csv`
-- response header should include a downloadable filename
+Contract notes:
+- this endpoint is part of the minimum public API surface available to anonymous users.
 
-Response `409 Conflict`:
-- optionally used if the system decides export should be blocked during a staged dataset swap
+## Visualizations
 
-## Status And Staleness Semantics
+### `POST /api/visualizations/trope-sequence-graph`
 
-- Story reads come from SQLite and should reflect committed edits immediately.
-- Trope search, keyword search, and exploration responses read from the latest successful artifact revision.
-- If a rebuild is queued or running, search endpoints should still return the last successful artifact status plus a `search_status` value such as `stale` or `rebuilding`.
+Access:
+- guest, contributor, admin
 
-## Explicit Non-Endpoints
+Purpose:
+- build the authenticated trope-sequence graph response for internal exploratory analysis.
 
-- No authentication endpoints.
-- No story delete endpoint.
-- No general semantic search endpoint over arbitrary story text.
+## Curation
+
+### `GET /api/curation/near-duplicate-tropes`
+
+Access:
+- admin
+
+Purpose:
+- list near-duplicate trope candidates for curation.
+
+### `POST /api/curation/merge-tropes`
+
+Access:
+- admin
+
+Purpose:
+- merge one canonical trope into another.
+
+### `POST /api/curation/validate-merges`
+
+Access:
+- admin
+
+Purpose:
+- validate and apply multiple trope merge decisions.
+
+## Review
+
+### `GET /api/review/items`
+
+Access:
+- admin
+
+Purpose:
+- list pending and recently resolved review items.
+
+Contract notes:
+- defaults to pending items when no status filter is provided.
+- includes current subject preview data for stories and canonical terms when the subject still exists.
+
+### `GET /api/review/items/{review_id}`
+
+Access:
+- admin
+
+Purpose:
+- fetch one review item with resolution context.
+
+### `POST /api/review/items/{review_id}/approve`
+
+Access:
+- admin
+
+Purpose:
+- approve a pending review item.
+
+Contract notes:
+- story review items resolve administrative review work only and do not roll back the already-saved story content.
+- approving a pending canonical trope or keyword promotes its review status to `approved`.
+
+### `POST /api/review/items/{review_id}/reject`
+
+Access:
+- admin
+
+Purpose:
+- reject or otherwise resolve a pending review item.
+
+Contract notes:
+- story review items resolve administrative review work only and do not roll back the already-saved story content.
+- rejecting a pending canonical term must define the resolution path, such as merge-and-resolve or remove-assignments-and-delete.
+- pending canonical keywords follow the same merge-or-delete review resolution path as pending canonical tropes.
+
+## Implementation Notes Locked By This Contract
+
+- PostgreSQL is the transactional system of record.
+- CSV import and export remain legacy compatibility surfaces, not the live working store.
+- Tropes and keywords are dataset-scoped.
+- Anonymous access is limited to exploration.
+- Guests are read-only.
+- Contributors write stories and new terms.
+- Admins own dataset actions, user management, curation, and review.
+- Contributor-created content is visible immediately and unmarked in the normal UI.
+- Important auth, admin, review, dataset, and write actions must be auditable.

@@ -2,8 +2,9 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.api.deps import get_db_session, require_minimum_role
 from app.api.errors import api_error
-from app.api.deps import get_db_session
+from app.db.models import UserRole
 from app.services.jobs import get_job, list_jobs
 
 
@@ -41,13 +42,18 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
 @router.get("", response_model=list[JobResponse])
 def read_jobs(
     limit: int = Query(default=20, ge=1, le=200),
+    _: object = Depends(require_minimum_role(UserRole.GUEST)),
     session: Session = Depends(get_db_session),
 ) -> list[JobResponse]:
     return [_serialize_job(job) for job in list_jobs(session, limit=limit)]
 
 
 @router.get("/{job_id}", response_model=JobResponse)
-def read_job(job_id: str, session: Session = Depends(get_db_session)) -> JobResponse:
+def read_job(
+    job_id: str,
+    _: object = Depends(require_minimum_role(UserRole.GUEST)),
+    session: Session = Depends(get_db_session),
+) -> JobResponse:
     job = get_job(session, job_id)
     if job is None:
         raise api_error(404, "job_not_found", "Job not found.")

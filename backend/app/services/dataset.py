@@ -17,6 +17,7 @@ from app.db.models import (
     TermSimilarityCache,
     Trope,
 )
+from app.services.audit import record_audit_event
 from app.services.csv_io import import_csv_bytes
 from app.services.jobs import queue_job
 
@@ -201,9 +202,7 @@ def get_dataset_status(session: Session, *, model_name: str) -> dict:
         )
         or 0
     )
-    latest_job = session.scalar(
-        select(Job).where(Job.dataset_id == dataset.id).order_by(Job.created_at.desc(), Job.id.desc())
-    )
+    latest_job = session.scalar(select(Job).order_by(Job.created_at.desc(), Job.id.desc()))
     return {
         "story_count": int(story_count),
         "trope_count": int(trope_count),
@@ -225,6 +224,7 @@ def upload_dataset_csv(
     csv_bytes: bytes,
     *,
     source_filename: str | None = None,
+    actor_user_id: str | None = None,
 ) -> tuple[Dataset, Job]:
     dataset = import_csv_bytes(session, csv_bytes, source_filename=source_filename)
     job = queue_job(
@@ -236,13 +236,34 @@ def upload_dataset_csv(
             "source_filename": source_filename,
         },
     )
+    record_audit_event(
+        session,
+        event_type="dataset.uploaded",
+        actor_user_id=actor_user_id,
+        dataset_id=dataset.id,
+        subject_table="datasets",
+        subject_id=dataset.id,
+        payload={
+            "dataset_version": dataset.version,
+            "dataset_status": dataset.status.value,
+            "source_filename": source_filename,
+            "job_id": job.id,
+        },
+    )
     session.commit()
     session.refresh(dataset)
     session.refresh(job)
     return dataset, job
 
 
-def clear_dataset_data(session: Session) -> None:
+def clear_dataset_data(session: Session, *, actor_user_id: str | None = None) -> None:
+    record_audit_event(
+        session,
+        event_type="dataset.cleared",
+        actor_user_id=actor_user_id,
+        subject_table="datasets",
+        payload={},
+    )
     session.execute(delete(TermSimilarityCache))
     session.execute(delete(TermEmbedding))
     session.execute(delete(StoryTrope))

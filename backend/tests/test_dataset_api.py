@@ -22,6 +22,7 @@ from app.db import (
 )
 from app.main import create_app
 from tests.search_fakes import FakeEmbeddingBackend
+from tests.auth_helpers import authenticate_admin, configure_auth_env
 
 
 pytestmark = pytest.mark.filterwarnings(
@@ -86,7 +87,8 @@ def make_current_template_fieldnames() -> list[str]:
 
 
 @pytest.fixture
-def client(tmp_path) -> TestClient:
+def client(monkeypatch, tmp_path) -> TestClient:
+    configure_auth_env(monkeypatch)
     db_path = tmp_path / "api.db"
     engine = build_engine(f"sqlite:///{db_path}")
     session_factory = build_session_factory(engine)
@@ -98,6 +100,7 @@ def client(tmp_path) -> TestClient:
     )
 
     with TestClient(app) as test_client:
+        authenticate_admin(test_client)
         yield test_client
 
 
@@ -127,7 +130,7 @@ def test_dataset_status_returns_empty_state_when_no_active_dataset(client: TestC
     }
 
 
-def test_dataset_upload_imports_csv_and_queues_placeholder_rebuild_job(client: TestClient) -> None:
+def test_dataset_upload_stages_csv_and_queues_placeholder_rebuild_job(client: TestClient) -> None:
     first_row = {column: "" for column in CSV_COLUMNS}
     first_row["Story title (Eng)"] = "Story One"
     first_row[KEYWORD_FIELD] = "wolf ; moon"
@@ -145,18 +148,20 @@ def test_dataset_upload_imports_csv_and_queues_placeholder_rebuild_job(client: T
 
     assert response.status_code == 201
     body = response.json()
-    assert body["active_dataset_version"] == 1
+    assert body["dataset_version"] == 1
+    assert body["dataset_status"] == "staged"
+    assert body["active_dataset_version"] is None
     assert body["latest_job"]["status"] == "queued"
     assert body["latest_job"]["job_type"] == "full_rebuild"
 
     status_response = client.get("/api/dataset/status")
     assert status_response.status_code == 200
-    assert status_response.json()["story_count"] == 2
-    assert status_response.json()["trope_count"] == 3
-    assert status_response.json()["keyword_count"] == 3
-    assert status_response.json()["active_dataset_version"] == 1
+    assert status_response.json()["story_count"] == 0
+    assert status_response.json()["trope_count"] == 0
+    assert status_response.json()["keyword_count"] == 0
+    assert status_response.json()["active_dataset_version"] is None
     assert status_response.json()["latest_job"]["status"] == "queued"
-    assert status_response.json()["embedding_status"]["state"] == "queued"
+    assert status_response.json()["embedding_status"]["state"] == "missing"
     assert status_response.json()["embedding_status"]["ready"] is False
     assert status_response.json()["embedding_status"]["current"] is False
     assert status_response.json()["embedding_status"]["latest_rebuild_job"]["status"] == "queued"
@@ -178,6 +183,7 @@ def test_dataset_upload_accepts_current_template_and_preserves_legacy_export_fie
     )
 
     assert response.status_code == 201
+    assert client.app.state.job_runner.process_next_job() is True
 
     stories_response = client.get("/api/stories")
     assert stories_response.status_code == 200
@@ -283,6 +289,7 @@ def test_dataset_upload_rejects_malformed_csv_with_clear_error(client: TestClien
 
 
 def test_dataset_upload_rejects_files_larger_than_configured_limit(tmp_path, monkeypatch) -> None:
+    configure_auth_env(monkeypatch)
     monkeypatch.setenv("MAX_UPLOAD_BYTES", "64")
     get_settings.cache_clear()
 
@@ -293,6 +300,7 @@ def test_dataset_upload_rejects_files_larger_than_configured_limit(tmp_path, mon
 
     payload = make_csv_bytes([{column: "x" * 12 for column in CSV_COLUMNS}])
     with TestClient(app) as client:
+        authenticate_admin(client)
         response = client.post(
             "/api/dataset/upload",
             files={"file": ("too-large.csv", payload, "text/csv")},
@@ -316,6 +324,7 @@ def test_dataset_export_downloads_current_dataset_as_csv(client: TestClient) -> 
         files={"file": ("export.csv", make_csv_bytes([row]), "text/csv")},
     )
     assert upload_response.status_code == 201
+    assert client.app.state.job_runner.process_next_job() is True
 
     response = client.get("/api/dataset/export.csv")
 
@@ -391,4 +400,5 @@ def test_clear_dataset_removes_current_data_and_returns_empty_state(client: Test
     )
 
     assert reupload_response.status_code == 201
-    assert reupload_response.json()["active_dataset_version"] == 1
+    assert reupload_response.json()["dataset_status"] == "staged"
+    assert reupload_response.json()["active_dataset_version"] is None

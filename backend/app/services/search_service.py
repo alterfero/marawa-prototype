@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 import numpy as np
@@ -53,26 +54,39 @@ class SearchService:
         self.near_duplicate_threshold = near_duplicate_threshold
 
     def handle_full_rebuild_job(self, session: Session, job: Job) -> dict[str, Any]:
-        return self.rebuild_embeddings(session)
+        dataset = self._resolve_target_dataset(session, job.dataset_id)
+        result = self.rebuild_embeddings(session, dataset_id=dataset.id)
+        self._promote_dataset_after_successful_rebuild(session, dataset)
+        return result
 
-    def rebuild_embeddings(self, session: Session) -> dict[str, Any]:
-        active_dataset = session.scalar(select(Dataset).where(Dataset.status == DatasetStatus.ACTIVE))
-        dataset_id = active_dataset.id if active_dataset is not None else None
-        dataset_version = active_dataset.version if active_dataset is not None else None
-        trope_terms = self._load_active_terms(session, TermKind.TROPE)
-        keyword_terms = self._load_active_terms(session, TermKind.KEYWORD)
-        artifact_version = self._next_artifact_version(session)
+    def rebuild_embeddings(self, session: Session, *, dataset_id: str | None = None) -> dict[str, Any]:
+        dataset = self._resolve_target_dataset(session, dataset_id)
+        trope_terms = self._load_dataset_terms(session, dataset.id, TermKind.TROPE)
+        keyword_terms = self._load_dataset_terms(session, dataset.id, TermKind.KEYWORD)
+        artifact_version = self._next_artifact_version(session, dataset.id)
 
-        trope_summary = self._rebuild_term_embeddings(session, TermKind.TROPE, trope_terms, artifact_version)
-        keyword_summary = self._rebuild_term_embeddings(session, TermKind.KEYWORD, keyword_terms, artifact_version)
+        trope_summary = self._rebuild_term_embeddings(
+            session,
+            dataset.id,
+            TermKind.TROPE,
+            trope_terms,
+            artifact_version,
+        )
+        keyword_summary = self._rebuild_term_embeddings(
+            session,
+            dataset.id,
+            TermKind.KEYWORD,
+            keyword_terms,
+            artifact_version,
+        )
         session.flush()
-        cache_summary = self._refresh_trope_similarity_cache(session, trope_terms, artifact_version)
+        cache_summary = self._refresh_trope_similarity_cache(session, dataset.id, trope_terms, artifact_version)
 
         session.flush()
         return {
             "message": "Embedding rebuild completed.",
-            "dataset_id": dataset_id,
-            "dataset_version": dataset_version,
+            "dataset_id": dataset.id,
+            "dataset_version": dataset.version,
             "model_name": self.model_name,
             "artifact_version": artifact_version,
             "tropes_indexed": trope_summary["indexed_count"],
@@ -195,25 +209,20 @@ class SearchService:
         if len(ordered_trope_ids) < 2:
             return {}
 
-        artifact_version = session.scalar(
-            select(func.max(TermEmbedding.artifact_version)).where(
-                TermEmbedding.term_kind == TermKind.TROPE,
-                TermEmbedding.model_name == self.model_name,
-            )
-        )
-        if artifact_version is None:
-            return {}
-
         embeddings = list(
             session.scalars(
                 select(TermEmbedding).where(
-                    TermEmbedding.term_kind == TermKind.TROPE,
-                    TermEmbedding.model_name == self.model_name,
-                    TermEmbedding.artifact_version == artifact_version,
+                TermEmbedding.term_kind == TermKind.TROPE,
+                TermEmbedding.model_name == self.model_name,
                     TermEmbedding.trope_id.in_(ordered_trope_ids),
                 )
             ).all()
         )
+        if not embeddings:
+            return {}
+
+        artifact_version = max(embedding.artifact_version for embedding in embeddings)
+        embeddings = [embedding for embedding in embeddings if embedding.artifact_version == artifact_version]
         embedding_by_trope_id = {
             embedding.trope_id: embedding
             for embedding in embeddings
@@ -331,11 +340,12 @@ class SearchService:
 
         return round(float(score), 6)
 
-    def _load_active_terms(self, session: Session, term_kind: TermKind) -> list[SearchTermRecord]:
-        active_dataset = session.scalar(select(Dataset).where(Dataset.status == DatasetStatus.ACTIVE))
-        if active_dataset is None:
-            return []
-
+    def _load_dataset_terms(
+        self,
+        session: Session,
+        dataset_id: str,
+        term_kind: TermKind,
+    ) -> list[SearchTermRecord]:
         if term_kind == TermKind.TROPE:
             rows = session.execute(
                 select(
@@ -347,7 +357,7 @@ class SearchService:
                 .select_from(Trope)
                 .join(StoryTrope, StoryTrope.trope_id == Trope.id)
                 .join(Story, Story.id == StoryTrope.story_id)
-                .where(Story.dataset_id == active_dataset.id)
+                .where(Story.dataset_id == dataset_id)
                 .group_by(Trope.id, Trope.text, Trope.normalized_text)
                 .order_by(Trope.text.asc(), Trope.id.asc())
             ).all()
@@ -371,7 +381,7 @@ class SearchService:
             .select_from(Keyword)
             .join(StoryKeyword, StoryKeyword.keyword_id == Keyword.id)
             .join(Story, Story.id == StoryKeyword.story_id)
-            .where(Story.dataset_id == active_dataset.id)
+            .where(Story.dataset_id == dataset_id)
             .group_by(Keyword.id, Keyword.text, Keyword.normalized_text)
             .order_by(Keyword.text.asc(), Keyword.id.asc())
         ).all()
@@ -385,23 +395,56 @@ class SearchService:
             for row in rows
         ]
 
-    def _next_artifact_version(self, session: Session) -> int:
-        current = session.scalar(
-            select(func.max(TermEmbedding.artifact_version)).where(TermEmbedding.model_name == self.model_name)
+    def _load_active_terms(self, session: Session, term_kind: TermKind) -> list[SearchTermRecord]:
+        active_dataset = session.scalar(select(Dataset).where(Dataset.status == DatasetStatus.ACTIVE))
+        if active_dataset is None:
+            return []
+        return self._load_dataset_terms(session, active_dataset.id, term_kind)
+
+    def _next_artifact_version(self, session: Session, dataset_id: str) -> int:
+        latest_trope_version = session.scalar(
+            select(func.max(TermEmbedding.artifact_version))
+            .select_from(TermEmbedding)
+            .join(Trope, Trope.id == TermEmbedding.trope_id)
+            .where(
+                TermEmbedding.term_kind == TermKind.TROPE,
+                TermEmbedding.model_name == self.model_name,
+                Trope.dataset_id == dataset_id,
+            )
         )
-        return int(current or 0) + 1
+        latest_keyword_version = session.scalar(
+            select(func.max(TermEmbedding.artifact_version))
+            .select_from(TermEmbedding)
+            .join(Keyword, Keyword.id == TermEmbedding.keyword_id)
+            .where(
+                TermEmbedding.term_kind == TermKind.KEYWORD,
+                TermEmbedding.model_name == self.model_name,
+                Keyword.dataset_id == dataset_id,
+            )
+        )
+        current = max(int(latest_trope_version or 0), int(latest_keyword_version or 0))
+        return current + 1
 
     def _rebuild_term_embeddings(
         self,
         session: Session,
+        dataset_id: str,
         term_kind: TermKind,
         terms: list[SearchTermRecord],
         artifact_version: int,
     ) -> dict[str, int]:
+        if term_kind == TermKind.TROPE:
+            dataset_term_ids = select(Trope.id).where(Trope.dataset_id == dataset_id)
+            delete_filter = TermEmbedding.trope_id.in_(dataset_term_ids)
+        else:
+            dataset_term_ids = select(Keyword.id).where(Keyword.dataset_id == dataset_id)
+            delete_filter = TermEmbedding.keyword_id.in_(dataset_term_ids)
+
         session.execute(
             delete(TermEmbedding).where(
                 TermEmbedding.term_kind == term_kind,
                 TermEmbedding.model_name == self.model_name,
+                delete_filter,
             )
         )
 
@@ -429,13 +472,19 @@ class SearchService:
     def _refresh_trope_similarity_cache(
         self,
         session: Session,
+        dataset_id: str,
         trope_terms: list[SearchTermRecord],
         artifact_version: int,
     ) -> dict[str, int]:
+        dataset_trope_ids = select(Trope.id).where(Trope.dataset_id == dataset_id)
         session.execute(
             delete(TermSimilarityCache).where(
                 TermSimilarityCache.term_kind == TermKind.TROPE,
                 TermSimilarityCache.model_name == self.model_name,
+                or_(
+                    TermSimilarityCache.source_term_id.in_(dataset_trope_ids),
+                    TermSimilarityCache.target_term_id.in_(dataset_trope_ids),
+                ),
             )
         )
 
@@ -448,6 +497,7 @@ class SearchService:
                     TermEmbedding.term_kind == TermKind.TROPE,
                     TermEmbedding.model_name == self.model_name,
                     TermEmbedding.artifact_version == artifact_version,
+                    TermEmbedding.trope_id.in_([term.id for term in trope_terms]),
                 )
             ).all()
         )
@@ -488,3 +538,39 @@ class SearchService:
                 )
                 pair_count += 1
         return {"pair_count": pair_count}
+
+    def _resolve_target_dataset(self, session: Session, dataset_id: str | None) -> Dataset:
+        if dataset_id:
+            dataset = session.get(Dataset, dataset_id)
+            if dataset is None:
+                raise ValueError("Dataset not found for rebuild.")
+            return dataset
+
+        active_dataset = session.scalar(select(Dataset).where(Dataset.status == DatasetStatus.ACTIVE))
+        if active_dataset is not None:
+            return active_dataset
+
+        staged_dataset = session.scalar(
+            select(Dataset)
+            .where(Dataset.status == DatasetStatus.STAGED)
+            .order_by(Dataset.created_at.desc(), Dataset.id.desc())
+        )
+        if staged_dataset is not None:
+            return staged_dataset
+
+        raise ValueError("No dataset is available for rebuild.")
+
+    def _promote_dataset_after_successful_rebuild(self, session: Session, dataset: Dataset) -> None:
+        if dataset.status != DatasetStatus.STAGED:
+            return
+
+        current_active = session.scalar(
+            select(Dataset).where(
+                Dataset.status == DatasetStatus.ACTIVE,
+                Dataset.id != dataset.id,
+            )
+        )
+        if current_active is not None:
+            current_active.status = DatasetStatus.ARCHIVED
+        dataset.status = DatasetStatus.ACTIVE
+        dataset.activated_at = datetime.now(timezone.utc)

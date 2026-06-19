@@ -2,6 +2,7 @@ from sqlalchemy import select
 
 from app.db import (
     Dataset,
+    DatasetStatus,
     Keyword,
     Story,
     StoryKeyword,
@@ -56,6 +57,7 @@ def test_rebuild_job_computes_term_embeddings_and_trope_similarity_cache(tmp_pat
             make_csv_bytes([row_one, row_two], CSV_COLUMNS),
             source_filename="search.csv",
         )
+        dataset.status = DatasetStatus.ACTIVE
         result = search_service.rebuild_embeddings(session)
         session.commit()
 
@@ -103,7 +105,8 @@ def test_search_service_returns_similar_terms_with_explanation(tmp_path) -> None
     row[KEYWORD_FIELD] = "wolf ; moon ; river"
 
     with session_factory() as session:
-        upload_dataset_csv(session, make_csv_bytes([row], CSV_COLUMNS), source_filename="terms.csv")
+        dataset, _ = upload_dataset_csv(session, make_csv_bytes([row], CSV_COLUMNS), source_filename="terms.csv")
+        dataset.status = DatasetStatus.ACTIVE
         search_service.rebuild_embeddings(session)
         session.commit()
 
@@ -136,7 +139,8 @@ def test_search_service_falls_back_to_lexical_matches_when_embeddings_are_missin
     row[TROPE_FIELD] = "§§ first trope\n§§ first trope variant\n§§ second trope"
 
     with session_factory() as session:
-        upload_dataset_csv(session, make_csv_bytes([row], CSV_COLUMNS), source_filename="fallback.csv")
+        dataset, _ = upload_dataset_csv(session, make_csv_bytes([row], CSV_COLUMNS), source_filename="fallback.csv")
+        dataset.status = DatasetStatus.ACTIVE
         session.commit()
 
         trope_results = search_service.search_terms(session, TermKind.TROPE, "first trope", limit=3)

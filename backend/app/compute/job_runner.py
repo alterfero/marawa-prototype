@@ -6,9 +6,10 @@ from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.orm import QueryableAttribute
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.db.models import Job, JobStatus
+from app.db.models import Dataset, DatasetStatus, Job, JobStatus
 
 
 JobHandler = Callable[[Session, Job], dict[str, Any] | None]
@@ -80,18 +81,42 @@ class JobRunner:
                 except asyncio.TimeoutError:
                     continue
 
+    @staticmethod
+    def _supports_skip_locked(session: Session) -> bool:
+        bind = session.get_bind()
+        return bind is not None and bind.dialect.name == "postgresql"
+
+    def _queued_jobs_query(
+        self,
+        session: Session,
+        *,
+        job_type: str | None = None,
+        order_by: tuple[QueryableAttribute[Any], ...],
+    ):
+        query = select(Job).where(Job.status == JobStatus.QUEUED)
+        if job_type is not None:
+            query = query.where(Job.job_type == job_type)
+        query = query.order_by(*order_by)
+        if self._supports_skip_locked(session):
+            query = query.with_for_update(skip_locked=True)
+        return query
+
     def claim_next_job(self) -> str | None:
         with self.session_factory() as session:
             queued_rebuilds = list(
                 session.scalars(
-                    select(Job)
-                    .where(Job.status == JobStatus.QUEUED, Job.job_type == "full_rebuild")
-                    .order_by(Job.created_at.desc(), Job.id.desc())
+                    self._queued_jobs_query(
+                        session,
+                        job_type="full_rebuild",
+                        order_by=(Job.created_at.asc(), Job.id.asc()),
+                    )
                 ).all()
             )
             if queued_rebuilds:
                 selected_job = queued_rebuilds[0]
                 for stale_job in queued_rebuilds[1:]:
+                    if stale_job.dataset_id != selected_job.dataset_id:
+                        continue
                     stale_job.status = JobStatus.CANCELLED
                     stale_job.finished_at = utc_now()
                     stale_job.result_json = {
@@ -108,9 +133,10 @@ class JobRunner:
                 return selected_job.id
 
             next_job = session.scalar(
-                select(Job)
-                .where(Job.status == JobStatus.QUEUED)
-                .order_by(Job.created_at.asc(), Job.id.asc())
+                self._queued_jobs_query(
+                    session,
+                    order_by=(Job.created_at.asc(), Job.id.asc()),
+                )
             )
             if next_job is None:
                 return None
@@ -143,6 +169,10 @@ class JobRunner:
                 job = session.get(Job, job_id)
                 if job is None:
                     return
+                if job.job_type == "full_rebuild" and job.dataset_id is not None:
+                    dataset = session.get(Dataset, job.dataset_id)
+                    if dataset is not None and dataset.status == DatasetStatus.STAGED:
+                        dataset.status = DatasetStatus.FAILED
                 job.status = JobStatus.FAILED
                 job.error_message = str(exc)
                 job.finished_at = utc_now()

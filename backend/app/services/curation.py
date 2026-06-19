@@ -19,6 +19,7 @@ from app.db.models import (
     TermSimilarityCache,
     Trope,
 )
+from app.services.audit import record_audit_event
 from app.services.jobs import queue_job
 from app.services.stories import sync_story_derived_fields
 
@@ -46,29 +47,24 @@ def list_canonical_tropes(
     query: str | None = None,
     limit: int = 100,
 ) -> list[dict]:
-    query_text = clean_text(query) if query is not None else ""
-    story_count_subquery = (
-        select(
-            StoryTrope.trope_id.label("trope_id"),
-            func.count(func.distinct(StoryTrope.story_id)).label("story_count"),
-        )
-        .group_by(StoryTrope.trope_id)
-        .subquery()
-    )
+    active_dataset = _get_active_dataset(session)
+    if active_dataset is None:
+        return []
 
+    query_text = clean_text(query) if query is not None else ""
     statement = (
         select(
             Trope.id,
             Trope.text,
-            func.coalesce(story_count_subquery.c.story_count, 0).label("story_count"),
+            Trope.cached_story_count.label("story_count"),
         )
         .select_from(Trope)
-        .outerjoin(story_count_subquery, story_count_subquery.c.trope_id == Trope.id)
+        .where(Trope.dataset_id == active_dataset.id)
     )
     if query_text:
         statement = statement.where(func.lower(Trope.text).contains(query_text.lower()))
     if unused_only:
-        statement = statement.where(func.coalesce(story_count_subquery.c.story_count, 0) == 0)
+        statement = statement.where(Trope.cached_story_count == 0)
 
     rows = session.execute(
         statement.order_by(Trope.text.asc(), Trope.id.asc()).limit(limit)
@@ -110,6 +106,10 @@ def list_near_duplicate_tropes(session: Session, *, model_name: str) -> dict:
         select(func.max(TermSimilarityCache.artifact_version)).where(
             TermSimilarityCache.term_kind == TermKind.TROPE,
             TermSimilarityCache.model_name == model_name,
+            or_(
+                TermSimilarityCache.source_term_id.in_(active_trope_ids),
+                TermSimilarityCache.target_term_id.in_(active_trope_ids),
+            ),
         )
     )
     if artifact_version is None:
@@ -159,7 +159,15 @@ def list_near_duplicate_tropes(session: Session, *, model_name: str) -> dict:
             .group_by(StoryTrope.trope_id)
         ).all()
     }
-    tropes_by_id = {trope.id: trope for trope in session.scalars(select(Trope).where(Trope.id.in_(trope_ids))).all()}
+    tropes_by_id = {
+        trope.id: trope
+        for trope in session.scalars(
+            select(Trope).where(
+                Trope.dataset_id == active_dataset.id,
+                Trope.id.in_(trope_ids),
+            )
+        ).all()
+    }
 
     pair_map: dict[tuple[str, str], dict] = {}
     for entry in entries:
@@ -214,6 +222,7 @@ def merge_tropes(
     *,
     source_trope_id: str,
     target_trope_id: str,
+    actor_user_id: str | None = None,
 ) -> tuple[Dataset, dict, object]:
     dataset, summary, job = validate_trope_merges(
         session,
@@ -228,6 +237,7 @@ def merge_tropes(
             "source_trope_id": source_trope_id,
             "target_trope_id": target_trope_id,
         },
+        actor_user_id=actor_user_id,
     )
     return dataset, summary["applied_merges"][0], job
 
@@ -238,6 +248,7 @@ def validate_trope_merges(
     merges: list[dict[str, str]],
     job_reason: str = "validate_trope_merges",
     job_payload: dict | None = None,
+    actor_user_id: str | None = None,
 ) -> tuple[Dataset, dict, object]:
     active_dataset = _require_active_dataset(session)
     normalized_merges = _normalize_merge_requests(session, merges)
@@ -249,6 +260,7 @@ def validate_trope_merges(
     for merge_request in normalized_merges:
         merge_affected_story_ids = _apply_trope_merge(
             session,
+            dataset_id=active_dataset.id,
             source_trope_id=merge_request["source_trope_id"],
             target_trope_id=merge_request["target_trope_id"],
         )
@@ -290,6 +302,26 @@ def validate_trope_merges(
         dataset_id=active_dataset.id,
         payload=full_job_payload,
     )
+    record_audit_event(
+        session,
+        event_type="trope.merged" if len(merge_summaries) == 1 else "trope.batch_merged",
+        actor_user_id=actor_user_id,
+        dataset_id=active_dataset.id,
+        subject_table="tropes",
+        subject_id=merge_summaries[0]["source_trope_id"] if len(merge_summaries) == 1 else None,
+        payload={
+            "merge_count": len(merge_summaries),
+            "affected_story_count": len(affected_story_ids),
+            "merges": [
+                {
+                    "source_trope_id": merge_summary["source_trope_id"],
+                    "target_trope_id": merge_summary["target_trope_id"],
+                }
+                for merge_summary in merge_summaries
+            ],
+            "job_id": job.id,
+        },
+    )
     session.commit()
 
     refreshed_active_dataset = session.get(Dataset, active_dataset.id)
@@ -305,9 +337,15 @@ def delete_trope(
     *,
     trope_id: str,
     remove_from_all_stories: bool = False,
+    actor_user_id: str | None = None,
 ) -> tuple[Dataset, dict, object]:
     active_dataset = _require_active_dataset(session)
-    trope = session.get(Trope, trope_id)
+    trope = session.scalar(
+        select(Trope).where(
+            Trope.id == trope_id,
+            Trope.dataset_id == active_dataset.id,
+        )
+    )
     if trope is None:
         raise CurationNotFoundError("Trope not found.")
 
@@ -355,6 +393,19 @@ def delete_trope(
             "remove_from_all_stories": remove_from_all_stories,
         },
     )
+    record_audit_event(
+        session,
+        event_type="trope.deleted",
+        actor_user_id=actor_user_id,
+        dataset_id=active_dataset.id,
+        subject_table="tropes",
+        subject_id=trope_id,
+        payload={
+            "affected_story_count": len(affected_story_ids),
+            "remove_from_all_stories": remove_from_all_stories,
+            "job_id": job.id,
+        },
+    )
     session.commit()
 
     refreshed_active_dataset = session.get(Dataset, active_dataset.id)
@@ -368,7 +419,8 @@ def _normalize_merge_requests(session: Session, merges: list[dict[str, str]]) ->
     if not merges:
         raise CurationValidationError("At least one merge decision is required.")
 
-    _validate_merge_targets_exist(session, merges)
+    active_dataset = _require_active_dataset(session)
+    _validate_merge_targets_exist(session, active_dataset.id, merges)
 
     source_to_target: dict[str, str] = {}
     ordered_source_ids: list[str] = []
@@ -417,13 +469,20 @@ def _normalize_merge_requests(session: Session, merges: list[dict[str, str]]) ->
     return normalized_merges
 
 
-def _validate_merge_targets_exist(session: Session, merges: list[dict[str, str]]) -> None:
+def _validate_merge_targets_exist(session: Session, dataset_id: str, merges: list[dict[str, str]]) -> None:
     trope_ids = {
         trope_id
         for merge_request in merges
         for trope_id in (merge_request["source_trope_id"], merge_request["target_trope_id"])
     }
-    existing_trope_ids = set(session.scalars(select(Trope.id).where(Trope.id.in_(trope_ids))).all())
+    existing_trope_ids = set(
+        session.scalars(
+            select(Trope.id).where(
+                Trope.dataset_id == dataset_id,
+                Trope.id.in_(trope_ids),
+            )
+        ).all()
+    )
 
     for merge_request in merges:
         if merge_request["source_trope_id"] not in existing_trope_ids:
@@ -435,13 +494,16 @@ def _validate_merge_targets_exist(session: Session, merges: list[dict[str, str]]
 def _apply_trope_merge(
     session: Session,
     *,
+    dataset_id: str,
     source_trope_id: str,
     target_trope_id: str,
 ) -> set[str]:
     source_links = list(
         session.scalars(
             select(StoryTrope)
+            .join(Story, Story.id == StoryTrope.story_id)
             .where(StoryTrope.trope_id == source_trope_id)
+            .where(Story.dataset_id == dataset_id)
             .options(selectinload(StoryTrope.story))
         ).all()
     )
@@ -451,9 +513,12 @@ def _apply_trope_merge(
         target_links_by_story = {
             link.story_id: link
             for link in session.scalars(
-                select(StoryTrope).where(
+                select(StoryTrope)
+                .join(Story, Story.id == StoryTrope.story_id)
+                .where(
                     StoryTrope.trope_id == target_trope_id,
                     StoryTrope.story_id.in_(source_story_ids),
+                    Story.dataset_id == dataset_id,
                 )
             ).all()
         }
@@ -484,7 +549,12 @@ def _apply_trope_merge(
     if remaining_source_links:
         raise CurationConflictError("Source trope still has assignments and cannot be deleted.")
 
-    refreshed_source_trope = session.get(Trope, source_trope_id)
+    refreshed_source_trope = session.scalar(
+        select(Trope).where(
+            Trope.id == source_trope_id,
+            Trope.dataset_id == dataset_id,
+        )
+    )
     if refreshed_source_trope is not None:
         _delete_trope_artifacts(session, source_trope_id)
         session.delete(refreshed_source_trope)

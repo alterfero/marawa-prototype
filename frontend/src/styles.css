@@ -571,6 +571,12 @@ p {
   margin: 0;
 }
 
+.review-value {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;

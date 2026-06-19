@@ -5,7 +5,9 @@ from sqlalchemy import case, select
 from sqlalchemy.orm import Session
 
 from app.core.parsing import clean_text, normalize_text
-from app.db.models import Dataset, DatasetStatus, Story, StoryTrope, Trope
+from app.db.models import Dataset, DatasetStatus, Story, StoryTrope, TermKind, TermReviewStatus, Trope, UserRole
+from app.services.audit import record_audit_event
+from app.services.reviews import queue_term_review_item
 
 
 TITLE_FIELDS = [
@@ -27,23 +29,71 @@ class TropeMutationValidationError(TropeLookupError):
     """Raised when a trope create request is invalid."""
 
 
-def ensure_canonical_trope(session: Session, text: str) -> tuple[dict, bool]:
+def ensure_canonical_trope(
+    session: Session,
+    text: str,
+    *,
+    actor_user_id: str | None = None,
+    actor_role: UserRole | None = None,
+) -> tuple[dict, bool]:
+    active_dataset = session.scalar(select(Dataset).where(Dataset.status == DatasetStatus.ACTIVE))
+    if active_dataset is None:
+        raise TropeMutationValidationError("No active dataset is available.")
+
     trope_text = clean_text(text)
     marker = normalize_text(trope_text)
     if not marker:
         raise TropeMutationValidationError("Trope text cannot be empty.")
 
-    trope = session.scalar(select(Trope).where(Trope.normalized_text == marker))
+    trope = session.scalar(
+        select(Trope).where(
+            Trope.dataset_id == active_dataset.id,
+            Trope.normalized_text == marker,
+        )
+    )
     if trope is not None:
         return _serialize_trope_summary(trope), False
 
-    trope = Trope(text=trope_text)
+    trope = Trope(
+        dataset_id=active_dataset.id,
+        text=trope_text,
+        review_status=TermReviewStatus.PENDING_REVIEW if actor_role == UserRole.CONTRIBUTOR else TermReviewStatus.APPROVED,
+        created_by_user_id=actor_user_id,
+        updated_by_user_id=actor_user_id,
+    )
     session.add(trope)
     try:
+        session.flush()
+        if actor_role == UserRole.CONTRIBUTOR and actor_user_id:
+            queue_term_review_item(
+                session,
+                dataset_id=active_dataset.id,
+                term_kind=TermKind.TROPE,
+                subject_id=trope.id,
+                actor_user_id=actor_user_id,
+                text=trope.text,
+            )
+        record_audit_event(
+            session,
+            event_type="trope.created",
+            actor_user_id=actor_user_id,
+            dataset_id=active_dataset.id,
+            subject_table="tropes",
+            subject_id=trope.id,
+            payload={
+                "created": True,
+                "review_status": trope.review_status.value,
+            },
+        )
         session.commit()
     except IntegrityError:
         session.rollback()
-        trope = session.scalar(select(Trope).where(Trope.normalized_text == marker))
+        trope = session.scalar(
+            select(Trope).where(
+                Trope.dataset_id == active_dataset.id,
+                Trope.normalized_text == marker,
+            )
+        )
         if trope is None:
             raise
         return _serialize_trope_summary(trope), False
@@ -52,18 +102,18 @@ def ensure_canonical_trope(session: Session, text: str) -> tuple[dict, bool]:
 
 
 def get_trope_detail(session: Session, trope_id: str) -> dict:
-    trope = session.get(Trope, trope_id)
-    if trope is None:
-        raise TropeLookupNotFoundError("Canonical trope not found.")
-
     active_dataset = session.scalar(select(Dataset).where(Dataset.status == DatasetStatus.ACTIVE))
     if active_dataset is None:
-        return {
-            "id": trope.id,
-            "text": trope.text,
-            "story_count": 0,
-            "stories": [],
-        }
+        raise TropeLookupNotFoundError("Canonical trope not found.")
+
+    trope = session.scalar(
+        select(Trope).where(
+            Trope.id == trope_id,
+            Trope.dataset_id == active_dataset.id,
+        )
+    )
+    if trope is None:
+        raise TropeLookupNotFoundError("Canonical trope not found.")
 
     stories = session.scalars(
         select(Story)

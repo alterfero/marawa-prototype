@@ -4,8 +4,9 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db_session
+from app.api.deps import get_db_session, require_minimum_role
 from app.api.errors import api_error
+from app.db.models import UserRole
 from app.services.visualizations import (
     VisualizationNotFoundError,
     VisualizationValidationError,
@@ -91,6 +92,7 @@ def get_search_service(request: Request):
 @router.post("/trope-sequence-graph", response_model=TropeSequenceGraphResponse)
 def build_trope_sequence_graph_endpoint(
     payload: TropeSequenceGraphRequest,
+    _: object = Depends(require_minimum_role(UserRole.GUEST)),
     session: Session = Depends(get_db_session),
     search_service=Depends(get_search_service),
 ) -> TropeSequenceGraphResponse:

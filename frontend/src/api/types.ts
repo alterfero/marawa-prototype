@@ -4,6 +4,29 @@ export interface JobSummary {
   job_type: string;
 }
 
+export type UserRole = "guest" | "contributor" | "admin";
+export type UserStatus = "active" | "inactive" | "pending_invite";
+export type ReviewStatus = "pending" | "approved" | "rejected";
+export type ReviewType = "story_created" | "story_updated" | "trope_pending" | "keyword_pending";
+
+export interface CurrentUser {
+  id: string;
+  email: string;
+  display_name: string;
+  role: UserRole;
+  status: UserStatus;
+  last_login_at: string | null;
+  deactivated_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AuthSessionResponse {
+  user: CurrentUser;
+  csrf_token: string;
+  expires_at: string;
+}
+
 export interface EmbeddingStatus {
   state: string;
   ready: boolean;
@@ -117,6 +140,22 @@ export interface DeleteStoryTropeResponse {
   queued_job: JobSummary;
 }
 
+export interface StoryKeywordMutationResponse {
+  story_id: string;
+  story_version: number;
+  dataset_version: number;
+  keyword: StoryKeyword;
+  queued_job: JobSummary;
+}
+
+export interface DeleteStoryKeywordResponse {
+  story_id: string;
+  story_version: number;
+  dataset_version: number;
+  deleted_keyword_id: string;
+  queued_job: JobSummary;
+}
+
 export interface TropeSummary {
   id: string;
   text: string;
@@ -169,6 +208,25 @@ export interface DeleteTropeResponse {
 export interface CreateTropeResponse {
   trope: TropeSummary;
   created: boolean;
+}
+
+export interface CanonicalKeywordListItem {
+  id: string;
+  text: string;
+  story_count: number;
+}
+
+export interface KeywordStorySummary {
+  id: string;
+  title: string;
+  source_row_number: number | null;
+}
+
+export interface KeywordDetail {
+  id: string;
+  text: string;
+  story_count: number;
+  stories: KeywordStorySummary[];
 }
 
 export interface ExplorationCandidate {
@@ -327,6 +385,51 @@ export interface TropeSequenceGraphNode {
   origin?: string | null;
   is_selected_trope?: boolean | null;
   selected_similarity_score?: number | null;
+}
+
+export interface ReviewSubjectPreview {
+  id: string;
+  title?: string | null;
+  text?: string | null;
+  source_row_number?: number | null;
+  version?: number | null;
+  review_status?: string | null;
+  story_count?: number | null;
+}
+
+export interface ReviewItem {
+  id: string;
+  dataset_id: string | null;
+  review_type: ReviewType;
+  subject_table: string;
+  subject_id: string;
+  status: ReviewStatus;
+  created_by_user_id: string | null;
+  resolved_by_user_id: string | null;
+  created_at: string;
+  updated_at: string;
+  resolved_at: string | null;
+  metadata: Record<string, unknown>;
+  subject_preview: ReviewSubjectPreview | null;
+}
+
+export interface CreateUserResponse {
+  user: CurrentUser;
+  invite_token: string;
+  token_kind: string;
+  expires_at: string;
+}
+
+export interface PasswordResetResponse {
+  user: CurrentUser;
+  reset_token: string;
+  token_kind: string;
+  expires_at: string;
+}
+
+export interface UserLifecycleResponse {
+  user: CurrentUser;
+  revoked_session_count?: number | null;
 }
 
 export interface TropeSequenceGraphLink {

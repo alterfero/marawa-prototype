@@ -73,7 +73,7 @@ function formatJobStatus(job: JobSummary | JobDetail | null): string {
   return job.status.split("_").join(" ");
 }
 
-export function DatasetPage() {
+export function DatasetPage({ canManageDataset }: { canManageDataset: boolean }) {
   const [status, setStatus] = useState<DatasetStatus | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [fileInputKey, setFileInputKey] = useState(0);
@@ -322,54 +322,64 @@ export function DatasetPage() {
         </section>
       )}
 
-      <section className="panel split-panel">
-        <div className="stack">
-          <h2>Upload CSV</h2>
-          <form className="stack" onSubmit={(event) => void handleSubmit(event)}>
-            <label className="field">
-              <span>Legacy CSV file</span>
-              <input
-                accept=".csv,text/csv"
-                className="input"
-                key={fileInputKey}
-                onChange={(event) => setFile(event.target.files?.[0] || null)}
-                type="file"
-              />
-            </label>
-            <button className="button" disabled={busy || clearing || backendUnavailable} type="submit">
-              {busy ? "Uploading..." : "Upload dataset"}
-            </button>
-          </form>
-        </div>
+      {canManageDataset ? (
+        <>
+          <section className="panel split-panel">
+            <div className="stack">
+              <h2>Upload CSV</h2>
+              <form className="stack" onSubmit={(event) => void handleSubmit(event)}>
+                <label className="field">
+                  <span>Legacy CSV file</span>
+                  <input
+                    accept=".csv,text/csv"
+                    className="input"
+                    key={fileInputKey}
+                    onChange={(event) => setFile(event.target.files?.[0] || null)}
+                    type="file"
+                  />
+                </label>
+                <button className="button" disabled={busy || clearing || backendUnavailable} type="submit">
+                  {busy ? "Uploading..." : "Upload dataset"}
+                </button>
+              </form>
+            </div>
 
-        <div className="stack">
-          <h2>Export CSV</h2>
-          {status?.active_dataset_version ? (
-            <a className="button button-ghost" href={getDatasetExportUrl()}>
-              Download export
-            </a>
-          ) : (
-            <span aria-disabled="true" className="button button-ghost button-disabled">
-              Download export
-            </span>
-          )}
-        </div>
-      </section>
+            <div className="stack">
+              <h2>Export CSV</h2>
+              {status?.active_dataset_version ? (
+                <a className="button button-ghost" href={getDatasetExportUrl()}>
+                  Download export
+                </a>
+              ) : (
+                <span aria-disabled="true" className="button button-ghost button-disabled">
+                  Download export
+                </span>
+              )}
+            </div>
+          </section>
 
-      <section className="panel stack">
-        <h2>Clear data</h2>
-        <div className="button-row wrap-row">
-          <button
-            className="button button-danger"
-            disabled={busy || clearing || backendUnavailable || status?.active_dataset_version == null}
-            onClick={() => void handleClearData()}
-            type="button"
-          >
-            {clearing ? "Clearing..." : "Clear data"}
-          </button>
-        </div>
-        {jobError ? <p className="notice-inline">Could not refresh rebuild status: {jobError}</p> : null}
-      </section>
+          <section className="panel stack">
+            <h2>Clear data</h2>
+            <div className="button-row wrap-row">
+              <button
+                className="button button-danger"
+                disabled={busy || clearing || backendUnavailable || status?.active_dataset_version == null}
+                onClick={() => void handleClearData()}
+                type="button"
+              >
+                {clearing ? "Clearing..." : "Clear data"}
+              </button>
+            </div>
+            {jobError ? <p className="notice-inline">Could not refresh rebuild status: {jobError}</p> : null}
+          </section>
+        </>
+      ) : (
+        <section className="panel">
+          <h2>Dataset administration</h2>
+          <p className="muted">CSV import, export, and dataset replacement are restricted to admin accounts.</p>
+          {jobError ? <p className="notice-inline">Could not refresh rebuild status: {jobError}</p> : null}
+        </section>
+      )}
     </div>
   );
 }

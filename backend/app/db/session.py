@@ -36,8 +36,10 @@ def _ensure_sqlite_directory(database_url: str) -> None:
 
 def build_engine(database_url: str) -> Engine:
     _ensure_sqlite_directory(database_url)
-    db_engine = create_engine(database_url, future=True)
-    if make_url(database_url).get_backend_name() == "sqlite":
+    backend_name = make_url(database_url).get_backend_name()
+    engine_kwargs = {"future": True, "pool_pre_ping": backend_name != "sqlite"}
+    db_engine = create_engine(database_url, **engine_kwargs)
+    if backend_name == "sqlite":
         event.listen(db_engine, "connect", _configure_sqlite_connection)
     return db_engine
 

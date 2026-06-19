@@ -1,10 +1,14 @@
 from fastapi import APIRouter
 
+from app.api.routes.admin_users import router as admin_users_router
+from app.api.routes.auth import router as auth_router
 from app.api.routes.curation import router as curation_router
 from app.api.routes.dataset import router as dataset_router
 from app.api.routes.exploration import router as exploration_router
 from app.api.routes.health import router as health_router
 from app.api.routes.jobs import router as jobs_router
+from app.api.routes.keywords import router as keywords_router
+from app.api.routes.review import router as review_router
 from app.api.routes.search import router as search_router
 from app.api.routes.stories import router as stories_router
 from app.api.routes.tropes import router as tropes_router
@@ -12,11 +16,15 @@ from app.api.routes.visualizations import router as visualizations_router
 
 
 api_router = APIRouter()
+api_router.include_router(admin_users_router)
+api_router.include_router(auth_router)
 api_router.include_router(curation_router)
 api_router.include_router(dataset_router)
 api_router.include_router(exploration_router)
 api_router.include_router(health_router)
 api_router.include_router(jobs_router)
+api_router.include_router(keywords_router)
+api_router.include_router(review_router)
 api_router.include_router(search_router)
 api_router.include_router(stories_router)
 api_router.include_router(tropes_router)

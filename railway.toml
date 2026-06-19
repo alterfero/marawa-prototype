@@ -3,7 +3,7 @@ builder = "RAILPACK"
 buildCommand = "npm ci --prefix frontend && npm run build --prefix frontend"
 
 [deploy]
-startCommand = "cd backend && python -m uvicorn app.main:app --host 0.0.0.0 --port \"${PORT:-8000}\""
+startCommand = "bash scripts/railway_start.sh"
 healthcheckPath = "/api/health"
 healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"

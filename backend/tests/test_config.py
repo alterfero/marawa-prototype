@@ -12,6 +12,7 @@ def test_settings_default_to_local_data_directory(monkeypatch) -> None:
     settings = get_settings()
 
     assert settings.data_dir == REPO_ROOT / "data"
+    assert settings.database_backend == "sqlite"
     assert settings.database_path == REPO_ROOT / "data" / "app.db"
     assert settings.database_url == f"sqlite:///{(REPO_ROOT / 'data' / 'app.db').as_posix()}"
     assert settings.port == 8000
@@ -30,10 +31,27 @@ def test_settings_prefer_explicit_database_path(monkeypatch, tmp_path) -> None:
     settings = get_settings()
 
     assert settings.data_dir == database_path.parent
+    assert settings.database_backend == "sqlite"
     assert settings.database_path == database_path
     assert settings.database_url == f"sqlite:///{database_path.as_posix()}"
     assert settings.model_name == "custom-model"
     assert settings.port == 9001
     assert settings.model_cache_dir == database_path.parent / "model-cache"
+
+    get_settings.cache_clear()
+
+
+def test_settings_prefer_explicit_postgres_url(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "runtime-data"))
+    monkeypatch.setenv("MARAWA_DATABASE_URL", "postgres://postgres:secret@db.internal:5432/marawa")
+    get_settings.cache_clear()
+
+    settings = get_settings()
+
+    assert settings.data_dir == tmp_path / "runtime-data"
+    assert settings.database_backend == "postgresql"
+    assert settings.database_path is None
+    assert settings.database_url == "postgresql+psycopg://postgres:secret@db.internal:5432/marawa"
+    assert settings.model_cache_dir == tmp_path / "runtime-data" / "model-cache"
 
     get_settings.cache_clear()

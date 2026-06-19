@@ -1,19 +1,27 @@
 import { useEffect, useSyncExternalStore } from "react";
 
 export type AppRoute =
+  | "/login"
+  | "/redeem"
   | "/dataset"
+  | "/stories"
   | "/create"
   | "/review"
   | "/curation"
+  | "/users"
   | "/exploration"
   | "/experimental/trope-force-3d";
 
-const DEFAULT_ROUTE: AppRoute = "/dataset";
+const DEFAULT_ROUTE: AppRoute = "/exploration";
 const KNOWN_ROUTES: AppRoute[] = [
+  "/login",
+  "/redeem",
   "/dataset",
+  "/stories",
   "/create",
   "/review",
   "/curation",
+  "/users",
   "/exploration",
   "/experimental/trope-force-3d",
 ];

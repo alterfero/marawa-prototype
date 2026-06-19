@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from app.core.csv_schema import CSV_COLUMNS, KEYWORD_FIELD, TROPE_FIELD
 from app.db import build_engine, build_session_factory
 from app.main import create_app
+from tests.auth_helpers import authenticate_admin, configure_auth_env
 from tests.search_fakes import FakeEmbeddingBackend
 
 
@@ -54,8 +55,10 @@ def process_next_job(client: TestClient) -> None:
     assert client.app.state.job_runner.process_next_job() is True
 
 
-def test_exploration_network_returns_trope_candidates_when_selected_trope_is_missing(tmp_path) -> None:
+def test_exploration_network_returns_trope_candidates_when_selected_trope_is_missing(monkeypatch, tmp_path) -> None:
+    configure_auth_env(monkeypatch)
     with build_client(tmp_path, "exploration-candidates.db") as client:
+        authenticate_admin(client)
         upload_dataset(
             client,
             [
@@ -83,8 +86,10 @@ def test_exploration_network_returns_trope_candidates_when_selected_trope_is_mis
     assert body["selected_trope_candidates"][1]["text"] == "first trope variant"
 
 
-def test_exploration_network_returns_lexical_fallback_candidates_before_rebuild(tmp_path) -> None:
+def test_exploration_network_hides_staged_dataset_candidates_before_rebuild(monkeypatch, tmp_path) -> None:
+    configure_auth_env(monkeypatch)
     with build_client(tmp_path, "exploration-candidates-fallback.db") as client:
+        authenticate_admin(client)
         upload_dataset(
             client,
             [
@@ -105,12 +110,13 @@ def test_exploration_network_returns_lexical_fallback_candidates_before_rebuild(
     assert response.status_code == 200
     body = response.json()
     assert body["selected_trope"] is None
-    assert body["selected_trope_candidates"][0]["text"] == "first trope"
-    assert body["selected_trope_candidates"][1]["text"] == "first trope variant"
+    assert body["selected_trope_candidates"] == []
 
 
-def test_exploration_network_builds_markers_connections_and_bounds(tmp_path) -> None:
+def test_exploration_network_builds_markers_connections_and_bounds(monkeypatch, tmp_path) -> None:
+    configure_auth_env(monkeypatch)
     with build_client(tmp_path, "exploration-network.db") as client:
+        authenticate_admin(client)
         upload_dataset(
             client,
             [
@@ -172,12 +178,14 @@ def test_exploration_network_builds_markers_connections_and_bounds(tmp_path) -> 
     assert body["bounds"] is not None
 
 
-def test_exploration_network_requires_query_or_selected_trope_id(tmp_path) -> None:
+def test_exploration_network_requires_query_or_selected_trope_id(monkeypatch, tmp_path) -> None:
+    configure_auth_env(monkeypatch)
     with build_client(tmp_path, "exploration-validation.db") as client:
+        authenticate_admin(client)
         response = client.post(
             "/api/exploration/network",
             json={},
-    )
+        )
 
     assert response.status_code == 400
     assert response.json()["code"] == "exploration_invalid"

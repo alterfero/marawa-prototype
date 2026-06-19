@@ -2,8 +2,8 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db_session
-from app.db.models import TermKind
+from app.api.deps import get_db_session, require_minimum_role
+from app.db.models import TermKind, UserRole
 
 
 class SearchRequest(BaseModel):
@@ -45,6 +45,7 @@ def get_search_service(request: Request):
 @router.post("/tropes", response_model=SearchResponse)
 def search_tropes(
     payload: SearchRequest,
+    _: object = Depends(require_minimum_role(UserRole.GUEST)),
     session: Session = Depends(get_db_session),
     search_service=Depends(get_search_service),
 ) -> SearchResponse:
@@ -54,6 +55,7 @@ def search_tropes(
 @router.post("/keywords", response_model=SearchResponse)
 def search_keywords(
     payload: SearchRequest,
+    _: object = Depends(require_minimum_role(UserRole.GUEST)),
     session: Session = Depends(get_db_session),
     search_service=Depends(get_search_service),
 ) -> SearchResponse:

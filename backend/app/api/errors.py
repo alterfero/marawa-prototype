@@ -17,6 +17,8 @@ class ApiErrorResponse(BaseModel):
 
 
 STATUS_CODE_DEFAULTS = {
+    http_status.HTTP_401_UNAUTHORIZED: "unauthorized",
+    http_status.HTTP_403_FORBIDDEN: "forbidden",
     http_status.HTTP_400_BAD_REQUEST: "bad_request",
     http_status.HTTP_404_NOT_FOUND: "not_found",
     http_status.HTTP_409_CONFLICT: "conflict",
@@ -39,6 +41,10 @@ def api_error(
 
 
 def _default_message_for_status(status_code: int) -> str:
+    if status_code == http_status.HTTP_401_UNAUTHORIZED:
+        return "Authentication is required."
+    if status_code == http_status.HTTP_403_FORBIDDEN:
+        return "You do not have access to this resource."
     if status_code == http_status.HTTP_404_NOT_FOUND:
         return "The requested resource was not found."
     if status_code == http_status.HTTP_409_CONFLICT:

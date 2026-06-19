@@ -8,6 +8,7 @@ from app.core.csv_schema import CSV_COLUMNS, KEYWORD_FIELD, TROPE_FIELD
 from app.core.projection import project_lon_lat_equirectangular
 from app.db import StoryTrope, build_engine, build_session_factory
 from app.main import create_app
+from tests.auth_helpers import authenticate_admin, configure_auth_env
 from tests.search_fakes import FakeEmbeddingBackend
 
 
@@ -71,8 +72,10 @@ def test_projection_is_deterministic() -> None:
     assert point_a.y == 166.8
 
 
-def test_trope_sequence_graph_caps_max_stories(tmp_path) -> None:
+def test_trope_sequence_graph_caps_max_stories(monkeypatch, tmp_path) -> None:
+    configure_auth_env(monkeypatch)
     with build_client(tmp_path, "trope-graph-cap.db") as client:
+        authenticate_admin(client)
         upload_dataset(
             client,
             [
@@ -102,8 +105,10 @@ def test_trope_sequence_graph_caps_max_stories(tmp_path) -> None:
     assert any("Capped the graph to 2 stories" in warning for warning in body["warnings"])
 
 
-def test_trope_sequence_graph_semantic_links_respect_similarity_threshold(tmp_path) -> None:
+def test_trope_sequence_graph_semantic_links_respect_similarity_threshold(monkeypatch, tmp_path) -> None:
+    configure_auth_env(monkeypatch)
     with build_client(tmp_path, "trope-graph-threshold.db") as client:
+        authenticate_admin(client)
         upload_dataset(
             client,
             [
@@ -157,8 +162,10 @@ def test_trope_sequence_graph_semantic_links_respect_similarity_threshold(tmp_pa
     assert "third trope" not in semantic_texts
 
 
-def test_trope_sequence_graph_enforces_max_links_per_node(tmp_path) -> None:
+def test_trope_sequence_graph_enforces_max_links_per_node(monkeypatch, tmp_path) -> None:
+    configure_auth_env(monkeypatch)
     with build_client(tmp_path, "trope-graph-max-links.db") as client:
+        authenticate_admin(client)
         upload_dataset(
             client,
             [
@@ -192,8 +199,10 @@ def test_trope_sequence_graph_enforces_max_links_per_node(tmp_path) -> None:
     assert max(degrees.values()) == 1
 
 
-def test_trope_sequence_graph_excludes_invalid_coordinates_with_warning(tmp_path) -> None:
+def test_trope_sequence_graph_excludes_invalid_coordinates_with_warning(monkeypatch, tmp_path) -> None:
+    configure_auth_env(monkeypatch)
     with build_client(tmp_path, "trope-graph-invalid-coords.db") as client:
+        authenticate_admin(client)
         upload_dataset(
             client,
             [
@@ -220,8 +229,10 @@ def test_trope_sequence_graph_excludes_invalid_coordinates_with_warning(tmp_path
     assert any("Excluded 1 selected stories without valid coordinates" in warning for warning in body["warnings"])
 
 
-def test_trope_sequence_graph_labels_sequence_axis_as_assignment_order_when_positions_are_missing(tmp_path) -> None:
+def test_trope_sequence_graph_labels_sequence_axis_as_assignment_order_when_positions_are_missing(monkeypatch, tmp_path) -> None:
+    configure_auth_env(monkeypatch)
     with build_client(tmp_path, "trope-graph-sequence-label.db") as client:
+        authenticate_admin(client)
         upload_dataset(
             client,
             [

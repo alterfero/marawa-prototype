@@ -21,6 +21,7 @@ from app.compute.job_runner import JobRunner
 from app.core.config import get_settings
 from app.db import initialize_database
 from app.db.session import SessionLocal, engine
+from app.services.auth import ensure_bootstrap_admin
 from app.services.jobs import requeue_stale_running_jobs
 from app.services.search_service import SearchService
 
@@ -29,6 +30,7 @@ from app.services.search_service import SearchService
 async def lifespan(app: FastAPI):
     initialize_database(app.state.db_engine)
     with app.state.session_factory() as session:
+        ensure_bootstrap_admin(session, get_settings())
         requeue_stale_running_jobs(session)
     if app.state.job_runner_enabled:
         await app.state.job_runner.start()

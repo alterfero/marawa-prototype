@@ -2,8 +2,10 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.api.deps import get_db_session, require_minimum_role, require_minimum_role_with_csrf
 from app.api.errors import api_error
-from app.api.deps import get_db_session
+from app.db.models import UserRole
+from app.services.auth import AuthSessionContext
 from app.services.curation import (
     CurationConflictError,
     CurationNotFoundError,
@@ -98,6 +100,7 @@ def _raise_curation_error(exc: Exception) -> None:
 
 @router.get("/near-duplicate-tropes", response_model=NearDuplicateTropeListResponse)
 def read_near_duplicate_tropes(
+    _: object = Depends(require_minimum_role(UserRole.ADMIN)),
     session: Session = Depends(get_db_session),
     search_service=Depends(get_search_service),
 ) -> NearDuplicateTropeListResponse:
@@ -109,6 +112,7 @@ def read_near_duplicate_tropes(
 @router.post("/merge-tropes", response_model=MergeTropesResponse)
 def merge_canonical_tropes(
     payload: MergeTropesRequest,
+    auth_context: AuthSessionContext = Depends(require_minimum_role_with_csrf(UserRole.ADMIN)),
     session: Session = Depends(get_db_session),
 ) -> MergeTropesResponse:
     try:
@@ -116,6 +120,7 @@ def merge_canonical_tropes(
             session,
             source_trope_id=payload.source_trope_id,
             target_trope_id=payload.target_trope_id,
+            actor_user_id=auth_context.user.id,
         )
     except Exception as exc:
         _raise_curation_error(exc)
@@ -132,6 +137,7 @@ def merge_canonical_tropes(
 @router.post("/validate-merges", response_model=ValidateTropesResponse)
 def validate_canonical_trope_merges(
     payload: ValidateTropesRequest,
+    auth_context: AuthSessionContext = Depends(require_minimum_role_with_csrf(UserRole.ADMIN)),
     session: Session = Depends(get_db_session),
 ) -> ValidateTropesResponse:
     try:
@@ -144,6 +150,7 @@ def validate_canonical_trope_merges(
                 }
                 for merge in payload.merges
             ],
+            actor_user_id=auth_context.user.id,
         )
     except Exception as exc:
         _raise_curation_error(exc)

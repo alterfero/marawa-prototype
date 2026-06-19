@@ -3,10 +3,12 @@ import io
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from app.core.csv_schema import CSV_COLUMNS, KEYWORD_FIELD, TROPE_FIELD
-from app.db import build_engine, build_session_factory
+from app.db import Dataset, DatasetStatus, build_engine, build_session_factory
 from app.main import create_app
+from tests.auth_helpers import authenticate_admin, configure_auth_env
 
 
 pytestmark = pytest.mark.filterwarnings(
@@ -39,16 +41,30 @@ def upload_dataset(client: TestClient, rows: list[dict[str, str]]) -> None:
         files={"file": ("stories.csv", make_csv_bytes(rows), "text/csv")},
     )
     assert response.status_code == 201
+    with client.app.state.session_factory() as session:
+        staged_dataset = session.scalar(
+            select(Dataset)
+            .where(Dataset.status == DatasetStatus.STAGED)
+            .order_by(Dataset.created_at.desc(), Dataset.id.desc())
+        )
+        assert staged_dataset is not None
+        active_dataset = session.scalar(select(Dataset).where(Dataset.status == DatasetStatus.ACTIVE))
+        if active_dataset is not None and active_dataset.id != staged_dataset.id:
+            active_dataset.status = DatasetStatus.ARCHIVED
+        staged_dataset.status = DatasetStatus.ACTIVE
+        session.commit()
 
 
 @pytest.fixture
-def client(tmp_path) -> TestClient:
+def client(monkeypatch, tmp_path) -> TestClient:
+    configure_auth_env(monkeypatch)
     db_path = tmp_path / "stories-api.db"
     engine = build_engine(f"sqlite:///{db_path}")
     session_factory = build_session_factory(engine)
     app = create_app(db_engine=engine, session_factory=session_factory, job_runner_enabled=False)
 
     with TestClient(app) as test_client:
+        authenticate_admin(test_client)
         yield test_client
 
 
@@ -385,6 +401,114 @@ def test_delete_story_trope_removes_assignment_hard(client: TestClient) -> None:
 
     detail = client.get(f"/api/stories/{story['id']}").json()
     assert detail["fields"][TROPE_FIELD] == ""
+
+
+def test_update_story_partial_fields_preserves_assignments(client: TestClient) -> None:
+    upload_dataset(
+        client,
+        [
+            make_row(
+                title="Story One",
+                tropes="§§ first trope",
+                keywords="wolf ; moon",
+                territory="Tahiti",
+                summary="Original summary",
+            )
+        ],
+    )
+    story = client.get("/api/stories").json()["items"][0]
+
+    response = client.patch(
+        f"/api/stories/{story['id']}",
+        json={
+            "expected_story_version": 1,
+            "fields": {
+                "territory": "Moorea",
+                "1-sentence summary": "Updated summary",
+                TROPE_FIELD: "ignored",
+                KEYWORD_FIELD: "ignored",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["dataset_version"] == 2
+    assert body["queued_job"]["status"] == "queued"
+    assert body["story"]["version"] == 2
+    assert body["story"]["fields"]["territory"] == "Moorea"
+    assert body["story"]["fields"]["1-sentence summary"] == "Updated summary"
+    assert body["story"]["fields"][TROPE_FIELD] == "§§ first trope"
+    assert body["story"]["fields"][KEYWORD_FIELD] == "wolf ; moon"
+    assert [item["text"] for item in body["story"]["tropes"]] == ["first trope"]
+    assert [item["text"] for item in body["story"]["keywords"]] == ["wolf", "moon"]
+
+
+def test_story_keyword_assignment_lifecycle_updates_csv(client: TestClient) -> None:
+    upload_dataset(
+        client,
+        [
+            make_row(title="Story One", keywords="moon"),
+            make_row(title="Story Two"),
+        ],
+    )
+    stories = client.get("/api/stories").json()["items"]
+    first_story_id = stories[0]["id"]
+    second_story_id = stories[1]["id"]
+    existing_keyword = client.get(f"/api/stories/{first_story_id}").json()["keywords"][0]
+
+    add_response = client.post(
+        f"/api/stories/{second_story_id}/keywords",
+        json={
+            "expected_story_version": 1,
+            "text": "  Moon  ",
+        },
+    )
+
+    assert add_response.status_code == 201
+    added = add_response.json()
+    assert added["keyword"]["id"] == existing_keyword["id"]
+    assert added["keyword"]["text"] == "moon"
+    assert added["story_version"] == 2
+    assert added["dataset_version"] == 2
+
+    keywords_response = client.get(f"/api/stories/{second_story_id}/keywords")
+    assert keywords_response.status_code == 200
+    assert keywords_response.json()["items"] == [{"id": existing_keyword["id"], "text": "moon", "position": 0}]
+
+    replace_response = client.put(
+        f"/api/stories/{second_story_id}/keywords/{existing_keyword['id']}",
+        json={
+            "expected_story_version": 2,
+            "text": "Night Canoe",
+        },
+    )
+
+    assert replace_response.status_code == 200
+    replaced = replace_response.json()
+    assert replaced["keyword"]["text"] == "Night Canoe"
+    assert replaced["story_version"] == 3
+    assert replaced["dataset_version"] == 3
+
+    detail = client.get(f"/api/stories/{second_story_id}").json()
+    assert detail["fields"][KEYWORD_FIELD] == "Night Canoe"
+    assert [item["text"] for item in detail["keywords"]] == ["Night Canoe"]
+
+    delete_response = client.request(
+        "DELETE",
+        f"/api/stories/{second_story_id}/keywords/{replaced['keyword']['id']}",
+        json={"expected_story_version": 3},
+    )
+
+    assert delete_response.status_code == 200
+    deleted = delete_response.json()
+    assert deleted["deleted_keyword_id"] == replaced["keyword"]["id"]
+    assert deleted["story_version"] == 4
+    assert deleted["dataset_version"] == 4
+
+    detail_after_delete = client.get(f"/api/stories/{second_story_id}").json()
+    assert detail_after_delete["fields"][KEYWORD_FIELD] == ""
+    assert detail_after_delete["keywords"] == []
 
 
 def test_story_trope_mutation_returns_409_for_stale_expected_version(client: TestClient) -> None:

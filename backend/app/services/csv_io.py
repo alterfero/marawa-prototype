@@ -10,17 +10,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.core.csv_schema import CSV_COLUMNS, CSV_IMPORT_ALIASES, KEYWORD_FIELD, TROPE_FIELD
 from app.core.parsing import clean_text, normalize_text, serialize_keywords, serialize_tropes, split_keywords, split_tropes
-from app.db.models import (
-    AssignmentStatus,
-    Dataset,
-    DatasetStatus,
-    Keyword,
-    Story,
-    StoryKeyword,
-    StoryTrope,
-    StoryTropeOrigin,
-    Trope,
-)
+from app.db.models import AssignmentStatus, Dataset, DatasetStatus, Keyword, Story, StoryKeyword, StoryTrope, StoryTropeOrigin, Trope
 
 
 class CSVImportValidationError(ValueError):
@@ -123,14 +113,6 @@ def _row_hash(fields: dict[str, str]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def _archive_active_dataset(session: Session) -> None:
-    active_dataset = session.scalar(select(Dataset).where(Dataset.status == DatasetStatus.ACTIVE))
-    if active_dataset is None:
-        return
-    active_dataset.status = DatasetStatus.ARCHIVED
-    session.flush()
-
-
 def import_csv_bytes(
     session: Session,
     csv_bytes: bytes,
@@ -139,10 +121,8 @@ def import_csv_bytes(
 ) -> Dataset:
     rows = _load_csv_rows(csv_bytes)
 
-    _archive_active_dataset(session)
-
     dataset = Dataset(
-        status=DatasetStatus.ACTIVE,
+        status=DatasetStatus.STAGED,
         source_filename=clean_text(source_filename) if source_filename is not None else None,
     )
     session.add(dataset)
@@ -155,11 +135,11 @@ def import_csv_bytes(
 
     existing_tropes = {
         trope.normalized_text: trope
-        for trope in session.scalars(select(Trope)).all()
+        for trope in session.scalars(select(Trope).where(Trope.dataset_id == dataset.id)).all()
     }
     existing_keywords = {
         keyword.normalized_text: keyword
-        for keyword in session.scalars(select(Keyword)).all()
+        for keyword in session.scalars(select(Keyword).where(Keyword.dataset_id == dataset.id)).all()
     }
 
     for row_number, fields in rows:
@@ -181,7 +161,7 @@ def import_csv_bytes(
             if trope is None:
                 trope = existing_tropes.get(marker)
                 if trope is None:
-                    trope = Trope(text=trope_text)
+                    trope = Trope(dataset_id=dataset.id, text=trope_text)
                     session.add(trope)
                     session.flush()
                     existing_tropes[trope.normalized_text] = trope
@@ -204,7 +184,7 @@ def import_csv_bytes(
             if keyword is None:
                 keyword = existing_keywords.get(marker)
                 if keyword is None:
-                    keyword = Keyword(text=keyword_text)
+                    keyword = Keyword(dataset_id=dataset.id, text=keyword_text)
                     session.add(keyword)
                     session.flush()
                     existing_keywords[keyword.normalized_text] = keyword
