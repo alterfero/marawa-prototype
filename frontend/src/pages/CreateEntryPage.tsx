@@ -1,9 +1,16 @@
 import { FormEvent, useEffect, useState } from "react";
 
 import { ApiError, createStory, getDatasetStatus, getErrorMessage, searchKeywords, searchTropes } from "../api/client";
+import {
+  applyLocationDraftToFields,
+  buildLocationDraft,
+  type LocationDraft,
+  StoryFieldInput,
+  StoryLocationPickerModal,
+} from "../components/StoryFieldWidgets";
 import { TermCard } from "../components/TermCard";
 import { TropeCard } from "../components/TropeCard";
-import { buildBlankStoryFields, LEGACY_METADATA_SECTIONS, LONG_TEXT_FIELDS, normalizeDraftText } from "../constants/csv";
+import { buildBlankStoryFields, LEGACY_METADATA_SECTIONS, normalizeDraftText } from "../constants/csv";
 import type { DatasetStatus, SearchItem } from "../api/types";
 
 interface PageNotice {
@@ -43,6 +50,7 @@ export function CreateEntryPage() {
   const [datasetStatus, setDatasetStatus] = useState<DatasetStatus | null>(null);
   const [statusLoading, setStatusLoading] = useState(true);
   const [fields, setFields] = useState<Record<string, string>>(() => buildBlankStoryFields());
+  const [locationDraft, setLocationDraft] = useState<LocationDraft | null>(null);
   const [draftKeywords, setDraftKeywords] = useState<DraftTerm[]>([]);
   const [keywordQuery, setKeywordQuery] = useState("");
   const [keywordResults, setKeywordResults] = useState<SearchItem[]>([]);
@@ -71,6 +79,7 @@ export function CreateEntryPage() {
 
   function resetDraft() {
     setFields(buildBlankStoryFields());
+    setLocationDraft(null);
     setDraftKeywords([]);
     setKeywordQuery("");
     setKeywordResults([]);
@@ -164,6 +173,37 @@ export function CreateEntryPage() {
       ...current,
       [field]: value,
     }));
+  }
+
+  function openLocationPicker() {
+    setLocationDraft(buildLocationDraft(fields));
+  }
+
+  function closeLocationPicker() {
+    setLocationDraft(null);
+  }
+
+  function applyLocationPicker() {
+    if (!locationDraft) {
+      return;
+    }
+
+    setFields((current) => applyLocationDraftToFields(current, locationDraft));
+    setLocationDraft(null);
+  }
+
+  function renderMetadataField(field: string) {
+    return (
+      <StoryFieldInput
+        disabled={busy}
+        field={field}
+        inputIdPrefix="create-entry"
+        key={field}
+        onChange={(value) => updateField(field, value)}
+        onOpenLocationPicker={openLocationPicker}
+        value={fields[field] || ""}
+      />
+    );
   }
 
   function addDraftKeyword(nextKeyword: DraftTerm) {
@@ -389,30 +429,7 @@ export function CreateEntryPage() {
                 <h2>{section.title}</h2>
               </div>
               <div className="create-field-grid">
-                {section.fields.map((field) => {
-                  const isLongText = LONG_TEXT_FIELDS.has(field);
-                  return (
-                    <label className={`field ${isLongText ? "field-span-full" : ""}`} key={field}>
-                      <span>{field}</span>
-                      {isLongText ? (
-                        <textarea
-                          className="input input-textarea"
-                          disabled={busy}
-                          onChange={(event) => updateField(field, event.target.value)}
-                          rows={field === "1-sentence summary" ? 3 : 5}
-                          value={fields[field] || ""}
-                        />
-                      ) : (
-                        <input
-                          className="input"
-                          disabled={busy}
-                          onChange={(event) => updateField(field, event.target.value)}
-                          value={fields[field] || ""}
-                        />
-                      )}
-                    </label>
-                  );
-                })}
+                {section.fields.map((field) => renderMetadataField(field))}
               </div>
             </section>
           ))}
@@ -595,6 +612,16 @@ export function CreateEntryPage() {
           </section>
         </div>
       </section>
+
+      {locationDraft ? (
+        <StoryLocationPickerModal
+          busy={busy}
+          locationDraft={locationDraft}
+          onApply={applyLocationPicker}
+          onCancel={closeLocationPicker}
+          onChange={setLocationDraft}
+        />
+      ) : null}
     </form>
   );
 }

@@ -76,6 +76,7 @@ export interface StorySummary {
   title: string;
   territory: string;
   summary: string;
+  has_location: boolean;
   trope_count: number;
   keyword_count: number;
 }

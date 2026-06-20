@@ -16,10 +16,17 @@ import {
   updateStory,
   validateStoryTrope,
 } from "../api/client";
+import {
+  applyLocationDraftToFields,
+  buildLocationDraft,
+  type LocationDraft,
+  StoryFieldInput,
+  StoryLocationPickerModal,
+} from "../components/StoryFieldWidgets";
 import { TermCard } from "../components/TermCard";
 import { TropeCard } from "../components/TropeCard";
 import type { SearchItem, StoryDetail, StorySummary, TropeSearchItem } from "../api/types";
-import { LEGACY_METADATA_SECTIONS, LONG_TEXT_FIELDS, normalizeDraftText } from "../constants/csv";
+import { LEGACY_METADATA_SECTIONS, normalizeDraftText } from "../constants/csv";
 import { routeHref, useHashSearch } from "../router";
 
 interface PageNotice {
@@ -90,6 +97,7 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
   const [selectedStoryId, setSelectedStoryId] = useState<string | null>(null);
   const [detail, setDetail] = useState<StoryDetail | null>(null);
   const [fieldDraft, setFieldDraft] = useState<Record<string, string>>({});
+  const [locationDraft, setLocationDraft] = useState<LocationDraft | null>(null);
   const [showFieldEditor, setShowFieldEditor] = useState(false);
   const [storyQuery, setStoryQuery] = useState("");
   const [tropeQuery, setTropeQuery] = useState("");
@@ -132,6 +140,30 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
     setEditingKeywordQuery("");
     setEditingKeywordResults([]);
     setEditingKeywordSearchStatus("idle");
+  }
+
+  function updateFieldDraft(field: string, value: string) {
+    setFieldDraft((current) => ({
+      ...current,
+      [field]: value,
+    }));
+  }
+
+  function openLocationPicker() {
+    setLocationDraft(buildLocationDraft(fieldDraft));
+  }
+
+  function closeLocationPicker() {
+    setLocationDraft(null);
+  }
+
+  function applyLocationPicker() {
+    if (!locationDraft) {
+      return;
+    }
+
+    setFieldDraft((current) => applyLocationDraftToFields(current, locationDraft));
+    setLocationDraft(null);
   }
 
   async function loadStories(preferredStoryId?: string | null) {
@@ -188,6 +220,7 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
   useEffect(() => {
     resetTropeEditor();
     resetKeywordEditor();
+    setLocationDraft(null);
   }, [selectedStoryId]);
 
   useEffect(() => {
@@ -703,7 +736,7 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
       ) : null}
 
       <section className="two-column-layout">
-        <aside className="panel">
+        <aside className="panel story-browser-panel">
           <div className="panel-header">
             <h2>Stories</h2>
             <span className="pill">
@@ -720,12 +753,12 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
               value={storyQuery}
             />
           </label>
-          <div className="list">
+          <div className="list story-browser-list">
             {storiesLoading ? <p className="muted">Loading stories...</p> : null}
             {!storiesLoading && filteredStories.length === 0 ? <p className="muted">No stories match the current search.</p> : null}
             {filteredStories.map((story) => (
               <button
-                className={`list-row ${story.id === selectedStoryId ? "list-row-active" : ""}`}
+                className={`list-row story-browser-row ${story.id === selectedStoryId ? "list-row-active" : ""}`}
                 disabled={storiesLoading}
                 key={story.id}
                 onClick={() => {
@@ -733,8 +766,9 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
                 }}
                 type="button"
               >
-                <strong>{story.title || `Story ${story.source_row_number ?? "?"}`}</strong>
-                <span className="muted">{storyListPreview(story)}</span>
+                <strong className="story-browser-title">{story.title || `Story ${story.source_row_number ?? "?"}`}</strong>
+                {!story.has_location ? <span className="story-list-alert">Location missing</span> : null}
+                <span className="muted story-browser-preview">{storyListPreview(story)}</span>
               </button>
             ))}
           </div>
@@ -818,37 +852,16 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
                         <h3>{section.title}</h3>
                         <div className="create-field-grid">
                           {section.fields.map((field) => {
-                            const value = fieldDraft[field] ?? "";
-                            const longText = LONG_TEXT_FIELDS.has(field);
                             return (
-                              <label className={`field ${longText ? "field-span-full" : ""}`} key={field}>
-                                <span>{field}</span>
-                                {longText ? (
-                                  <textarea
-                                    className="input input-textarea"
-                                    disabled={interactionDisabled}
-                                    onChange={(event) =>
-                                      setFieldDraft((current) => ({
-                                        ...current,
-                                        [field]: event.target.value,
-                                      }))
-                                    }
-                                    value={value}
-                                  />
-                                ) : (
-                                  <input
-                                    className="input"
-                                    disabled={interactionDisabled}
-                                    onChange={(event) =>
-                                      setFieldDraft((current) => ({
-                                        ...current,
-                                        [field]: event.target.value,
-                                      }))
-                                    }
-                                    value={value}
-                                  />
-                                )}
-                              </label>
+                              <StoryFieldInput
+                                disabled={interactionDisabled}
+                                field={field}
+                                inputIdPrefix="story-fields"
+                                key={field}
+                                onChange={(value) => updateFieldDraft(field, value)}
+                                onOpenLocationPicker={openLocationPicker}
+                                value={fieldDraft[field] ?? ""}
+                              />
                             );
                           })}
                         </div>
@@ -1243,6 +1256,16 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
           ) : null}
         </div>
       </section>
+
+      {locationDraft ? (
+        <StoryLocationPickerModal
+          busy={interactionDisabled}
+          locationDraft={locationDraft}
+          onApply={applyLocationPicker}
+          onCancel={closeLocationPicker}
+          onChange={setLocationDraft}
+        />
+      ) : null}
     </div>
   );
 }

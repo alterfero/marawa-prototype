@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session, selectinload
 
+from app.core.coordinates import parse_space_coord
 from app.core.csv_schema import CSV_COLUMNS, KEYWORD_FIELD, TROPE_FIELD
 from app.core.parsing import clean_text, dedupe_preserve_order, normalize_text, serialize_keywords, serialize_tropes
 from app.db.models import (
@@ -1160,6 +1161,7 @@ def _serialize_story_summary(story: Story) -> dict:
         "title": fields.get("Story title (Eng)", ""),
         "territory": fields.get("territory", ""),
         "summary": fields.get("1-sentence summary", ""),
+        "has_location": parse_space_coord(fields.get("space coord", "")) is not None,
         "trope_count": len(_ordered_trope_links(story)),
         "keyword_count": len(_ordered_keyword_links(story)),
     }

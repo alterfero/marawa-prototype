@@ -25,13 +25,14 @@ def make_csv_bytes(rows: list[dict[str, str]]) -> bytes:
     return buffer.getvalue().encode("utf-8-sig")
 
 
-def make_row(*, title: str, tropes: str = "", keywords: str = "", territory: str = "", summary: str = "") -> dict[str, str]:
+def make_row(*, title: str, tropes: str = "", keywords: str = "", territory: str = "", summary: str = "", coord: str = "") -> dict[str, str]:
     row = {column: "" for column in CSV_COLUMNS}
     row["Story title (Eng)"] = title
     row[TROPE_FIELD] = tropes
     row[KEYWORD_FIELD] = keywords
     row["territory"] = territory
     row["1-sentence summary"] = summary
+    row["space coord"] = coord
     return row
 
 
@@ -112,6 +113,24 @@ def test_stories_api_lists_story_detail_and_tropes(client: TestClient) -> None:
     assert tropes_payload["story_version"] == 1
     assert [item["text"] for item in tropes_payload["items"]] == ["first trope", "second trope"]
     assert tropes_payload["items"][0]["story_count"] == 1
+
+
+def test_stories_api_marks_missing_or_malformed_locations(client: TestClient) -> None:
+    upload_dataset(
+        client,
+        [
+            make_row(title="Located Story", coord="-17.5333, -149.5667"),
+            make_row(title="Missing Story"),
+            make_row(title="Malformed Story", coord="somewhere over there"),
+        ],
+    )
+
+    list_response = client.get("/api/stories")
+    assert list_response.status_code == 200
+    payload = list_response.json()
+
+    assert [item["title"] for item in payload["items"]] == ["Located Story", "Missing Story", "Malformed Story"]
+    assert [item["has_location"] for item in payload["items"]] == [True, False, False]
 
 
 def test_add_story_trope_creates_new_canonical_trope_and_queues_rebuild(client: TestClient) -> None:
