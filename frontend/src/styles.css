@@ -144,6 +144,25 @@ p {
   border-color: transparent;
 }
 
+.sidebar-rebuild-button {
+  justify-self: start;
+}
+
+.sidebar-action-note {
+  margin: 0;
+  min-height: 1.2rem;
+  font-size: 0.82rem;
+  color: #53737a;
+}
+
+.sidebar-action-note-error {
+  color: #8f3024;
+}
+
+.sidebar-action-note-success {
+  color: #1d6857;
+}
+
 .muted {
   color: inherit;
   opacity: 0.72;

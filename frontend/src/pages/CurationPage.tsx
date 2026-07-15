@@ -446,7 +446,7 @@ export function CurationPage() {
     }
 
     const confirmed = window.confirm(
-      `Validate ${pendingMerges.length} merge decision${pendingMerges.length === 1 ? "" : "s"}?\n\nThis will apply the selected merges in one batch and queue a single rebuild job.`,
+      `Validate ${pendingMerges.length} merge decision${pendingMerges.length === 1 ? "" : "s"}?\n\nThis will apply the selected merges in one batch. Rebuilds are manual, so run Rebuild from the menu when you want fresh derived artifacts.`,
     );
     if (!confirmed) {
       return;
@@ -461,14 +461,16 @@ export function CurationPage() {
           target_trope_id: merge.target_trope_id,
         })),
       });
-      setCurrentJobId(result.queued_job.id);
+      setCurrentJobId(result.queued_job?.id ?? null);
       setJobDetail(null);
       setJobError(null);
       setPendingMerges([]);
       setNotice({
         tone: "success",
-        title: "Merge batch queued",
-        body: `Validated ${result.merge_count} merge decision${result.merge_count === 1 ? "" : "s"} affecting ${result.affected_story_count} stor${result.affected_story_count === 1 ? "y" : "ies"}. Rebuild job ${result.queued_job.id} is now ${result.queued_job.status}.`,
+        title: "Merge batch applied",
+        body: result.queued_job
+          ? `Validated ${result.merge_count} merge decision${result.merge_count === 1 ? "" : "s"} affecting ${result.affected_story_count} stor${result.affected_story_count === 1 ? "y" : "ies"}. Rebuild job ${result.queued_job.id} is now ${result.queued_job.status}.`
+          : `Validated ${result.merge_count} merge decision${result.merge_count === 1 ? "" : "s"} affecting ${result.affected_story_count} stor${result.affected_story_count === 1 ? "y" : "ies"}. Run Rebuild in the menu when you want fresh derived artifacts.`,
       });
       await refresh({ clearNotice: false });
     } catch (caughtError) {
@@ -483,7 +485,9 @@ export function CurationPage() {
   }
 
   async function handleDeleteUnusedTrope(trope: CanonicalTropeListItem) {
-    const confirmed = window.confirm(`Delete unused trope "${trope.text}"? This will queue a rebuild job.`);
+    const confirmed = window.confirm(
+      `Delete unused trope "${trope.text}"?\n\nRebuilds are manual, so use Rebuild in the menu afterward if you want fresh derived artifacts.`,
+    );
     if (!confirmed) {
       return;
     }
@@ -492,13 +496,15 @@ export function CurationPage() {
       setBusy(true);
       setNotice(null);
       const result = await deleteTrope(trope.id, false);
-      setCurrentJobId(result.queued_job.id);
+      setCurrentJobId(result.queued_job?.id ?? null);
       setJobDetail(null);
       setJobError(null);
       setNotice({
         tone: "success",
         title: "Unused trope deleted",
-        body: `Deleted ${trope.text}. Job ${result.queued_job.id} is ${result.queued_job.status}.`,
+        body: result.queued_job
+          ? `Deleted ${trope.text}. Job ${result.queued_job.id} is ${result.queued_job.status}.`
+          : `Deleted ${trope.text}. Run Rebuild in the menu when you want fresh derived artifacts.`,
       });
       await refresh({ clearNotice: false });
     } catch (caughtError) {

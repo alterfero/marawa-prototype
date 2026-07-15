@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
-import { getDatasetStatus } from "./api/client";
+import { getDatasetStatus, getErrorMessage, getJob, requestDatasetRebuild } from "./api/client";
 import type { DatasetStatus, UserRole } from "./api/types";
 import { roleAtLeast, roleLabel, useAuth } from "./auth";
 import { TropeBrowserProvider } from "./components/TropeBrowser";
@@ -17,6 +17,8 @@ import { RedeemTokenPage } from "./pages/RedeemTokenPage";
 import { StoriesPage } from "./pages/StoriesPage";
 
 const SIDEBAR_STATUS_POLL_INTERVAL_MS = 5000;
+const REBUILD_JOB_POLL_INTERVAL_MS = 2000;
+const TERMINAL_JOB_STATUSES = new Set(["succeeded", "failed", "cancelled"]);
 
 type SidebarStatusTone = "ready" | "rebuilding" | "unavailable";
 
@@ -65,6 +67,13 @@ function sidebarEmbeddingState(status: DatasetStatus | null): {
     };
   }
 
+  if (status.embedding_status.state === "running" || status.embedding_status.state === "queued") {
+    return {
+      label: "Rebuilding",
+      tone: "rebuilding",
+    };
+  }
+
   if (status.embedding_status.current) {
     return {
       label: "Ready",
@@ -72,9 +81,30 @@ function sidebarEmbeddingState(status: DatasetStatus | null): {
     };
   }
 
+  if (status.embedding_status.state === "failed") {
+    return {
+      label: "Failed",
+      tone: "unavailable",
+    };
+  }
+
+  if (status.embedding_status.state === "stale") {
+    return {
+      label: "Needs rebuild",
+      tone: "unavailable",
+    };
+  }
+
+  if (status.embedding_status.state === "missing") {
+    return {
+      label: "Not built",
+      tone: "unavailable",
+    };
+  }
+
   return {
-    label: "Rebuilding",
-    tone: "rebuilding",
+    label: "Unavailable",
+    tone: "unavailable",
   };
 }
 
@@ -121,6 +151,9 @@ export default function App() {
   const { status: authStatus, user, logout } = useAuth();
   const [datasetStatus, setDatasetStatus] = useState<DatasetStatus | null>(null);
   const [statusUnavailable, setStatusUnavailable] = useState(false);
+  const [rebuildBusy, setRebuildBusy] = useState(false);
+  const [rebuildNotice, setRebuildNotice] = useState<{ tone: "error" | "success"; message: string } | null>(null);
+  const [watchedRebuildJobId, setWatchedRebuildJobId] = useState<string | null>(null);
 
   const authenticatedRole = user?.role || null;
   const requiredRole = minimumRoleForRoute(route);
@@ -177,6 +210,9 @@ export default function App() {
     if (!isAuthenticated) {
       setDatasetStatus(null);
       setStatusUnavailable(false);
+      setRebuildBusy(false);
+      setRebuildNotice(null);
+      setWatchedRebuildJobId(null);
       return;
     }
 
@@ -215,6 +251,62 @@ export default function App() {
     };
   }, [isAuthenticated]);
 
+  useEffect(() => {
+    if (!watchedRebuildJobId) {
+      return;
+    }
+
+    let cancelled = false;
+    let timerId: number | undefined;
+
+    const pollJob = async () => {
+      try {
+        const job = await getJob(watchedRebuildJobId);
+        if (cancelled) {
+          return;
+        }
+
+        if (job.status === "succeeded") {
+          window.location.reload();
+          return;
+        }
+
+        if (TERMINAL_JOB_STATUSES.has(job.status)) {
+          setWatchedRebuildJobId(null);
+          setRebuildNotice({
+            tone: "error",
+            message:
+              job.error_message ||
+              `Rebuild job ${job.id} finished with status ${job.status}.`,
+          });
+          return;
+        }
+
+        timerId = window.setTimeout(() => {
+          void pollJob();
+        }, REBUILD_JOB_POLL_INTERVAL_MS);
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        setWatchedRebuildJobId(null);
+        setRebuildNotice({
+          tone: "error",
+          message: `Could not refresh rebuild job status: ${getErrorMessage(error)}`,
+        });
+      }
+    };
+
+    void pollJob();
+
+    return () => {
+      cancelled = true;
+      if (timerId) {
+        window.clearTimeout(timerId);
+      }
+    };
+  }, [watchedRebuildJobId]);
+
   const sidebarStatus = statusUnavailable
     ? {
         label: "Unavailable",
@@ -227,6 +319,36 @@ export default function App() {
   async function handleLogout() {
     await logout();
     window.location.hash = routeHref("/exploration");
+  }
+
+  async function handleRebuild() {
+    try {
+      setRebuildBusy(true);
+      const result = await requestDatasetRebuild();
+      const targetLabel = result.dataset_status === "staged" ? "the staged dataset" : "the active dataset";
+      setRebuildNotice({
+        tone: "success",
+        message: result.created
+          ? `Queued rebuild for ${targetLabel}. Job ${result.queued_job.id} is ${result.queued_job.status}.`
+          : `Rebuild already ${result.queued_job.status} for ${targetLabel}. Job ${result.queued_job.id} is still active.`,
+      });
+      setWatchedRebuildJobId(result.queued_job.id);
+
+      try {
+        const nextStatus = await getDatasetStatus();
+        setDatasetStatus(nextStatus);
+        setStatusUnavailable(false);
+      } catch {
+        setStatusUnavailable(true);
+      }
+    } catch (error) {
+      setRebuildNotice({
+        tone: "error",
+        message: getErrorMessage(error),
+      });
+    } finally {
+      setRebuildBusy(false);
+    }
   }
 
   return (
@@ -242,6 +364,16 @@ export default function App() {
                   <strong>Embeddings</strong>
                   <span className={`sidebar-status-pill sidebar-status-${sidebarStatus.tone}`}>{sidebarStatus.label}</span>
                 </div>
+                {canManageDataset ? (
+                  <>
+                    <button className="button button-ghost sidebar-rebuild-button" disabled={rebuildBusy} onClick={() => void handleRebuild()} type="button">
+                      Rebuild
+                    </button>
+                    <p className={`sidebar-action-note ${rebuildNotice ? `sidebar-action-note-${rebuildNotice.tone}` : ""}`}>
+                      {rebuildNotice?.message || ""}
+                    </p>
+                  </>
+                ) : null}
               </div>
 
               <div className="sidebar-status-card">

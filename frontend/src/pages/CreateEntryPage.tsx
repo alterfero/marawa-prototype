@@ -326,12 +326,17 @@ export function CreateEntryPage() {
       }
 
       const storyLabel = result.story.fields["Story title (Eng)"] || result.story.id;
+      const rebuildMessage = result.queued_job
+        ? refreshError
+          ? `${storyLabel} was created and rebuild job ${result.queued_job.id} was queued. Status refresh failed: ${refreshError}`
+          : `${storyLabel} was created and rebuild job ${result.queued_job.id} is ${result.queued_job.status}.`
+        : refreshError
+          ? `${storyLabel} was created. Status refresh failed: ${refreshError}`
+          : `${storyLabel} was created. Rebuild is now manual only, so use Rebuild in the menu when you want to refresh derived artifacts.`;
       setNotice({
         tone: refreshError ? "warning" : "success",
         title: refreshError ? "Entry saved, but status did not refresh" : "Entry saved",
-        body: refreshError
-          ? `${storyLabel} was created and rebuild job ${result.queued_job.id} was queued. Status refresh failed: ${refreshError}`
-          : `${storyLabel} was created and rebuild job ${result.queued_job.id} is ${result.queued_job.status}.`,
+        body: rebuildMessage,
       });
     } catch (caughtError) {
       if (caughtError instanceof ApiError && caughtError.status === 409) {

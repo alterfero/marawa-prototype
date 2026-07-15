@@ -43,6 +43,8 @@ def test_search_api_returns_similar_tropes_and_keywords(monkeypatch, tmp_path) -
             files={"file": ("search.csv", make_csv_bytes([row]), "text/csv")},
         )
         assert upload_response.status_code == 201
+        rebuild_response = client.post("/api/dataset/rebuild")
+        assert rebuild_response.status_code == 200
 
         processed = client.app.state.job_runner.process_next_job()
         assert processed is True

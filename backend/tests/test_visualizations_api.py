@@ -59,6 +59,11 @@ def upload_dataset(client: TestClient, rows: list[dict[str, str]]) -> None:
     assert response.status_code == 201
 
 
+def request_rebuild(client: TestClient) -> None:
+    response = client.post("/api/dataset/rebuild")
+    assert response.status_code == 200
+
+
 def process_next_job(client: TestClient) -> None:
     assert client.app.state.job_runner.process_next_job() is True
 
@@ -84,6 +89,7 @@ def test_trope_sequence_graph_caps_max_stories(monkeypatch, tmp_path) -> None:
                 make_row(title="Story 3", tropes="§§ first trope", coord="-22.0, 167.0"),
             ],
         )
+        request_rebuild(client)
         process_next_job(client)
 
         response = client.post(
@@ -124,6 +130,7 @@ def test_trope_sequence_graph_semantic_links_respect_similarity_threshold(monkey
                 ),
             ],
         )
+        request_rebuild(client)
         process_next_job(client)
 
         response = client.post(
@@ -175,6 +182,7 @@ def test_trope_sequence_graph_enforces_max_links_per_node(monkeypatch, tmp_path)
                 make_row(title="Story 4", tropes="§§ first trope", coord="-23.0, 168.0"),
             ],
         )
+        request_rebuild(client)
         process_next_job(client)
 
         response = client.post(
@@ -210,6 +218,7 @@ def test_trope_sequence_graph_excludes_invalid_coordinates_with_warning(monkeypa
                 make_row(title="Missing Story", tropes="§§ first trope variant", coord="unknown"),
             ],
         )
+        request_rebuild(client)
         process_next_job(client)
 
         response = client.post(
@@ -243,6 +252,7 @@ def test_trope_sequence_graph_labels_sequence_axis_as_assignment_order_when_posi
                 ),
             ],
         )
+        request_rebuild(client)
         process_next_job(client)
 
         with client.app.state.session_factory() as session:

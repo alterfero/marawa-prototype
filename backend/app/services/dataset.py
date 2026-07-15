@@ -22,6 +22,10 @@ from app.services.csv_io import import_csv_bytes
 from app.services.jobs import queue_job
 
 
+class DatasetRebuildTargetNotFoundError(ValueError):
+    """Raised when no staged or active dataset is available for manual rebuild."""
+
+
 def _job_summary(job: Job | None) -> dict | None:
     return None if job is None else {"id": job.id, "status": job.status.value, "job_type": job.job_type}
 
@@ -225,17 +229,8 @@ def upload_dataset_csv(
     *,
     source_filename: str | None = None,
     actor_user_id: str | None = None,
-) -> tuple[Dataset, Job]:
+) -> tuple[Dataset, None]:
     dataset = import_csv_bytes(session, csv_bytes, source_filename=source_filename)
-    job = queue_job(
-        session,
-        job_type="full_rebuild",
-        dataset_id=dataset.id,
-        payload={
-            "reason": "dataset_upload",
-            "source_filename": source_filename,
-        },
-    )
     record_audit_event(
         session,
         event_type="dataset.uploaded",
@@ -247,13 +242,77 @@ def upload_dataset_csv(
             "dataset_version": dataset.version,
             "dataset_status": dataset.status.value,
             "source_filename": source_filename,
+            "rebuild_queued": False,
+        },
+    )
+    session.commit()
+    session.refresh(dataset)
+    return dataset, None
+
+
+def _select_dataset_for_manual_rebuild(session: Session) -> Dataset:
+    staged_dataset = session.scalar(
+        select(Dataset)
+        .where(Dataset.status == DatasetStatus.STAGED)
+        .order_by(Dataset.created_at.desc(), Dataset.id.desc())
+    )
+    if staged_dataset is not None:
+        return staged_dataset
+
+    active_dataset = session.scalar(select(Dataset).where(Dataset.status == DatasetStatus.ACTIVE))
+    if active_dataset is not None:
+        return active_dataset
+
+    raise DatasetRebuildTargetNotFoundError("No staged or active dataset is available for rebuild.")
+
+
+def request_dataset_rebuild(
+    session: Session,
+    *,
+    actor_user_id: str | None = None,
+) -> tuple[Dataset, Job, bool]:
+    dataset = _select_dataset_for_manual_rebuild(session)
+    existing_job = session.scalar(
+        select(Job)
+        .where(
+            Job.dataset_id == dataset.id,
+            Job.job_type == "full_rebuild",
+            Job.status.in_((JobStatus.QUEUED, JobStatus.RUNNING)),
+        )
+        .order_by(Job.created_at.desc(), Job.id.desc())
+    )
+
+    created = existing_job is None
+    job = existing_job
+    if job is None:
+        job = queue_job(
+            session,
+            job_type="full_rebuild",
+            dataset_id=dataset.id,
+            payload={
+                "reason": "manual_rebuild",
+                "dataset_status": dataset.status.value,
+            },
+        )
+
+    record_audit_event(
+        session,
+        event_type="dataset.rebuild_requested",
+        actor_user_id=actor_user_id,
+        dataset_id=dataset.id,
+        subject_table="datasets",
+        subject_id=dataset.id,
+        payload={
+            "dataset_version": dataset.version,
+            "dataset_status": dataset.status.value,
             "job_id": job.id,
+            "job_created": created,
         },
     )
     session.commit()
     session.refresh(dataset)
     session.refresh(job)
-    return dataset, job
+    return dataset, job, created
 
 
 def clear_dataset_data(session: Session, *, actor_user_id: str | None = None) -> None:

@@ -86,6 +86,12 @@ def make_current_template_fieldnames() -> list[str]:
     ]
 
 
+def queue_rebuild(client: TestClient):
+    response = client.post("/api/dataset/rebuild")
+    assert response.status_code == 200
+    return response
+
+
 @pytest.fixture
 def client(monkeypatch, tmp_path) -> TestClient:
     configure_auth_env(monkeypatch)
@@ -130,7 +136,7 @@ def test_dataset_status_returns_empty_state_when_no_active_dataset(client: TestC
     }
 
 
-def test_dataset_upload_stages_csv_and_queues_placeholder_rebuild_job(client: TestClient) -> None:
+def test_dataset_upload_stages_csv_without_triggering_rebuild(client: TestClient) -> None:
     first_row = {column: "" for column in CSV_COLUMNS}
     first_row["Story title (Eng)"] = "Story One"
     first_row[KEYWORD_FIELD] = "wolf ; moon"
@@ -151,8 +157,7 @@ def test_dataset_upload_stages_csv_and_queues_placeholder_rebuild_job(client: Te
     assert body["dataset_version"] == 1
     assert body["dataset_status"] == "staged"
     assert body["active_dataset_version"] is None
-    assert body["latest_job"]["status"] == "queued"
-    assert body["latest_job"]["job_type"] == "full_rebuild"
+    assert body["latest_job"] is None
 
     status_response = client.get("/api/dataset/status")
     assert status_response.status_code == 200
@@ -160,11 +165,34 @@ def test_dataset_upload_stages_csv_and_queues_placeholder_rebuild_job(client: Te
     assert status_response.json()["trope_count"] == 0
     assert status_response.json()["keyword_count"] == 0
     assert status_response.json()["active_dataset_version"] is None
-    assert status_response.json()["latest_job"]["status"] == "queued"
+    assert status_response.json()["latest_job"] is None
     assert status_response.json()["embedding_status"]["state"] == "missing"
     assert status_response.json()["embedding_status"]["ready"] is False
     assert status_response.json()["embedding_status"]["current"] is False
-    assert status_response.json()["embedding_status"]["latest_rebuild_job"]["status"] == "queued"
+    assert status_response.json()["embedding_status"]["latest_rebuild_job"] is None
+
+
+def test_dataset_rebuild_endpoint_queues_single_manual_rebuild_for_staged_dataset(client: TestClient) -> None:
+    row = {column: "" for column in CSV_COLUMNS}
+    row["Story title (Eng)"] = "Story One"
+    row[KEYWORD_FIELD] = "wolf ; moon"
+    row[TROPE_FIELD] = "§§ first trope\n§§ second trope"
+
+    upload_response = client.post(
+        "/api/dataset/upload",
+        files={"file": ("stories.csv", make_csv_bytes([row]), "text/csv")},
+    )
+    assert upload_response.status_code == 201
+
+    first_rebuild_response = queue_rebuild(client)
+    second_rebuild_response = queue_rebuild(client)
+
+    assert first_rebuild_response.json()["dataset_status"] == "staged"
+    assert first_rebuild_response.json()["created"] is True
+    assert first_rebuild_response.json()["queued_job"]["status"] == "queued"
+    assert first_rebuild_response.json()["queued_job"]["job_type"] == "full_rebuild"
+    assert second_rebuild_response.json()["created"] is False
+    assert second_rebuild_response.json()["queued_job"]["id"] == first_rebuild_response.json()["queued_job"]["id"]
 
 
 def test_dataset_upload_accepts_current_template_and_preserves_legacy_export_fields(client: TestClient) -> None:
@@ -183,6 +211,7 @@ def test_dataset_upload_accepts_current_template_and_preserves_legacy_export_fie
     )
 
     assert response.status_code == 201
+    queue_rebuild(client)
     assert client.app.state.job_runner.process_next_job() is True
 
     stories_response = client.get("/api/stories")
@@ -209,6 +238,8 @@ def test_dataset_status_reports_embeddings_ready_and_current_after_rebuild(clien
     )
     assert upload_response.status_code == 201
 
+    rebuild_response = queue_rebuild(client)
+    assert rebuild_response.json()["created"] is True
     processed = client.app.state.job_runner.process_next_job()
     assert processed is True
 
@@ -237,6 +268,7 @@ def test_dataset_status_marks_embeddings_not_current_after_story_mutation(client
         files={"file": ("stories.csv", make_csv_bytes([row]), "text/csv")},
     )
     assert upload_response.status_code == 201
+    queue_rebuild(client)
     assert client.app.state.job_runner.process_next_job() is True
 
     stories_response = client.get("/api/stories")
@@ -252,11 +284,11 @@ def test_dataset_status_marks_embeddings_not_current_after_story_mutation(client
     assert status_response.status_code == 200
     body = status_response.json()
     assert body["active_dataset_version"] == 2
-    assert body["embedding_status"]["state"] == "queued"
+    assert body["embedding_status"]["state"] == "stale"
     assert body["embedding_status"]["ready"] is True
     assert body["embedding_status"]["current"] is False
     assert body["embedding_status"]["rebuilt_dataset_version"] == 1
-    assert body["embedding_status"]["latest_rebuild_job"]["status"] == "queued"
+    assert body["embedding_status"]["latest_rebuild_job"]["status"] == "succeeded"
 
 
 def test_dataset_upload_returns_clear_validation_error_for_invalid_header(client: TestClient) -> None:
@@ -324,6 +356,7 @@ def test_dataset_export_downloads_current_dataset_as_csv(client: TestClient) -> 
         files={"file": ("export.csv", make_csv_bytes([row]), "text/csv")},
     )
     assert upload_response.status_code == 201
+    queue_rebuild(client)
     assert client.app.state.job_runner.process_next_job() is True
 
     response = client.get("/api/dataset/export.csv")
@@ -353,6 +386,7 @@ def test_clear_dataset_removes_current_data_and_returns_empty_state(client: Test
         files={"file": ("stories.csv", make_csv_bytes([row]), "text/csv")},
     )
     assert upload_response.status_code == 201
+    queue_rebuild(client)
     assert client.app.state.job_runner.process_next_job() is True
 
     clear_response = client.delete("/api/dataset")

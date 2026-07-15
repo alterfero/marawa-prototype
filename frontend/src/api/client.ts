@@ -6,6 +6,7 @@ import type {
   CreateUserResponse,
   CurrentUser,
   DatasetStatus,
+  DatasetRebuildResponse,
   DatasetUploadResponse,
   CanonicalTropeListItem,
   DeleteStoryKeywordResponse,
@@ -234,6 +235,12 @@ export async function uploadDataset(file: File): Promise<DatasetUploadResponse> 
   return request<DatasetUploadResponse>("/dataset/upload", {
     method: "POST",
     body: formData,
+  });
+}
+
+export function requestDatasetRebuild(): Promise<DatasetRebuildResponse> {
+  return request<DatasetRebuildResponse>("/dataset/rebuild", {
+    method: "POST",
   });
 }
 

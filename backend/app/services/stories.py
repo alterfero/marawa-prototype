@@ -26,7 +26,6 @@ from app.db.models import (
     UserRole,
 )
 from app.services.audit import record_audit_event
-from app.services.jobs import queue_job
 from app.services.reviews import (
     queue_story_field_review_item,
     queue_story_keyword_review_item,
@@ -1048,12 +1047,7 @@ def _queue_story_rebuild(
         payload["trope_id"] = trope_id
     if keyword_id is not None:
         payload["keyword_id"] = keyword_id
-    return queue_job(
-        session,
-        job_type="full_rebuild",
-        dataset_id=dataset_id,
-        payload=payload,
-    )
+    return None
 
 
 def _increment_versions(story: Story, dataset: Dataset) -> None:

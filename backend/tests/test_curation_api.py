@@ -48,6 +48,11 @@ def upload_dataset(client: TestClient, rows: list[dict[str, str]]) -> None:
     assert response.status_code == 201
 
 
+def request_rebuild(client: TestClient) -> None:
+    response = client.post("/api/dataset/rebuild")
+    assert response.status_code == 200
+
+
 def process_next_job(client: TestClient) -> None:
     assert client.app.state.job_runner.process_next_job() is True
 
@@ -60,6 +65,7 @@ def test_near_duplicate_tropes_route_uses_similarity_cache(monkeypatch, tmp_path
             client,
             [make_row(title="Story One", tropes="§§ first trope\n§§ first trope variant\n§§ second trope")],
         )
+        request_rebuild(client)
         process_next_job(client)
 
         response = client.get("/api/curation/near-duplicate-tropes")
@@ -76,7 +82,7 @@ def test_near_duplicate_tropes_route_uses_similarity_cache(monkeypatch, tmp_path
     assert body["items"][0]["similarity_score"] > 0.9
 
 
-def test_merge_tropes_moves_assignments_deduplicates_links_and_queues_rebuild(monkeypatch, tmp_path) -> None:
+def test_merge_tropes_moves_assignments_and_deduplicates_links(monkeypatch, tmp_path) -> None:
     configure_auth_env(monkeypatch)
     with build_client(tmp_path, "curation-merge.db") as client:
         authenticate_admin(client)
@@ -87,6 +93,7 @@ def test_merge_tropes_moves_assignments_deduplicates_links_and_queues_rebuild(mo
                 make_row(title="Story Two", tropes="§§ first trope\n§§ first trope variant"),
             ],
         )
+        request_rebuild(client)
         process_next_job(client)
 
         stories = client.get("/api/stories").json()["items"]
@@ -116,8 +123,7 @@ def test_merge_tropes_moves_assignments_deduplicates_links_and_queues_rebuild(mo
     assert merge_body["target_trope_id"] == target_trope_id
     assert merge_body["affected_story_count"] == 2
     assert merge_body["dataset_version"] == 2
-    assert merge_body["queued_job"]["status"] == "queued"
-    assert merge_body["queued_job"]["job_type"] == "full_rebuild"
+    assert merge_body["queued_job"] is None
 
     assert story_one_detail["version"] == 2
     assert story_one_detail["fields"][TROPE_FIELD] == "§§ first trope"
@@ -131,7 +137,7 @@ def test_merge_tropes_moves_assignments_deduplicates_links_and_queues_rebuild(mo
     assert deleted_source_response.status_code == 404
 
 
-def test_validate_merges_applies_batch_and_queues_one_rebuild(monkeypatch, tmp_path) -> None:
+def test_validate_merges_applies_batch_without_queueing_rebuild(monkeypatch, tmp_path) -> None:
     configure_auth_env(monkeypatch)
     with build_client(tmp_path, "curation-validate-batch.db") as client:
         authenticate_admin(client)
@@ -144,6 +150,7 @@ def test_validate_merges_applies_batch_and_queues_one_rebuild(monkeypatch, tmp_p
                 make_row(title="Story Four", tropes="§§ second trope\n§§ second trope variant"),
             ],
         )
+        request_rebuild(client)
         process_next_job(client)
 
         stories = client.get("/api/stories").json()["items"]
@@ -197,11 +204,10 @@ def test_validate_merges_applies_batch_and_queues_one_rebuild(monkeypatch, tmp_p
     assert body["merge_count"] == 2
     assert body["affected_story_count"] == 4
     assert body["dataset_version"] == 2
-    assert body["queued_job"]["status"] == "queued"
-    assert body["queued_job"]["job_type"] == "full_rebuild"
+    assert body["queued_job"] is None
     assert len(body["applied_merges"]) == 2
     assert {merge["source_trope_id"] for merge in body["applied_merges"]} == {first_variant_id, second_variant_id}
-    assert len([job for job in jobs if job["job_type"] == "full_rebuild" and job["status"] == "queued"]) == 1
+    assert len([job for job in jobs if job["job_type"] == "full_rebuild"]) == 1
 
     first_story_detail, second_story_detail, third_story_detail, fourth_story_detail = story_details
 
@@ -222,11 +228,12 @@ def test_validate_merges_applies_batch_and_queues_one_rebuild(monkeypatch, tmp_p
     assert [item["text"] for item in fourth_story_detail["tropes"]] == ["second trope"]
 
 
-def test_delete_trope_requires_explicit_remove_from_all_stories_and_queues_rebuild(monkeypatch, tmp_path) -> None:
+def test_delete_trope_requires_explicit_remove_from_all_stories(monkeypatch, tmp_path) -> None:
     configure_auth_env(monkeypatch)
     with build_client(tmp_path, "curation-delete.db") as client:
         authenticate_admin(client)
         upload_dataset(client, [make_row(title="Story One", tropes="§§ first trope")])
+        request_rebuild(client)
         process_next_job(client)
         story = client.get("/api/stories").json()["items"][0]
         trope = client.get(f"/api/stories/{story['id']}/tropes").json()["items"][0]
@@ -244,8 +251,7 @@ def test_delete_trope_requires_explicit_remove_from_all_stories_and_queues_rebui
     assert delete_body["deleted_trope_id"] == trope["id"]
     assert delete_body["affected_story_count"] == 1
     assert delete_body["dataset_version"] == 2
-    assert delete_body["queued_job"]["status"] == "queued"
-    assert delete_body["queued_job"]["job_type"] == "full_rebuild"
+    assert delete_body["queued_job"] is None
 
     assert story_detail["version"] == 2
     assert story_detail["fields"][TROPE_FIELD] == ""
@@ -257,6 +263,7 @@ def test_delete_unassigned_trope_succeeds_without_remove_from_all_stories(monkey
     with build_client(tmp_path, "curation-delete-unassigned.db") as client:
         authenticate_admin(client)
         upload_dataset(client, [make_row(title="Story One")])
+        request_rebuild(client)
         process_next_job(client)
         story = client.get("/api/stories").json()["items"][0]
 
@@ -281,7 +288,7 @@ def test_delete_unassigned_trope_succeeds_without_remove_from_all_stories(monkey
     assert delete_body["deleted_trope_id"] == trope_id
     assert delete_body["affected_story_count"] == 0
     assert delete_body["dataset_version"] == 4
-    assert delete_body["queued_job"]["status"] == "queued"
+    assert delete_body["queued_job"] is None
 
 
 def test_tropes_route_lists_unused_tropes(monkeypatch, tmp_path) -> None:
@@ -289,6 +296,7 @@ def test_tropes_route_lists_unused_tropes(monkeypatch, tmp_path) -> None:
     with build_client(tmp_path, "curation-unused-list.db") as client:
         authenticate_admin(client)
         upload_dataset(client, [make_row(title="Story One", tropes="§§ first trope")])
+        request_rebuild(client)
         process_next_job(client)
         story = client.get("/api/stories").json()["items"][0]
 

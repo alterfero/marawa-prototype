@@ -20,7 +20,6 @@ from app.db.models import (
     Trope,
 )
 from app.services.audit import record_audit_event
-from app.services.jobs import queue_job
 from app.services.stories import sync_story_derived_fields
 
 
@@ -223,7 +222,7 @@ def merge_tropes(
     source_trope_id: str,
     target_trope_id: str,
     actor_user_id: str | None = None,
-) -> tuple[Dataset, dict, object]:
+) -> tuple[Dataset, dict, object | None]:
     dataset, summary, job = validate_trope_merges(
         session,
         merges=[
@@ -296,12 +295,7 @@ def validate_trope_merges(
     if job_payload:
         full_job_payload.update(job_payload)
 
-    job = queue_job(
-        session,
-        job_type="full_rebuild",
-        dataset_id=active_dataset.id,
-        payload=full_job_payload,
-    )
+    job = None
     record_audit_event(
         session,
         event_type="trope.merged" if len(merge_summaries) == 1 else "trope.batch_merged",
@@ -319,7 +313,7 @@ def validate_trope_merges(
                 }
                 for merge_summary in merge_summaries
             ],
-            "job_id": job.id,
+            "rebuild_queued": False,
         },
     )
     session.commit()
@@ -338,7 +332,7 @@ def delete_trope(
     trope_id: str,
     remove_from_all_stories: bool = False,
     actor_user_id: str | None = None,
-) -> tuple[Dataset, dict, object]:
+) -> tuple[Dataset, dict, object | None]:
     active_dataset = _require_active_dataset(session)
     trope = session.scalar(
         select(Trope).where(
@@ -383,16 +377,7 @@ def delete_trope(
     session.delete(refreshed_trope)
 
     _bump_dataset_versions(session, active_dataset.id, affected_dataset_ids)
-    job = queue_job(
-        session,
-        job_type="full_rebuild",
-        dataset_id=active_dataset.id,
-        payload={
-            "reason": "delete_trope",
-            "trope_id": trope_id,
-            "remove_from_all_stories": remove_from_all_stories,
-        },
-    )
+    job = None
     record_audit_event(
         session,
         event_type="trope.deleted",
@@ -403,7 +388,7 @@ def delete_trope(
         payload={
             "affected_story_count": len(affected_story_ids),
             "remove_from_all_stories": remove_from_all_stories,
-            "job_id": job.id,
+            "rebuild_queued": False,
         },
     )
     session.commit()

@@ -9,6 +9,8 @@ The target production architecture is:
 - built-in email/password authentication with role-based access control;
 - anonymous public exploration access only for the exploration experience.
 
+For backend deployment outside Railway, including a university-managed PostgreSQL plus mounted-storage setup, use [docs/backend_deployment.md](docs/backend_deployment.md).
+
 ## Local Development
 
 - Backend:
@@ -71,7 +73,7 @@ The backend stores:
 
 - relational state in PostgreSQL;
 - sentence-transformers cache under `DATA_DIR/model-cache`;
-- local search artifacts, uploads, and exports under `DATA_DIR`.
+- a persistent `DATA_DIR` for runtime artifacts and temporary CSV handling.
 
 ## Railway Deployment
 
@@ -116,8 +118,8 @@ After the service deploys successfully, open the Railway service networking sett
 Railway volumes are the right place for:
 
 - downloaded sentence-transformers model artifacts;
-- staged and active search artifacts;
-- short-lived CSV uploads and CSV exports.
+- the persistent runtime directory expected by the backend;
+- short-lived CSV uploads and CSV exports if you choose to retain them locally.
 
 PostgreSQL data should live in Railway-managed PostgreSQL, not on the mounted volume.
 

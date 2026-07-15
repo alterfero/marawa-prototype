@@ -23,7 +23,6 @@ from app.db.models import (
     Trope,
 )
 from app.services.audit import record_audit_event
-from app.services.jobs import queue_job
 
 STORY_FIELD_CHANGE_KIND = "story_field"
 STORY_TROPE_CHANGE_KIND = "story_trope"
@@ -524,17 +523,6 @@ def _reject_story_field_change(
     sync_story_derived_fields(story)
     story.version += 1
     dataset.version += 1
-    queue_job(
-        session,
-        job_type="full_rebuild",
-        dataset_id=dataset.id,
-        payload={
-            "reason": "review_rejected_story_field",
-            "story_id": story.id,
-            "field_name": field_name,
-            "review_id": review_item.id,
-        },
-    )
     return {"action": "reverted", "field_name": field_name}
 
 
@@ -630,17 +618,6 @@ def _reject_story_trope_change(
     sync_story_derived_fields(story)
     story.version += 1
     dataset.version += 1
-    queue_job(
-        session,
-        job_type="full_rebuild",
-        dataset_id=dataset.id,
-        payload={
-            "reason": f"review_rejected_story_trope_{assignment_action or 'changed'}",
-            "story_id": story.id,
-            "trope_id": current_trope_id or previous_trope_id,
-            "review_id": review_item.id,
-        },
-    )
     return {
         "action": "reverted",
         "assignment_action": assignment_action,
@@ -716,17 +693,6 @@ def _reject_story_keyword_change(
     sync_story_derived_fields(story)
     story.version += 1
     dataset.version += 1
-    queue_job(
-        session,
-        job_type="full_rebuild",
-        dataset_id=dataset.id,
-        payload={
-            "reason": f"review_rejected_story_keyword_{assignment_action or 'changed'}",
-            "story_id": story.id,
-            "keyword_id": current_keyword_id or previous_keyword_id,
-            "review_id": review_item.id,
-        },
-    )
     return {
         "action": "reverted",
         "assignment_action": assignment_action,
@@ -779,17 +745,6 @@ def _resolve_pending_trope_rejection(
         affected_dataset_ids = _touch_affected_stories(session, affected_story_ids)
         _refresh_trope_cached_story_count(session, target_trope.id)
         _bump_dataset_versions(session, active_dataset.id, affected_dataset_ids)
-        queue_job(
-            session,
-            job_type="full_rebuild",
-            dataset_id=active_dataset.id,
-            payload={
-                "reason": "review_rejected_trope_merge",
-                "source_trope_id": trope.id,
-                "target_trope_id": target_trope.id,
-                "review_id": review_item.id,
-            },
-        )
         record_audit_event(
             session,
             event_type="trope.merged",
@@ -813,16 +768,6 @@ def _resolve_pending_trope_rejection(
     affected_story_ids = _delete_trope_everywhere(session, dataset_id=active_dataset.id, trope_id=trope.id)
     affected_dataset_ids = _touch_affected_stories(session, affected_story_ids)
     _bump_dataset_versions(session, active_dataset.id, affected_dataset_ids)
-    queue_job(
-        session,
-        job_type="full_rebuild",
-        dataset_id=active_dataset.id,
-        payload={
-            "reason": "review_rejected_trope_delete",
-            "trope_id": trope.id,
-            "review_id": review_item.id,
-        },
-    )
     record_audit_event(
         session,
         event_type="trope.deleted",
@@ -869,17 +814,6 @@ def _resolve_pending_keyword_rejection(
         affected_dataset_ids = _touch_affected_stories(session, affected_story_ids)
         _refresh_keyword_cached_story_count(session, target_keyword.id)
         _bump_dataset_versions(session, active_dataset.id, affected_dataset_ids)
-        queue_job(
-            session,
-            job_type="full_rebuild",
-            dataset_id=active_dataset.id,
-            payload={
-                "reason": "review_rejected_keyword_merge",
-                "source_keyword_id": keyword.id,
-                "target_keyword_id": target_keyword.id,
-                "review_id": review_item.id,
-            },
-        )
         record_audit_event(
             session,
             event_type="keyword.merged",
@@ -903,16 +837,6 @@ def _resolve_pending_keyword_rejection(
     affected_story_ids = _delete_keyword_everywhere(session, dataset_id=active_dataset.id, keyword_id=keyword.id)
     affected_dataset_ids = _touch_affected_stories(session, affected_story_ids)
     _bump_dataset_versions(session, active_dataset.id, affected_dataset_ids)
-    queue_job(
-        session,
-        job_type="full_rebuild",
-        dataset_id=active_dataset.id,
-        payload={
-            "reason": "review_rejected_keyword_delete",
-            "keyword_id": keyword.id,
-            "review_id": review_item.id,
-        },
-    )
     record_audit_event(
         session,
         event_type="keyword.deleted",

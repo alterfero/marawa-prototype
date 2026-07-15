@@ -51,6 +51,11 @@ def upload_dataset(client: TestClient, rows: list[dict[str, str]]) -> None:
     assert response.status_code == 201
 
 
+def request_rebuild(client: TestClient) -> None:
+    response = client.post("/api/dataset/rebuild")
+    assert response.status_code == 200
+
+
 def process_next_job(client: TestClient) -> None:
     assert client.app.state.job_runner.process_next_job() is True
 
@@ -66,6 +71,7 @@ def test_exploration_network_returns_trope_candidates_when_selected_trope_is_mis
                 make_row(title="Story Two", tropes="§§ first trope variant"),
             ],
         )
+        request_rebuild(client)
         process_next_job(client)
 
         response = client.post(
@@ -128,6 +134,7 @@ def test_exploration_network_builds_markers_connections_and_bounds(monkeypatch, 
                 make_row(title="Related Missing", tropes="§§ first echo trope", coord="missing"),
             ],
         )
+        request_rebuild(client)
         process_next_job(client)
 
         stories = client.get("/api/stories").json()["items"]

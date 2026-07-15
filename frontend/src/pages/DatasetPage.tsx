@@ -204,7 +204,7 @@ export function DatasetPage({ canManageDataset }: { canManageDataset: boolean })
       setActionNotice(null);
 
       const result = await uploadDataset(file);
-      setCurrentJobId(result.latest_job.id);
+      setCurrentJobId(result.latest_job?.id ?? null);
       setJobDetail(null);
       setJobError(null);
       setFile(null);
@@ -216,15 +216,16 @@ export function DatasetPage({ canManageDataset }: { canManageDataset: boolean })
         setActionNotice({
           tone: "success",
           title: "Dataset uploaded",
-          body: `The active dataset is being rebuilt. Job ${result.latest_job.id} is ${result.latest_job.status}.`,
+          body:
+            result.dataset_status === "staged"
+              ? "The CSV upload succeeded and the dataset is staged. Use Rebuild in the menu to process and promote it."
+              : "The CSV upload succeeded.",
         });
       } catch (caughtError) {
         setActionNotice({
           tone: "warning",
           title: "Dataset uploaded",
-          body: `The CSV upload succeeded and queued rebuild job ${result.latest_job.id}, but GET /api/dataset/status failed afterwards: ${getErrorMessage(
-            caughtError,
-          )}. Use Refresh to try again.`,
+          body: `The CSV upload succeeded, but GET /api/dataset/status failed afterwards: ${getErrorMessage(caughtError)}. Use Refresh to try again.`,
         });
       }
     } catch (caughtError) {

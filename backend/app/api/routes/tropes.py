@@ -25,7 +25,7 @@ class DeleteTropeResponse(BaseModel):
     deleted_trope_id: str
     affected_story_count: int
     dataset_version: int
-    queued_job: JobSummaryResponse
+    queued_job: JobSummaryResponse | None
 
 
 class TropeListItemResponse(BaseModel):
@@ -59,7 +59,9 @@ class TropeDetailResponse(BaseModel):
 router = APIRouter(prefix="/tropes", tags=["tropes"])
 
 
-def _queued_job_summary(job) -> JobSummaryResponse:
+def _queued_job_summary(job) -> JobSummaryResponse | None:
+    if job is None:
+        return None
     return JobSummaryResponse(
         id=job.id,
         status=job.status.value,

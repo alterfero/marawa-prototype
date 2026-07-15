@@ -64,8 +64,20 @@ export interface DatasetStatus {
 }
 
 export interface DatasetUploadResponse {
-  active_dataset_version: number;
-  latest_job: JobSummary;
+  dataset_id: string;
+  dataset_version: number;
+  dataset_status: string;
+  active_dataset_version: number | null;
+  latest_job: JobSummary | null;
+}
+
+export interface DatasetRebuildResponse {
+  dataset_id: string;
+  dataset_version: number;
+  dataset_status: string;
+  active_dataset_version: number | null;
+  created: boolean;
+  queued_job: JobSummary;
 }
 
 export interface StorySummary {
@@ -116,7 +128,7 @@ export interface StoryDetail {
 export interface CreateStoryResponse {
   story: StoryDetail;
   dataset_version: number;
-  queued_job: JobSummary;
+  queued_job: JobSummary | null;
 }
 
 export interface StoryTropesResponse {
@@ -130,7 +142,7 @@ export interface StoryTropeMutationResponse {
   story_version: number;
   dataset_version: number;
   trope: StoryTrope;
-  queued_job: JobSummary;
+  queued_job: JobSummary | null;
 }
 
 export interface DeleteStoryTropeResponse {
@@ -138,7 +150,7 @@ export interface DeleteStoryTropeResponse {
   story_version: number;
   dataset_version: number;
   deleted_trope_id: string;
-  queued_job: JobSummary;
+  queued_job: JobSummary | null;
 }
 
 export interface StoryKeywordMutationResponse {
@@ -146,7 +158,7 @@ export interface StoryKeywordMutationResponse {
   story_version: number;
   dataset_version: number;
   keyword: StoryKeyword;
-  queued_job: JobSummary;
+  queued_job: JobSummary | null;
 }
 
 export interface DeleteStoryKeywordResponse {
@@ -154,7 +166,7 @@ export interface DeleteStoryKeywordResponse {
   story_version: number;
   dataset_version: number;
   deleted_keyword_id: string;
-  queued_job: JobSummary;
+  queued_job: JobSummary | null;
 }
 
 export interface TropeSummary {
@@ -182,7 +194,7 @@ export interface MergeTropesResponse {
   target_trope_id: string;
   affected_story_count: number;
   dataset_version: number;
-  queued_job: JobSummary;
+  queued_job: JobSummary | null;
 }
 
 export interface AppliedMergeSummary {
@@ -196,14 +208,14 @@ export interface ValidateTropesResponse {
   merge_count: number;
   affected_story_count: number;
   dataset_version: number;
-  queued_job: JobSummary;
+  queued_job: JobSummary | null;
 }
 
 export interface DeleteTropeResponse {
   deleted_trope_id: string;
   affected_story_count: number;
   dataset_version: number;
-  queued_job: JobSummary;
+  queued_job: JobSummary | null;
 }
 
 export interface CreateTropeResponse {

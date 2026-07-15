@@ -12,7 +12,13 @@ from app.db.models import UserRole
 from app.services.audit import record_audit_event
 from app.services.auth import AuthSessionContext
 from app.services.csv_io import CSVImportValidationError, export_active_dataset_to_csv_bytes
-from app.services.dataset import clear_dataset_data, get_dataset_status, upload_dataset_csv
+from app.services.dataset import (
+    DatasetRebuildTargetNotFoundError,
+    clear_dataset_data,
+    get_dataset_status,
+    request_dataset_rebuild,
+    upload_dataset_csv,
+)
 
 
 class JobSummaryResponse(BaseModel):
@@ -49,7 +55,16 @@ class DatasetUploadResponse(BaseModel):
     dataset_version: int
     dataset_status: str
     active_dataset_version: int | None
-    latest_job: JobSummaryResponse
+    latest_job: JobSummaryResponse | None
+
+
+class DatasetRebuildResponse(BaseModel):
+    dataset_id: str
+    dataset_version: int
+    dataset_status: str
+    active_dataset_version: int | None
+    created: bool
+    queued_job: JobSummaryResponse
 
 
 router = APIRouter(prefix="/dataset", tags=["dataset"])
@@ -107,7 +122,33 @@ async def upload_dataset(
         dataset_version=dataset.version,
         dataset_status=dataset.status.value,
         active_dataset_version=active_dataset.version if active_dataset is not None else None,
-        latest_job=JobSummaryResponse(id=job.id, status=job.status.value, job_type=job.job_type),
+        latest_job=None
+        if job is None
+        else JobSummaryResponse(id=job.id, status=job.status.value, job_type=job.job_type),
+    )
+
+
+@router.post("/rebuild", response_model=DatasetRebuildResponse)
+def rebuild_dataset(
+    auth_context: AuthSessionContext = Depends(require_minimum_role_with_csrf(UserRole.ADMIN)),
+    session: Session = Depends(get_db_session),
+) -> DatasetRebuildResponse:
+    try:
+        dataset, job, created = request_dataset_rebuild(
+            session,
+            actor_user_id=auth_context.user.id,
+        )
+    except DatasetRebuildTargetNotFoundError as exc:
+        raise api_error(404, "dataset_rebuild_unavailable", str(exc)) from exc
+
+    active_dataset = session.scalar(select(Dataset).where(Dataset.status == DatasetStatus.ACTIVE))
+    return DatasetRebuildResponse(
+        dataset_id=dataset.id,
+        dataset_version=dataset.version,
+        dataset_status=dataset.status.value,
+        active_dataset_version=active_dataset.version if active_dataset is not None else None,
+        created=created,
+        queued_job=JobSummaryResponse(id=job.id, status=job.status.value, job_type=job.job_type),
     )
 
 

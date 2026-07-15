@@ -52,7 +52,7 @@ class MergeTropesResponse(BaseModel):
     target_trope_id: str
     affected_story_count: int
     dataset_version: int
-    queued_job: JobSummaryResponse
+    queued_job: JobSummaryResponse | None
 
 
 class ValidateTropesRequest(BaseModel):
@@ -70,7 +70,7 @@ class ValidateTropesResponse(BaseModel):
     merge_count: int
     affected_story_count: int
     dataset_version: int
-    queued_job: JobSummaryResponse
+    queued_job: JobSummaryResponse | None
 
 
 router = APIRouter(prefix="/curation", tags=["curation"])
@@ -80,7 +80,9 @@ def get_search_service(request: Request):
     return request.app.state.search_service
 
 
-def _queued_job_summary(job) -> JobSummaryResponse:
+def _queued_job_summary(job) -> JobSummaryResponse | None:
+    if job is None:
+        return None
     return JobSummaryResponse(
         id=job.id,
         status=job.status.value,

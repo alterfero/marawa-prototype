@@ -152,8 +152,7 @@ def test_add_story_trope_creates_new_canonical_trope_and_queues_rebuild(client: 
     assert body["trope"]["text"] == "Moon Bride"
     assert body["trope"]["origin"] == "human_entered"
     assert body["trope"]["status"] == "validated"
-    assert body["queued_job"]["status"] == "queued"
-    assert body["queued_job"]["job_type"] == "full_rebuild"
+    assert body["queued_job"] is None
 
     detail = client.get(f"/api/stories/{story['id']}").json()
     assert detail["version"] == 2
@@ -188,8 +187,7 @@ def test_create_story_adds_manual_entry_with_metadata_keywords_and_tropes(client
     assert response.status_code == 201
     body = response.json()
     assert body["dataset_version"] == 2
-    assert body["queued_job"]["status"] == "queued"
-    assert body["queued_job"]["job_type"] == "full_rebuild"
+    assert body["queued_job"] is None
     assert body["story"]["source_row_number"] is None
     assert body["story"]["version"] == 1
     assert body["story"]["fields"]["Entered by"] == "Researcher"
@@ -303,7 +301,7 @@ def test_validate_story_trope_marks_suggestion_as_human_approved(client: TestCli
     assert validated["dataset_version"] == 3
     assert validated["trope"]["origin"] == "human_approved"
     assert validated["trope"]["status"] == "validated"
-    assert validated["queued_job"]["status"] == "queued"
+    assert validated["queued_job"] is None
 
     detail = client.get(f"/api/stories/{story['id']}").json()
     assert detail["version"] == 3
@@ -332,8 +330,7 @@ def test_replace_story_trope_with_typed_text_updates_csv_and_preserves_order(cli
     assert body["trope"]["origin"] == "human_entered"
     assert body["trope"]["status"] == "validated"
     assert body["trope"]["position"] == 0
-    assert body["queued_job"]["status"] == "queued"
-    assert body["queued_job"]["job_type"] == "full_rebuild"
+    assert body["queued_job"] is None
 
     detail = client.get(f"/api/stories/{story['id']}").json()
     assert detail["fields"][TROPE_FIELD] == "§§ Edited trope\n§§ second trope"
@@ -412,7 +409,7 @@ def test_delete_story_trope_removes_assignment_hard(client: TestClient) -> None:
     assert body["deleted_trope_id"] == trope["id"]
     assert body["story_version"] == 2
     assert body["dataset_version"] == 2
-    assert body["queued_job"]["status"] == "queued"
+    assert body["queued_job"] is None
 
     tropes_payload = client.get(f"/api/stories/{story['id']}/tropes").json()
     assert tropes_payload["story_version"] == 2
@@ -453,7 +450,7 @@ def test_update_story_partial_fields_preserves_assignments(client: TestClient) -
     assert response.status_code == 200
     body = response.json()
     assert body["dataset_version"] == 2
-    assert body["queued_job"]["status"] == "queued"
+    assert body["queued_job"] is None
     assert body["story"]["version"] == 2
     assert body["story"]["fields"]["territory"] == "Moorea"
     assert body["story"]["fields"]["1-sentence summary"] == "Updated summary"

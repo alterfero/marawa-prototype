@@ -141,7 +141,7 @@ class StoryTropeMutationResponse(BaseModel):
     story_version: int
     dataset_version: int
     trope: StoryTropeResponse
-    queued_job: JobSummaryResponse
+    queued_job: JobSummaryResponse | None
 
 
 class StoryKeywordMutationResponse(BaseModel):
@@ -149,7 +149,7 @@ class StoryKeywordMutationResponse(BaseModel):
     story_version: int
     dataset_version: int
     keyword: StoryKeywordResponse
-    queued_job: JobSummaryResponse
+    queued_job: JobSummaryResponse | None
 
 
 class DeleteStoryTropeResponse(BaseModel):
@@ -157,7 +157,7 @@ class DeleteStoryTropeResponse(BaseModel):
     story_version: int
     dataset_version: int
     deleted_trope_id: str
-    queued_job: JobSummaryResponse
+    queued_job: JobSummaryResponse | None
 
 
 class DeleteStoryKeywordResponse(BaseModel):
@@ -165,19 +165,21 @@ class DeleteStoryKeywordResponse(BaseModel):
     story_version: int
     dataset_version: int
     deleted_keyword_id: str
-    queued_job: JobSummaryResponse
+    queued_job: JobSummaryResponse | None
 
 
 class CreateStoryResponse(BaseModel):
     story: StoryDetailResponse
     dataset_version: int
-    queued_job: JobSummaryResponse
+    queued_job: JobSummaryResponse | None
 
 
 router = APIRouter(prefix="/stories", tags=["stories"])
 
 
-def _queued_job_summary(job) -> JobSummaryResponse:
+def _queued_job_summary(job) -> JobSummaryResponse | None:
+    if job is None:
+        return None
     return JobSummaryResponse(
         id=job.id,
         status=job.status.value,
