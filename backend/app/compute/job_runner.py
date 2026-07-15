@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from datetime import datetime, timezone
+import logging
+import threading
 from typing import Any
 
 from sqlalchemy import select
@@ -10,9 +12,11 @@ from sqlalchemy.orm import QueryableAttribute
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.models import Dataset, DatasetStatus, Job, JobStatus
+from app.services.jobs import requeue_stale_running_jobs
 
 
 JobHandler = Callable[[Session, Job], dict[str, Any] | None]
+logger = logging.getLogger(__name__)
 
 
 def utc_now() -> datetime:
@@ -46,9 +50,13 @@ class JobRunner:
         *,
         handlers: dict[str, JobHandler] | None = None,
         poll_interval_seconds: float = 0.25,
+        heartbeat_interval_seconds: float = 10.0,
+        running_job_stale_after_seconds: float | None = 120.0,
     ) -> None:
         self.session_factory = session_factory
         self.poll_interval_seconds = poll_interval_seconds
+        self.heartbeat_interval_seconds = heartbeat_interval_seconds
+        self.running_job_stale_after_seconds = running_job_stale_after_seconds
         self.handlers: dict[str, JobHandler] = {
             "full_rebuild": handle_full_rebuild_placeholder,
             "test_success": handle_test_success,
@@ -74,7 +82,19 @@ class JobRunner:
 
     async def _run_loop(self) -> None:
         while not self._stop_event.is_set():
-            processed = await asyncio.to_thread(self.process_next_job)
+            try:
+                processed = await asyncio.to_thread(self.process_next_job)
+            except Exception:
+                logger.exception("Background job runner loop failed while processing work.")
+                try:
+                    with self.session_factory() as session:
+                        requeue_stale_running_jobs(
+                            session,
+                            stale_after_seconds=self.running_job_stale_after_seconds,
+                        )
+                except Exception:
+                    logger.exception("Failed to recover stale running jobs after runner loop error.")
+                processed = False
             if not processed:
                 try:
                     await asyncio.wait_for(self._stop_event.wait(), timeout=self.poll_interval_seconds)
@@ -103,6 +123,12 @@ class JobRunner:
 
     def claim_next_job(self) -> str | None:
         with self.session_factory() as session:
+            recovered_count = requeue_stale_running_jobs(
+                session,
+                stale_after_seconds=self.running_job_stale_after_seconds,
+            )
+            if recovered_count:
+                logger.warning("Recovered %s stale running job(s) before claiming new work.", recovered_count)
             queued_rebuilds = list(
                 session.scalars(
                     self._queued_jobs_query(
@@ -149,6 +175,47 @@ class JobRunner:
             session.commit()
             return next_job.id
 
+    def _heartbeat_running_job(self, job_id: str, stop_event: threading.Event) -> None:
+        if self.heartbeat_interval_seconds <= 0:
+            return
+        while not stop_event.wait(self.heartbeat_interval_seconds):
+            try:
+                with self.session_factory() as session:
+                    job = session.get(Job, job_id)
+                    if job is None or job.status != JobStatus.RUNNING:
+                        return
+                    job.result_json = {
+                        **(job.result_json or {}),
+                        "heartbeat_at": utc_now().isoformat(),
+                    }
+                    session.commit()
+            except Exception:
+                logger.exception("Failed to record heartbeat for running job %s.", job_id)
+                return
+
+    def _start_job_heartbeat(self, job_id: str) -> tuple[threading.Event | None, threading.Thread | None]:
+        if self.heartbeat_interval_seconds <= 0:
+            return None, None
+        stop_event = threading.Event()
+        thread = threading.Thread(
+            target=self._heartbeat_running_job,
+            args=(job_id, stop_event),
+            daemon=True,
+            name=f"job-heartbeat-{job_id}",
+        )
+        thread.start()
+        return stop_event, thread
+
+    def _stop_job_heartbeat(
+        self,
+        stop_event: threading.Event | None,
+        thread: threading.Thread | None,
+    ) -> None:
+        if stop_event is None or thread is None:
+            return
+        stop_event.set()
+        thread.join(timeout=max(self.heartbeat_interval_seconds, 0) + 1.0)
+
     def execute_job(self, job_id: str) -> None:
         with self.session_factory() as session:
             job = session.get(Job, job_id)
@@ -162,10 +229,12 @@ class JobRunner:
                 session.commit()
                 return
 
+            heartbeat_stop_event, heartbeat_thread = self._start_job_heartbeat(job_id)
             try:
                 result = handler(session, job) or {}
             except Exception as exc:
                 session.rollback()
+                self._stop_job_heartbeat(heartbeat_stop_event, heartbeat_thread)
                 job = session.get(Job, job_id)
                 if job is None:
                     return
@@ -179,6 +248,7 @@ class JobRunner:
                 session.commit()
                 return
 
+            self._stop_job_heartbeat(heartbeat_stop_event, heartbeat_thread)
             job.status = JobStatus.SUCCEEDED
             job.result_json = result
             job.error_message = None

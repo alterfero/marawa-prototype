@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -10,6 +10,12 @@ from app.db.models import Job, JobStatus
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _coerce_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def queue_job(
@@ -39,8 +45,20 @@ def get_job(session: Session, job_id: str) -> Job | None:
     return session.get(Job, job_id)
 
 
-def requeue_stale_running_jobs(session: Session) -> int:
+def _job_last_activity_at(job: Job) -> datetime:
+    return _coerce_utc(job.updated_at or job.started_at or job.created_at)
+
+
+def requeue_stale_running_jobs(
+    session: Session,
+    *,
+    stale_after_seconds: float | None = None,
+    now: datetime | None = None,
+) -> int:
     stale_jobs = list(session.scalars(select(Job).where(Job.status == JobStatus.RUNNING)).all())
+    if stale_after_seconds is not None:
+        cutoff = (now or utc_now()) - timedelta(seconds=stale_after_seconds)
+        stale_jobs = [job for job in stale_jobs if _job_last_activity_at(job) <= cutoff]
     for job in stale_jobs:
         job.status = JobStatus.QUEUED
         job.started_at = None
@@ -52,4 +70,3 @@ def requeue_stale_running_jobs(session: Session) -> int:
         }
     session.commit()
     return len(stale_jobs)
-
