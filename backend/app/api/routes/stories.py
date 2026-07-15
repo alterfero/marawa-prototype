@@ -4,12 +4,13 @@ from sqlalchemy.orm import Session
 
 from app.api.errors import api_error
 from app.api.deps import get_db_session, require_minimum_role, require_minimum_role_with_csrf
-from app.db.models import StoryTropeOrigin, UserRole
+from app.db.models import StoryCompleteness, StoryTropeOrigin, UserRole
 from app.services.auth import AuthSessionContext
 from app.services.stories import (
     ActiveDatasetNotFoundError,
     DatasetVersionConflictError,
     KeywordNotFoundError,
+    StoryCompletenessPermissionError,
     StoryMutationValidationError,
     StoryKeywordNotFoundError,
     StoryNotFoundError,
@@ -43,6 +44,7 @@ class StorySummaryResponse(BaseModel):
     dataset_id: str
     source_row_number: int | None
     version: int
+    completeness: StoryCompleteness
     title: str
     territory: str
     summary: str
@@ -76,6 +78,7 @@ class StoryDetailResponse(BaseModel):
     dataset_id: str
     source_row_number: int | None
     version: int
+    completeness: StoryCompleteness
     created_at: str
     updated_at: str
     fields: dict[str, str]
@@ -105,6 +108,7 @@ class CreateStoryRequest(BaseModel):
 class UpdateStoryRequest(BaseModel):
     expected_story_version: int
     fields: dict[str, str] = Field(default_factory=dict)
+    completeness: StoryCompleteness | None = None
 
 
 class AddStoryTropeRequest(BaseModel):
@@ -216,6 +220,8 @@ def _raise_story_service_error(exc: Exception) -> None:
         raise api_error(404, "keyword_not_found", str(exc)) from exc
     if isinstance(exc, StoryMutationValidationError):
         raise api_error(400, "story_mutation_invalid", str(exc)) from exc
+    if isinstance(exc, StoryCompletenessPermissionError):
+        raise api_error(403, "story_completeness_forbidden", str(exc)) from exc
     raise exc
 
 
@@ -266,6 +272,7 @@ def update_story_record(
             story_id,
             expected_story_version=payload.expected_story_version,
             fields=payload.fields,
+            completeness=payload.completeness,
             actor_user_id=auth_context.user.id,
             actor_role=auth_context.user.role,
         )

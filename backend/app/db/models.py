@@ -67,6 +67,12 @@ class TermReviewStatus(str, Enum):
     REJECTED = "rejected"
 
 
+class StoryCompleteness(str, Enum):
+    INCOMPLETE = "incomplete"
+    PENDING_REVIEW = "pending review"
+    COMPLETE = "complete"
+
+
 class StoryTropeOrigin(str, Enum):
     CSV_IMPORT = "csv_import"
     SEMANTIC_SUGGESTION = "semantic_suggestion"
@@ -258,6 +264,16 @@ class Story(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     source_row_number: Mapped[int | None] = mapped_column(Integer)
     fields_json: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     row_hash: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    completeness: Mapped[StoryCompleteness] = mapped_column(
+        SqlEnum(
+            StoryCompleteness,
+            native_enum=False,
+            validate_strings=True,
+            values_callable=enum_values,
+        ),
+        default=StoryCompleteness.INCOMPLETE,
+        nullable=False,
+    )
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
     dataset: Mapped["Dataset"] = relationship(back_populates="stories")

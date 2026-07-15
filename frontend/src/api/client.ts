@@ -20,6 +20,7 @@ import type {
   PasswordResetResponse,
   ReviewItem,
   ReviewStatus,
+  StoryCompleteness,
   StoryDetail,
   StoryKeywordMutationResponse,
   StoryListResponse,
@@ -256,6 +257,7 @@ export function updateStory(payload: {
   story_id: string;
   expected_story_version: number;
   fields: Record<string, string>;
+  completeness?: StoryCompleteness;
 }): Promise<CreateStoryResponse> {
   return request<CreateStoryResponse>(`/stories/${payload.story_id}`, {
     method: "PATCH",
@@ -265,6 +267,7 @@ export function updateStory(payload: {
     body: JSON.stringify({
       expected_story_version: payload.expected_story_version,
       fields: payload.fields,
+      completeness: payload.completeness,
     }),
   });
 }

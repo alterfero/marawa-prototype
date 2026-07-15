@@ -324,6 +324,26 @@ p {
   align-content: start;
 }
 
+.story-browser-row-top,
+.story-completeness-header,
+.story-completeness-switch {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.story-browser-row-top,
+.story-completeness-header {
+  align-items: flex-start;
+  flex-wrap: wrap;
+  justify-content: space-between;
+}
+
+.story-completeness-switch {
+  display: grid;
+  gap: 0.55rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .story-browser-title,
 .story-browser-preview {
   display: -webkit-box;
@@ -332,11 +352,80 @@ p {
 }
 
 .story-browser-title {
+  flex: 1 1 12rem;
   -webkit-line-clamp: 2;
 }
 
 .story-browser-preview {
   -webkit-line-clamp: 2;
+}
+
+.story-completeness-card {
+  gap: 0;
+  padding: 0.75rem;
+}
+
+.story-completeness-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: 0.82rem;
+  font-weight: 600;
+  text-transform: capitalize;
+  white-space: nowrap;
+}
+
+.story-completeness-incomplete {
+  background: rgba(194, 75, 59, 0.12);
+  border-color: rgba(194, 75, 59, 0.24);
+  color: #8f3024;
+}
+
+.story-completeness-pending-review {
+  background: rgba(214, 162, 104, 0.18);
+  border-color: rgba(214, 162, 104, 0.32);
+  color: #8a5425;
+}
+
+.story-completeness-complete {
+  background: rgba(53, 133, 118, 0.16);
+  border-color: rgba(53, 133, 118, 0.28);
+  color: #1d6857;
+}
+
+.story-completeness-option-active {
+  cursor: default;
+}
+
+.story-completeness-option {
+  width: 100%;
+  min-height: 2.7rem;
+  padding: 0.65rem 0.7rem;
+  line-height: 1.15;
+  text-align: center;
+  white-space: normal;
+}
+
+.button.story-completeness-option-active.story-completeness-incomplete {
+  background: rgba(194, 75, 59, 0.12);
+  border-color: rgba(194, 75, 59, 0.24);
+  color: #8f3024;
+}
+
+.button.story-completeness-option-active.story-completeness-pending-review {
+  background: rgba(214, 162, 104, 0.18);
+  border-color: rgba(214, 162, 104, 0.32);
+  color: #8a5425;
+}
+
+.button.story-completeness-option-active.story-completeness-complete {
+  background: rgba(53, 133, 118, 0.16);
+  border-color: rgba(53, 133, 118, 0.28);
+  color: #1d6857;
 }
 
 .field {

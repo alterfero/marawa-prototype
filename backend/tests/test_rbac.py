@@ -158,3 +158,62 @@ def test_contributor_and_admin_access_matrix(monkeypatch, tmp_path) -> None:
     assert upload_response.json()["code"] == "forbidden"
     assert curation_response.status_code == 403
     assert curation_response.json()["code"] == "forbidden"
+
+
+def test_story_completeness_role_rules(monkeypatch, tmp_path) -> None:
+    configure_auth_env(monkeypatch)
+    app = build_app(tmp_path, "rbac-completeness.db")
+
+    with TestClient(app) as admin_client:
+        authenticate_admin(admin_client)
+        upload_dataset(admin_client, [make_row(title="Story One")])
+
+    with TestClient(app) as contributor_client, TestClient(app) as admin_client:
+        authenticate_admin(admin_client)
+        authenticate_role(
+            admin_client,
+            contributor_client,
+            email="contributor@example.com",
+            display_name="Contributor User",
+            role=UserRole.CONTRIBUTOR,
+            password="contributor-password",
+        )
+
+        story = contributor_client.get("/api/stories").json()["items"][0]
+
+        contributor_response = contributor_client.patch(
+            f"/api/stories/{story['id']}",
+            json={
+                "expected_story_version": 1,
+                "fields": {},
+                "completeness": "pending review",
+            },
+        )
+        forbidden_response = contributor_client.patch(
+            f"/api/stories/{story['id']}",
+            json={
+                "expected_story_version": 2,
+                "fields": {},
+                "completeness": "complete",
+            },
+        )
+        admin_response = admin_client.patch(
+            f"/api/stories/{story['id']}",
+            json={
+                "expected_story_version": 2,
+                "fields": {},
+                "completeness": "complete",
+            },
+        )
+
+    assert contributor_response.status_code == 200
+    assert contributor_response.json()["story"]["completeness"] == "pending review"
+    assert contributor_response.json()["story"]["version"] == 2
+    assert forbidden_response.status_code == 403
+    assert forbidden_response.json() == {
+        "code": "story_completeness_forbidden",
+        "message": "Contributors can only switch story completeness between incomplete and pending review.",
+    }
+    assert admin_response.status_code == 200
+    assert admin_response.json()["story"]["completeness"] == "complete"
+    assert admin_response.json()["story"]["version"] == 3

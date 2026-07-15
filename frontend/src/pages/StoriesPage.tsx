@@ -25,7 +25,8 @@ import {
 } from "../components/StoryFieldWidgets";
 import { TermCard } from "../components/TermCard";
 import { TropeCard } from "../components/TropeCard";
-import type { SearchItem, StoryDetail, StorySummary, TropeSearchItem } from "../api/types";
+import { roleAtLeast, useAuth } from "../auth";
+import type { SearchItem, StoryCompleteness, StoryDetail, StorySummary, TropeSearchItem } from "../api/types";
 import { LEGACY_METADATA_SECTIONS, normalizeDraftText } from "../constants/csv";
 import { routeHref, useHashSearch } from "../router";
 
@@ -33,6 +34,30 @@ interface PageNotice {
   tone: "error" | "success";
   title: string;
   body?: string;
+}
+
+const ALL_COMPLETENESS_OPTIONS: StoryCompleteness[] = ["incomplete", "pending review", "complete"];
+
+function completenessBadgeClassName(completeness: StoryCompleteness): string {
+  return `story-completeness-${completeness.replace(/\s+/g, "-")}`;
+}
+
+function canSelectCompleteness(
+  role: "guest" | "contributor" | "admin" | null | undefined,
+  currentCompleteness: StoryCompleteness,
+  nextCompleteness: StoryCompleteness,
+): boolean {
+  if (roleAtLeast(role, "admin")) {
+    return true;
+  }
+  if (
+    role === "contributor" &&
+    currentCompleteness !== "complete" &&
+    nextCompleteness !== "complete"
+  ) {
+    return true;
+  }
+  return false;
 }
 
 function extractConflictVersion(error: ApiError): number | null {
@@ -92,6 +117,7 @@ function storyFieldsChanged(current: Record<string, string>, baseline: Record<st
 }
 
 export function StoriesPage({ canEdit }: { canEdit: boolean }) {
+  const { user } = useAuth();
   const hashSearch = useHashSearch();
   const [stories, setStories] = useState<StorySummary[]>([]);
   const [selectedStoryId, setSelectedStoryId] = useState<string | null>(null);
@@ -497,6 +523,28 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
     );
   }
 
+  async function handleSetCompleteness(completeness: StoryCompleteness) {
+    if (!detail || detail.completeness === completeness) {
+      return;
+    }
+
+    await runStoryMutation(
+      detail.id,
+      () =>
+        updateStory({
+          story_id: detail.id,
+          expected_story_version: detail.version,
+          fields: {},
+          completeness,
+        }),
+      {
+        tone: "success",
+        title: "Completeness updated",
+        body: `Story completeness is now ${completeness}.`,
+      },
+    );
+  }
+
   async function handleUseExistingTrope(tropeId: string) {
     if (!detail) {
       return;
@@ -766,7 +814,12 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
                 }}
                 type="button"
               >
-                <strong className="story-browser-title">{story.title || `Story ${story.source_row_number ?? "?"}`}</strong>
+                <div className="story-browser-row-top">
+                  <strong className="story-browser-title">{story.title || `Story ${story.source_row_number ?? "?"}`}</strong>
+                  <span className={`story-completeness-badge ${completenessBadgeClassName(story.completeness)}`}>
+                    {story.completeness}
+                  </span>
+                </div>
                 {!story.has_location ? <span className="story-list-alert">Location missing</span> : null}
                 <span className="muted story-browser-preview">{storyListPreview(story)}</span>
               </button>
@@ -787,6 +840,32 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
             {detail ? (
               <div className="page-stack">
                 {storyLoading ? <p className="muted">Loading story details...</p> : null}
+                <article className="card subdued story-completeness-card">
+                  <div aria-label="Story completeness" className="story-completeness-switch" role="group">
+                    {ALL_COMPLETENESS_OPTIONS.map((option) => {
+                      const isCurrent = detail.completeness === option;
+                      const selectable = canEdit && canSelectCompleteness(user?.role, detail.completeness, option);
+
+                      return (
+                        <button
+                          aria-pressed={isCurrent}
+                          className={`button story-completeness-option ${
+                            isCurrent
+                              ? `story-completeness-option-active ${completenessBadgeClassName(option)}`
+                              : "button-ghost"
+                          }`}
+                          disabled={interactionDisabled || (!isCurrent && !selectable)}
+                          key={option}
+                          onClick={() => void handleSetCompleteness(option)}
+                          type="button"
+                        >
+                          {option}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </article>
+
                 <article className="card subdued">
                   <h3>Summary</h3>
                   <p>{summarizeStory(detail)}</p>

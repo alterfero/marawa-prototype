@@ -37,7 +37,10 @@ def test_initialize_database_creates_expected_tables(tmp_path) -> None:
 
     assert busy_timeout == 5000
     assert str(journal_mode).lower() == "wal"
-    assert alembic_version == "20260617_0004"
+    assert alembic_version == "20260715_0005"
+
+    story_columns = {column["name"] for column in inspector.get_columns("stories")}
+    assert "completeness" in story_columns
 
 
 def test_story_source_row_number_unique_constraint_allows_multiple_nulls(tmp_path) -> None:

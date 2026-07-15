@@ -8,6 +8,7 @@ export type UserRole = "guest" | "contributor" | "admin";
 export type UserStatus = "active" | "inactive" | "pending_invite";
 export type ReviewStatus = "pending" | "approved" | "rejected";
 export type ReviewType = "story_created" | "story_updated" | "trope_pending" | "keyword_pending";
+export type StoryCompleteness = "incomplete" | "pending review" | "complete";
 
 export interface CurrentUser {
   id: string;
@@ -85,6 +86,7 @@ export interface StorySummary {
   dataset_id: string;
   source_row_number: number | null;
   version: number;
+  completeness: StoryCompleteness;
   title: string;
   territory: string;
   summary: string;
@@ -118,6 +120,7 @@ export interface StoryDetail {
   dataset_id: string;
   source_row_number: number | null;
   version: number;
+  completeness: StoryCompleteness;
   created_at: string;
   updated_at: string;
   fields: Record<string, string>;

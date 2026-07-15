@@ -90,6 +90,7 @@ def test_stories_api_lists_story_detail_and_tropes(client: TestClient) -> None:
     assert payload["total"] == 2
     assert [item["title"] for item in payload["items"]] == ["Story One", "Story Two"]
     assert payload["items"][0]["version"] == 1
+    assert payload["items"][0]["completeness"] == "incomplete"
     assert payload["items"][0]["trope_count"] == 2
     assert payload["items"][0]["keyword_count"] == 2
 
@@ -99,6 +100,7 @@ def test_stories_api_lists_story_detail_and_tropes(client: TestClient) -> None:
     assert detail_response.status_code == 200
     detail = detail_response.json()
     assert detail["fields"]["Story title (Eng)"] == "Story One"
+    assert detail["completeness"] == "incomplete"
     assert detail["fields"][TROPE_FIELD] == "§§ first trope\n§§ second trope"
     assert detail["fields"][KEYWORD_FIELD] == "wolf ; moon"
     assert [item["text"] for item in detail["tropes"]] == ["first trope", "second trope"]
@@ -458,6 +460,35 @@ def test_update_story_partial_fields_preserves_assignments(client: TestClient) -
     assert body["story"]["fields"][KEYWORD_FIELD] == "wolf ; moon"
     assert [item["text"] for item in body["story"]["tropes"]] == ["first trope"]
     assert [item["text"] for item in body["story"]["keywords"]] == ["wolf", "moon"]
+
+
+def test_admin_can_update_story_completeness_without_touching_csv_fields(client: TestClient) -> None:
+    upload_dataset(client, [make_row(title="Story One", territory="Tahiti", summary="Original summary")])
+    story = client.get("/api/stories").json()["items"][0]
+
+    response = client.patch(
+        f"/api/stories/{story['id']}",
+        json={
+            "expected_story_version": 1,
+            "fields": {},
+            "completeness": "complete",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["dataset_version"] == 2
+    assert body["queued_job"] is None
+    assert body["story"]["version"] == 2
+    assert body["story"]["completeness"] == "complete"
+    assert body["story"]["fields"]["territory"] == "Tahiti"
+    assert body["story"]["fields"]["1-sentence summary"] == "Original summary"
+
+    detail = client.get(f"/api/stories/{story['id']}").json()
+    assert detail["completeness"] == "complete"
+
+    stories_payload = client.get("/api/stories").json()
+    assert stories_payload["items"][0]["completeness"] == "complete"
 
 
 def test_story_keyword_assignment_lifecycle_updates_csv(client: TestClient) -> None:

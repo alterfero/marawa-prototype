@@ -17,6 +17,7 @@ from app.db.models import (
     Keyword,
     ReviewType,
     Story,
+    StoryCompleteness,
     StoryKeyword,
     StoryTrope,
     StoryTropeOrigin,
@@ -66,6 +67,10 @@ class StoryVersionConflictError(StoryServiceError):
 
 class StoryMutationValidationError(StoryServiceError):
     """Raised when a story mutation request is invalid."""
+
+
+class StoryCompletenessPermissionError(StoryServiceError):
+    """Raised when a user cannot set the requested story completeness."""
 
 
 class ActiveDatasetNotFoundError(StoryServiceError):
@@ -280,6 +285,7 @@ def update_story(
     *,
     expected_story_version: int,
     fields: Mapping[str, object] | None = None,
+    completeness: StoryCompleteness | None = None,
     actor_user_id: str | None = None,
     actor_role: UserRole | None = None,
 ) -> tuple[Story, Dataset, object]:
@@ -287,22 +293,33 @@ def update_story(
     _assert_story_version(story, expected_story_version)
 
     field_updates = _normalize_story_field_updates(fields)
-    if not field_updates:
-        raise StoryMutationValidationError("Provide at least one editable story field to update.")
+    if not field_updates and completeness is None:
+        raise StoryMutationValidationError("Provide at least one editable story field or completeness update.")
 
     story_fields = _build_story_fields(story)
-    previous_field_values = {column: story_fields.get(column, "") for column in field_updates}
-    story_fields.update(field_updates)
-    story.fields_json = story_fields
-    sync_story_derived_fields(story)
+    previous_field_values: dict[str, str] = {}
+    if field_updates:
+        previous_field_values = {column: story_fields.get(column, "") for column in field_updates}
+        story_fields.update(field_updates)
+        story.fields_json = story_fields
+        sync_story_derived_fields(story)
+
+    previous_completeness = story.completeness
+    if completeness is not None:
+        _assert_story_completeness_update_allowed(story, completeness, actor_role)
+        story.completeness = completeness
+
     _increment_versions(story, active_dataset)
-    job = _queue_story_rebuild(
-        session,
-        dataset_id=active_dataset.id,
-        story_id=story.id,
-        reason="story_updated",
-    )
-    if actor_role == UserRole.CONTRIBUTOR and actor_user_id:
+    job = None
+    if field_updates:
+        job = _queue_story_rebuild(
+            session,
+            dataset_id=active_dataset.id,
+            story_id=story.id,
+            reason="story_updated",
+        )
+
+    if actor_role == UserRole.CONTRIBUTOR and actor_user_id and field_updates:
         for column, previous_value in previous_field_values.items():
             queue_story_field_review_item(
                 session,
@@ -324,7 +341,9 @@ def update_story(
         payload={
             "story_version": story.version,
             "dataset_version": active_dataset.version,
-            "updated_fields": sorted(_normalize_story_field_updates(fields).keys()),
+            "updated_fields": sorted(field_updates.keys()),
+            "previous_completeness": previous_completeness.value,
+            "current_completeness": story.completeness.value,
         },
     )
     session.commit()
@@ -1055,6 +1074,26 @@ def _increment_versions(story: Story, dataset: Dataset) -> None:
     dataset.version += 1
 
 
+def _assert_story_completeness_update_allowed(
+    story: Story,
+    completeness: StoryCompleteness,
+    actor_role: UserRole | None,
+) -> None:
+    if actor_role == UserRole.ADMIN:
+        return
+
+    contributor_values = {
+        StoryCompleteness.INCOMPLETE,
+        StoryCompleteness.PENDING_REVIEW,
+    }
+    if actor_role == UserRole.CONTRIBUTOR and story.completeness in contributor_values and completeness in contributor_values:
+        return
+
+    raise StoryCompletenessPermissionError(
+        "Contributors can only switch story completeness between incomplete and pending review."
+    )
+
+
 def _next_trope_position(story: Story) -> int:
     positions = [link.position for link in story.trope_links if link.position is not None]
     return (max(positions) + 1) if positions else 0
@@ -1152,6 +1191,7 @@ def _serialize_story_summary(story: Story) -> dict:
         "dataset_id": story.dataset_id,
         "source_row_number": story.source_row_number,
         "version": story.version,
+        "completeness": story.completeness.value,
         "title": fields.get("Story title (Eng)", ""),
         "territory": fields.get("territory", ""),
         "summary": fields.get("1-sentence summary", ""),
@@ -1167,6 +1207,7 @@ def _serialize_story_detail(story: Story) -> dict:
         "dataset_id": story.dataset_id,
         "source_row_number": story.source_row_number,
         "version": story.version,
+        "completeness": story.completeness.value,
         "created_at": story.created_at.isoformat(),
         "updated_at": story.updated_at.isoformat(),
         "fields": _build_story_fields(story),
