@@ -452,6 +452,14 @@ export function getKeywordDetail(keywordId: string): Promise<KeywordDetail> {
 export function buildExplorationNetwork(payload: {
   selected_trope_id?: string | null;
   query?: string | null;
+  story_filters?: Array<{ field: string; selected_values: string[] }>;
+  story_filter_sets?: Array<{
+    id: string;
+    label: string;
+    color: string;
+    filters: Array<{ field: string; selected_values: string[] }>;
+    selected_tropes?: Array<{ id: string; text: string }>;
+  }>;
   min_similarity?: number;
   related_limit?: number;
   candidate_limit?: number;

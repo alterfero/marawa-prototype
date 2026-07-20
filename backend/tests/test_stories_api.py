@@ -93,6 +93,10 @@ def test_stories_api_lists_story_detail_and_tropes(client: TestClient) -> None:
     assert payload["items"][0]["completeness"] == "incomplete"
     assert payload["items"][0]["trope_count"] == 2
     assert payload["items"][0]["keyword_count"] == 2
+    assert payload["items"][0]["fields"]["Story title (Eng)"] == "Story One"
+    assert payload["items"][0]["fields"]["territory"] == "Tahiti"
+    assert payload["items"][0]["fields"][TROPE_FIELD] == "§§ first trope\n§§ second trope"
+    assert payload["items"][0]["fields"][KEYWORD_FIELD] == "wolf ; moon"
 
     story_id = payload["items"][0]["id"]
 

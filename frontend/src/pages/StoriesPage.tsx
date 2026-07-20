@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   addStoryKeyword,
@@ -23,6 +23,15 @@ import {
   StoryFieldInput,
   StoryLocationPickerModal,
 } from "../components/StoryFieldWidgets";
+import {
+  createEmptyStoryFieldFilter,
+  normalizeStoryFieldFilters,
+  serializeStoryFieldFilters,
+  storyFieldFiltersAreComplete,
+  storyMatchesFieldFilters,
+  StoryFieldFilterBuilder,
+  type StoryFieldFilter,
+} from "../components/StoryFieldFilters";
 import { TermCard } from "../components/TermCard";
 import { TropeCard } from "../components/TropeCard";
 import { roleAtLeast, useAuth } from "../auth";
@@ -116,9 +125,11 @@ function storyFieldsChanged(current: Record<string, string>, baseline: Record<st
   return false;
 }
 
+
 export function StoriesPage({ canEdit }: { canEdit: boolean }) {
   const { user } = useAuth();
   const hashSearch = useHashSearch();
+  const nextFilterIdRef = useRef(1);
   const [stories, setStories] = useState<StorySummary[]>([]);
   const [selectedStoryId, setSelectedStoryId] = useState<string | null>(null);
   const [detail, setDetail] = useState<StoryDetail | null>(null);
@@ -126,6 +137,8 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
   const [locationDraft, setLocationDraft] = useState<LocationDraft | null>(null);
   const [showFieldEditor, setShowFieldEditor] = useState(false);
   const [storyQuery, setStoryQuery] = useState("");
+  const [draftFilters, setDraftFilters] = useState<StoryFieldFilter[]>([]);
+  const [appliedFilters, setAppliedFilters] = useState<StoryFieldFilter[]>([]);
   const [tropeQuery, setTropeQuery] = useState("");
   const [tropeResults, setTropeResults] = useState<TropeSearchItem[]>([]);
   const [tropeSearchStatus, setTropeSearchStatus] = useState<"idle" | "loading" | "ready">("idle");
@@ -146,13 +159,16 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
   const [notice, setNotice] = useState<PageNotice | null>(null);
   const selectedStoryParam = new URLSearchParams(hashSearch).get("selected_story_id");
 
-  const filteredStories = stories.filter((story) => storyMatchesQuery(story, storyQuery));
+  const filteredStories = stories.filter(
+    (story) => storyMatchesQuery(story, storyQuery) && storyMatchesFieldFilters(story, appliedFilters),
+  );
   const assignedTropeIds = new Set(detail?.tropes.map((trope) => trope.id) ?? []);
   const assignedKeywordIds = new Set(detail?.keywords.map((keyword) => keyword.id) ?? []);
   const editingTrope = detail?.tropes.find((trope) => trope.id === editingTropeId) ?? null;
   const editingKeyword = detail?.keywords.find((keyword) => keyword.id === editingKeywordId) ?? null;
   const interactionDisabled = busy || storiesLoading || storyLoading;
   const fieldsDirty = detail ? storyFieldsChanged(fieldDraft, detail.fields) : false;
+  const draftFiltersAreComplete = storyFieldFiltersAreComplete(draftFilters);
 
   function resetTropeEditor() {
     setEditingTropeId(null);
@@ -173,6 +189,60 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
       ...current,
       [field]: value,
     }));
+  }
+
+  function addDraftFilter() {
+    const nextId = nextFilterIdRef.current;
+    nextFilterIdRef.current += 1;
+    setDraftFilters((current) => [...current, createEmptyStoryFieldFilter(nextId)]);
+  }
+
+  function updateDraftFilterField(filterId: number, field: string) {
+    setDraftFilters((current) =>
+      current.map((filter) =>
+        filter.id === filterId
+          ? {
+              ...filter,
+              field,
+              selectedValues: [],
+            }
+          : filter,
+      ),
+    );
+  }
+
+  function updateDraftFilterValues(filterId: number, selectedValues: string[]) {
+    setDraftFilters((current) =>
+      current.map((filter) =>
+        filter.id === filterId
+          ? {
+              ...filter,
+              selectedValues,
+            }
+          : filter,
+      ),
+    );
+  }
+
+  function removeDraftFilter(filterId: number) {
+    setDraftFilters((current) => current.filter((filter) => filter.id !== filterId));
+  }
+
+  function applyDraftFilters() {
+    if (!draftFiltersAreComplete) {
+      return;
+    }
+    setAppliedFilters(
+      draftFilters.map((filter) => ({
+        ...filter,
+        selectedValues: [...filter.selectedValues],
+      })),
+    );
+  }
+
+  function clearAllFilters() {
+    setDraftFilters([]);
+    setAppliedFilters([]);
   }
 
   function openLocationPicker() {
@@ -263,6 +333,13 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
       void refresh(selectedStoryParam);
     }
   }, [selectedStoryParam, stories, storiesLoading]);
+
+  useEffect(() => {
+    const normalizedFilters = normalizeStoryFieldFilters(draftFilters, stories);
+    if (serializeStoryFieldFilters(normalizedFilters) !== serializeStoryFieldFilters(draftFilters)) {
+      setDraftFilters(normalizedFilters);
+    }
+  }, [draftFilters, stories]);
 
   useEffect(() => {
     if (!selectedStoryId) {
@@ -801,9 +878,21 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
               value={storyQuery}
             />
           </label>
+          <StoryFieldFilterBuilder
+            appliedFilters={appliedFilters}
+            draftFilters={draftFilters}
+            loading={storiesLoading}
+            onAddFilter={addDraftFilter}
+            onApplyFilters={applyDraftFilters}
+            onClearFilters={clearAllFilters}
+            onRemoveFilter={removeDraftFilter}
+            onUpdateFilterField={updateDraftFilterField}
+            onUpdateFilterValues={updateDraftFilterValues}
+            stories={stories}
+          />
           <div className="list story-browser-list">
             {storiesLoading ? <p className="muted">Loading stories...</p> : null}
-            {!storiesLoading && filteredStories.length === 0 ? <p className="muted">No stories match the current search.</p> : null}
+            {!storiesLoading && filteredStories.length === 0 ? <p className="muted">No stories match the current search and filters.</p> : null}
             {filteredStories.map((story) => (
               <button
                 className={`list-row story-browser-row ${story.id === selectedStoryId ? "list-row-active" : ""}`}

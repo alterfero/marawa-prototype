@@ -324,6 +324,125 @@ p {
   align-content: start;
 }
 
+.story-filter-builder {
+  gap: 0.85rem;
+}
+
+.story-filter-status-row {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.story-filter-list {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.story-filter-row {
+  display: grid;
+  gap: 0.85rem;
+  padding: 0.9rem;
+  border-radius: 0.95rem;
+  border: 1px solid rgba(19, 52, 59, 0.09);
+  background: rgba(255, 255, 255, 0.74);
+}
+
+.story-filter-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.story-filter-value-panel {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.story-filter-value-summary {
+  font-size: 0.82rem;
+  color: #48656c;
+}
+
+.story-filter-value-list {
+  display: grid;
+  gap: 0.55rem;
+  max-height: 13rem;
+  overflow-y: auto;
+  padding: 0.15rem;
+}
+
+.story-filter-value-option {
+  display: flex;
+  gap: 0.65rem;
+  align-items: flex-start;
+  padding: 0.7rem 0.8rem;
+  border-radius: 0.85rem;
+  border: 1px solid rgba(19, 52, 59, 0.11);
+  background: #fffdf9;
+  cursor: pointer;
+}
+
+.story-filter-value-option-selected {
+  border-color: rgba(26, 103, 109, 0.42);
+  background: rgba(226, 241, 239, 0.95);
+}
+
+.story-filter-value-checkbox {
+  margin-top: 0.1rem;
+  accent-color: #1f7177;
+  flex: 0 0 auto;
+}
+
+.exploration-filter-set-panel,
+.exploration-filter-set-summary {
+  gap: 1rem;
+}
+
+.exploration-trope-filter-builder {
+  padding-bottom: 0.9rem;
+  border-bottom: 1px solid rgba(19, 52, 59, 0.09);
+}
+
+.exploration-filter-set-heading {
+  display: inline-flex;
+  gap: 0.65rem;
+  align-items: center;
+}
+
+.exploration-filter-set-heading h3 {
+  margin: 0;
+}
+
+.exploration-filter-set-swatch {
+  width: 0.95rem;
+  height: 0.95rem;
+  border-radius: 999px;
+  border: 1px solid rgba(19, 52, 59, 0.18);
+  flex-shrink: 0;
+}
+
+.exploration-filter-summary-pill {
+  border: none;
+}
+
+.exploration-selected-trope-chip {
+  cursor: pointer;
+  background: rgba(226, 241, 239, 0.95);
+  color: #11545b;
+}
+
+.exploration-story-title-list {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: 0.35rem;
+  color: #48656c;
+}
+
+.exploration-trope-filter-option-text {
+  display: grid;
+  gap: 0.2rem;
+}
+
 .story-browser-row-top,
 .story-completeness-header,
 .story-completeness-switch {
@@ -812,6 +931,16 @@ p {
   .story-browser-panel {
     position: sticky;
     top: 2rem;
+    max-height: calc(100vh - 4rem);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+  }
+
+  .story-browser-list {
+    max-height: none;
+    overflow-y: visible;
+    padding-right: 0;
   }
 }
 
@@ -859,5 +988,9 @@ p {
   .input-with-action {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .story-filter-actions {
+    justify-content: stretch;
   }
 }

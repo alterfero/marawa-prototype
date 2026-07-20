@@ -142,6 +142,16 @@ Use the production maintenance window to:
 - Authenticated `contributor` users can create and edit stories and create new canonical terms.
 - Authenticated `admin` users can manage users, import and export CSV, run dataset actions, curate terms, and resolve review work.
 
+## Exploration UX
+
+- Non-admin users use the public single-trope exploration workflow: search for one trope, select it, and inspect original plus related stories on the map.
+- Admin users use exploration filter sets instead of the public single-trope card.
+- Each admin filter set can combine:
+  - a sentence-based vectorized trope search;
+  - one or more selected tropes, including a bulk `Select all tropes` action on the current suggestion list;
+  - optional hard story-field filters.
+- When a filter set already has selected tropes, the hard-filter controls only offer fields and values that keep the set non-empty.
+
 ## Known Product Constraints
 
 - Single active dataset: only one dataset is active in the product at a time.

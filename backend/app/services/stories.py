@@ -1195,6 +1195,7 @@ def _serialize_story_summary(story: Story) -> dict:
         "title": fields.get("Story title (Eng)", ""),
         "territory": fields.get("territory", ""),
         "summary": fields.get("1-sentence summary", ""),
+        "fields": fields,
         "has_location": parse_space_coord(fields.get("space coord", "")) is not None,
         "trope_count": len(_ordered_trope_links(story)),
         "keyword_count": len(_ordered_keyword_links(story)),

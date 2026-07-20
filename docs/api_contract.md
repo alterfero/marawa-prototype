@@ -579,6 +579,43 @@ Purpose:
 
 Contract notes:
 - this endpoint is part of the minimum public API surface available to anonymous users.
+- non-admin clients use it for the public single-trope exploration workflow.
+- authenticated admins may also use it for filter-set exploration comparisons.
+- a request may provide:
+  - `query` to retrieve candidate tropes for a phrase;
+  - `selected_trope_id` to build the classic selected-trope map;
+  - `story_filter_sets` to build a multi-set comparison;
+  - `story_filters` for a single hard-filtered story map.
+- each `story_filter_set` may include:
+  - `filters`: hard story-field filters;
+  - `selected_tropes`: trope IDs and texts chosen from vectorized trope search.
+- within one filter set, story selection is the intersection of:
+  - any selected trope filter, treated as an OR across the chosen tropes;
+  - all hard story-field filters in that set.
+- if `selected_trope_id` and `story_filter_sets` are both present, the selected trope defines the related-story network and each filter set constrains the original and related stories to its own subset.
+- response items in `filter_set_results` echo both the applied hard filters and the applied `selected_tropes`.
+
+Example filter-set request:
+
+```json
+{
+  "story_filter_sets": [
+    {
+      "id": "filter-set-1",
+      "label": "Set 1",
+      "color": "#1d4ed8",
+      "selected_tropes": [
+        { "id": "trope_001", "text": "woman becomes tree" },
+        { "id": "trope_002", "text": "person transforms into plant" }
+      ],
+      "filters": [
+        { "field": "territory", "selected_values": ["Tahiti"] }
+      ]
+    }
+  ],
+  "min_similarity": 0.62
+}
+```
 
 ## Visualizations
 

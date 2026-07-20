@@ -1,7 +1,7 @@
 import L from "leaflet";
 import { KeyboardEvent, useEffect, useRef } from "react";
 
-import { LONG_TEXT_FIELDS } from "../constants/csv";
+import { getStoryFieldLabel, LONG_TEXT_FIELDS } from "../constants/csv";
 
 export interface LocationDraft {
   place: string;
@@ -230,12 +230,13 @@ export function StoryFieldInput({
   onOpenLocationPicker: () => void;
 }) {
   const inputId = fieldInputId(inputIdPrefix, field);
+  const fieldLabel = getStoryFieldLabel(field);
 
   if (field === DATE_OF_RECORDING_FIELD) {
     if (value && !isIsoCalendarDate(value)) {
       return (
         <div className="field">
-          <label htmlFor={inputId}>{field}</label>
+          <label htmlFor={inputId}>{fieldLabel}</label>
           <div className="input-with-action">
             <input className="input" disabled={disabled} id={inputId} onChange={(event) => onChange(event.target.value)} value={value} />
             <button className="button button-ghost" disabled={disabled} onClick={() => onChange("")} type="button">
@@ -249,7 +250,7 @@ export function StoryFieldInput({
 
     return (
       <div className="field">
-        <label htmlFor={inputId}>{field}</label>
+        <label htmlFor={inputId}>{fieldLabel}</label>
         <div className="input-with-action">
           <input
             id={inputId}
@@ -276,7 +277,7 @@ export function StoryFieldInput({
   if (field === PLACE_OF_RECORDING_FIELD) {
     return (
       <div className="field">
-        <label htmlFor={inputId}>{field}</label>
+        <label htmlFor={inputId}>{fieldLabel}</label>
         <div className="input-with-action">
           <input className="input" disabled={disabled} id={inputId} onChange={(event) => onChange(event.target.value)} value={value} />
           <button className="button button-ghost" disabled={disabled} onClick={onOpenLocationPicker} type="button">
@@ -291,7 +292,7 @@ export function StoryFieldInput({
   if (field === SPACE_COORD_FIELD) {
     return (
       <div className="field">
-        <label htmlFor={inputId}>{field}</label>
+        <label htmlFor={inputId}>{fieldLabel}</label>
         <div className="input-with-action">
           <input
             id={inputId}
@@ -321,7 +322,7 @@ export function StoryFieldInput({
   const isLongText = LONG_TEXT_FIELDS.has(field);
   return (
     <label className={`field ${isLongText ? "field-span-full" : ""}`}>
-      <span>{field}</span>
+      <span>{fieldLabel}</span>
       {isLongText ? (
         <textarea className="input input-textarea" disabled={disabled} onChange={(event) => onChange(event.target.value)} rows={field === "1-sentence summary" ? 3 : 5} value={value} />
       ) : (
@@ -363,7 +364,7 @@ export function StoryLocationPickerModal({
         <div className="location-picker-layout">
           <div className="stack">
             <label className="field">
-              <span>{PLACE_OF_RECORDING_FIELD}</span>
+              <span>{getStoryFieldLabel(PLACE_OF_RECORDING_FIELD)}</span>
               <input
                 className="input"
                 disabled={busy}
@@ -378,7 +379,7 @@ export function StoryLocationPickerModal({
             </label>
 
             <label className="field">
-              <span>{SPACE_COORD_FIELD}</span>
+              <span>{getStoryFieldLabel(SPACE_COORD_FIELD)}</span>
               <input className="input" placeholder="Click the map to choose coordinates" readOnly value={locationDraft.coordinates ? formatCoordinatePair(locationDraft.coordinates) : ""} />
             </label>
 

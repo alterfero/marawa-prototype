@@ -48,6 +48,7 @@ class StorySummaryResponse(BaseModel):
     title: str
     territory: str
     summary: str
+    fields: dict[str, str]
     has_location: bool
     trope_count: int
     keyword_count: int

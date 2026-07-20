@@ -73,6 +73,13 @@ export function buildBlankStoryFields(): Record<string, string> {
   return Object.fromEntries(ALL_METADATA_FIELDS.map((field) => [field, ""]));
 }
 
+export function getStoryFieldLabel(field: string): string {
+  if (field === "Thème") {
+    return "Theme";
+  }
+  return field;
+}
+
 export function normalizeDraftText(value: string): string {
   return value.trim().replace(/\s+/g, " ").toLowerCase();
 }

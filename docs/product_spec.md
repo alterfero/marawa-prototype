@@ -42,6 +42,7 @@ Stories enter the system through a legacy-compatible CSV import, are edited and 
 
 - May access the public exploration page and the minimum supporting API surface needed to render it.
 - May not access dataset browsing, story browsing, curation, jobs, or authenticated search endpoints.
+- Uses the single-trope public exploration workflow only.
 
 ### Guest
 
@@ -68,6 +69,7 @@ Stories enter the system through a legacy-compatible CSV import, are edited and 
 - May merge and delete canonical tropes.
 - May curate canonical keywords.
 - May resolve review items.
+- Uses the exploration filter-set workflow instead of the public single-trope exploration card.
 
 ## Review Model
 
@@ -94,6 +96,11 @@ Stories enter the system through a legacy-compatible CSV import, are edited and 
 - Review contributor-created content through an admin queue.
 - Search semantically over tropes and keywords using `sentence-transformers/paraphrase-multilingual-mpnet-base-v2`.
 - Explore stories on a map by selecting an indexed trope and looking at related stories.
+- Let admins build exploration filter sets that combine:
+  - vectorized trope search over trope terms;
+  - multi-select trope inclusion inside each set;
+  - optional hard filters over story fields;
+  - per-set map comparison with distinct colors.
 - Export the active dataset as a legacy-compatible CSV with exact legacy column names and order.
 - Run durable background rebuild jobs for full artifact refreshes.
 - Detect edit conflicts between concurrent users with optimistic concurrency checks.
@@ -115,8 +122,18 @@ Stories enter the system through a legacy-compatible CSV import, are edited and 
 
 1. A public visitor opens the exploration page.
 2. The system allows access without authentication.
-3. The visitor searches for or selects a trope through the public exploration workflow.
+3. The visitor searches for or selects a trope through the public single-trope exploration workflow.
 4. The product renders the exploration map and related stories.
+
+### 1a. Admin Exploration With Filter Sets
+
+1. An admin opens the exploration page after authentication.
+2. The system shows the filter-set workflow rather than the public single-trope exploration card.
+3. Within each filter set, the admin enters a sentence to search the vectorized trope index.
+4. The system returns candidate tropes that the admin may select individually or all at once.
+5. The admin optionally adds hard story-field filters to the same set.
+6. If trope filters are selected, the hard-filter controls must only offer fields and values that keep the set non-empty.
+7. The product maps each applied filter set in its own color and summarizes the matching stories.
 
 ### 2. Login
 
@@ -213,6 +230,9 @@ Product intent:
 - Tropes and keywords must be stored and surfaced as flat strings.
 - The product must treat `motif` and `pattern` as legacy aliases of `trope`.
 - Similarity search must be scoped to tropes and keywords only.
+- The public exploration workflow must remain a single-trope workflow for non-admin users.
+- The admin exploration workflow must use filter sets where each set can include selected tropes plus hard story-field filters.
+- If a filter set has selected tropes, the hard-filter controls must only expose fields and values that would keep the set result count above zero.
 - Contributor-created canonical tropes and keywords must enter a `pending_review` state.
 - Trope assignments may be hard-deleted.
 - Canonical tropes may be hard-deleted only when safe or when an explicit curation action removes their assignments.
@@ -287,6 +307,7 @@ Product intent:
 - Admins can manage users, import and export CSV, curate canonical terms, and resolve review items.
 - Researchers can search for similar tropes and keywords using the configured embedding model.
 - Researchers can explore related stories geographically from a selected trope.
+- Admins can build and compare trope-aware exploration filter sets with optional hard filters.
 - The system exports CSV with the exact legacy column names and order.
 - Concurrent edits do not silently overwrite one another.
 - Important auth, admin, review, and write actions are durably auditable.

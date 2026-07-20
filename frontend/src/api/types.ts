@@ -90,6 +90,7 @@ export interface StorySummary {
   title: string;
   territory: string;
   summary: string;
+  fields: Record<string, string>;
   has_location: boolean;
   trope_count: number;
   keyword_count: number;
@@ -278,6 +279,8 @@ export interface ExplorationMarker {
   hover_title: string;
   abstract: string;
   has_location: boolean;
+  filter_set_id?: string | null;
+  filter_set_label?: string | null;
 }
 
 export interface ExplorationConnection {
@@ -287,12 +290,40 @@ export interface ExplorationConnection {
   target_coordinates: number[];
   similarity: number;
   color: string;
+  filter_set_id?: string | null;
+  filter_set_label?: string | null;
 }
 
 export interface ExplorationSelectedTrope {
   id: string;
   text: string;
   story_count: number;
+}
+
+export interface ExplorationAppliedFilter {
+  field: string;
+  selected_values: string[];
+}
+
+export interface ExplorationAppliedTropeFilter {
+  id: string;
+  text: string;
+  story_count: number;
+}
+
+export interface ExplorationFilterSetResult {
+  filter_set_id: string;
+  filter_set_label: string;
+  filter_set_color: string;
+  filters: ExplorationAppliedFilter[];
+  selected_tropes: ExplorationAppliedTropeFilter[];
+  related_tropes: ExplorationCandidate[];
+  original_markers: ExplorationMarker[];
+  related_markers: ExplorationMarker[];
+  connections: ExplorationConnection[];
+  bounds: number[][] | null;
+  missing_original_coords: number;
+  missing_related_coords: number;
 }
 
 export interface ExplorationNetworkResponse {
@@ -305,6 +336,7 @@ export interface ExplorationNetworkResponse {
   bounds: number[][] | null;
   missing_original_coords: number;
   missing_related_coords: number;
+  filter_set_results: ExplorationFilterSetResult[];
 }
 
 export interface SearchExplanation {

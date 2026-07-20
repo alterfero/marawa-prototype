@@ -1,23 +1,58 @@
 import L from "leaflet";
 import { Component, type ReactNode, FormEvent, useEffect, useRef, useState } from "react";
 
-import { buildExplorationNetwork, getErrorMessage } from "../api/client";
+import { buildExplorationNetwork, getErrorMessage, getStories } from "../api/client";
+import { ExplorationFilterSetTropePicker } from "../components/ExplorationFilterSetTropePicker";
+import {
+  createEmptyStoryFieldFilter,
+  filterStoriesBySelectedTropes,
+  normalizeStoryFieldFilters,
+  serializeStoryFieldFilters,
+  storyFieldFiltersAreComplete,
+  StoryFieldFilterBuilder,
+  type StoryFieldFilter,
+} from "../components/StoryFieldFilters";
+import { roleAtLeast, useAuth } from "../auth";
 import { TropeCard } from "../components/TropeCard";
 import type {
+  ExplorationAppliedFilter,
+  ExplorationAppliedTropeFilter,
   ExplorationCandidate,
   ExplorationConnection,
+  ExplorationFilterSetResult,
   ExplorationMatchedTrope,
   ExplorationMarker,
   ExplorationNetworkResponse,
   ExplorationStoryTrope,
+  StorySummary,
 } from "../api/types";
+import { getStoryFieldLabel } from "../constants/csv";
 import { routeHref, useHashSearch } from "../router";
 
 const DEFAULT_CENTER: [number, number] = [0, 0];
 const DEFAULT_ZOOM = 2;
 const SINGLE_POINT_ZOOM = 6;
+const FILTER_SET_PALETTE = ["#1d4ed8", "#d97706", "#15803d", "#b91c1c", "#7c3aed", "#0f766e"];
 
 type CoordinatePair = [number, number];
+type ExplorationFilterSetState = {
+  id: number;
+  color: string;
+  draftFilters: StoryFieldFilter[];
+  appliedFilters: StoryFieldFilter[];
+  tropeQuery: string;
+  draftSelectedTropes: ExplorationAppliedTropeFilter[];
+  appliedSelectedTropes: ExplorationAppliedTropeFilter[];
+};
+type FilterSetLegend = {
+  id: string;
+  label: string;
+  color: string;
+};
+type VisibleExplorationMarker = ExplorationMarker & {
+  coordinates: CoordinatePair;
+  has_location: true;
+};
 type RenderableConnection = ExplorationConnection & {
   source_coordinates: CoordinatePair;
   target_coordinates: CoordinatePair;
@@ -128,12 +163,16 @@ function markerPopupHtml(marker: ExplorationMarker): string {
         )
         .join("")
     : `<p class="muted">No matched tropes in this network response.</p>`;
+  const filterSetLabel = marker.filter_set_label
+    ? `<p class="muted">Filter set: ${escapeHtml(marker.filter_set_label)}</p>`
+    : "";
 
   return `
     <div class="map-popup-content popup-stack">
       <div>
         <strong>${escapeHtml(marker.title)}</strong>
       </div>
+      ${filterSetLabel}
       <p class="muted">${escapeHtml(formatCoordinateLabel(marker))}</p>
       <p>${escapeHtml(marker.abstract || "No abstract available.")}</p>
       <div class="stack">
@@ -156,6 +195,22 @@ function normalizeExplorationMarker(marker: ExplorationMarker): ExplorationMarke
   };
 }
 
+function normalizeExplorationFilterSetResult(result: ExplorationFilterSetResult): ExplorationFilterSetResult {
+  return {
+    ...result,
+    filters: Array.isArray(result.filters) ? result.filters : [],
+    selected_tropes: Array.isArray(result.selected_tropes) ? result.selected_tropes : [],
+    related_tropes: Array.isArray(result.related_tropes) ? result.related_tropes : [],
+    original_markers: Array.isArray(result.original_markers)
+      ? result.original_markers.map(normalizeExplorationMarker)
+      : [],
+    related_markers: Array.isArray(result.related_markers)
+      ? result.related_markers.map(normalizeExplorationMarker)
+      : [],
+    connections: Array.isArray(result.connections) ? result.connections : [],
+  };
+}
+
 function normalizeExplorationNetworkResponse(response: ExplorationNetworkResponse): ExplorationNetworkResponse {
   return {
     ...response,
@@ -170,11 +225,14 @@ function normalizeExplorationNetworkResponse(response: ExplorationNetworkRespons
       ? response.related_markers.map(normalizeExplorationMarker)
       : [],
     connections: Array.isArray(response.connections) ? response.connections : [],
+    filter_set_results: Array.isArray(response.filter_set_results)
+      ? response.filter_set_results.map(normalizeExplorationFilterSetResult)
+      : [],
   };
 }
 
 function buildExplorationMapDataSignature(
-  markers: Array<ExplorationMarker & { coordinates: CoordinatePair; has_location: true }>,
+  markers: VisibleExplorationMarker[],
   connections: RenderableConnection[],
   bounds: [CoordinatePair, CoordinatePair] | null,
 ): string {
@@ -298,25 +356,119 @@ function renderMatchedTropeCards(tropes: ExplorationMatchedTrope[], emptyLabel: 
   );
 }
 
+function storyFiltersPayload(filters: StoryFieldFilter[]) {
+  return filters.map((filter) => ({
+    field: filter.field,
+    selected_values: filter.selectedValues,
+  }));
+}
+
+function serializeSelectedTropeFilters(tropes: ExplorationAppliedTropeFilter[]): string {
+  return JSON.stringify(
+    tropes
+      .map((trope) => trope.id)
+      .sort((left, right) => left.localeCompare(right)),
+  );
+}
+
+function createExplorationFilterSet(nextId: number): ExplorationFilterSetState {
+  return {
+    id: nextId,
+    color: FILTER_SET_PALETTE[(nextId - 1) % FILTER_SET_PALETTE.length],
+    draftFilters: [],
+    appliedFilters: [],
+    tropeQuery: "",
+    draftSelectedTropes: [],
+    appliedSelectedTropes: [],
+  };
+}
+
+function serializeExplorationFilterSets(filterSets: ExplorationFilterSetState[]): string {
+  return JSON.stringify(
+    filterSets.map((filterSet) => ({
+      id: filterSet.id,
+      color: filterSet.color,
+      draftFilters: JSON.parse(serializeStoryFieldFilters(filterSet.draftFilters)),
+      appliedFilters: JSON.parse(serializeStoryFieldFilters(filterSet.appliedFilters)),
+      draftSelectedTropes: JSON.parse(serializeSelectedTropeFilters(filterSet.draftSelectedTropes)),
+      appliedSelectedTropes: JSON.parse(serializeSelectedTropeFilters(filterSet.appliedSelectedTropes)),
+    })),
+  );
+}
+
+function filterSetHasPendingChanges(filterSet: ExplorationFilterSetState): boolean {
+  return (
+    serializeStoryFieldFilters(filterSet.draftFilters) !== serializeStoryFieldFilters(filterSet.appliedFilters) ||
+    serializeSelectedTropeFilters(filterSet.draftSelectedTropes) !==
+      serializeSelectedTropeFilters(filterSet.appliedSelectedTropes)
+  );
+}
+
+function filterSetHasAppliedCriteria(filterSet: ExplorationFilterSetState): boolean {
+  return filterSet.appliedFilters.length > 0 || filterSet.appliedSelectedTropes.length > 0;
+}
+
+function buildFilterSetLabel(index: number): string {
+  return `Set ${index + 1}`;
+}
+
+function buildStoryFilterSetsPayload(filterSets: ExplorationFilterSetState[]) {
+  return filterSets
+    .filter(filterSetHasAppliedCriteria)
+    .map((filterSet, index) => ({
+      id: `filter-set-${filterSet.id}`,
+      label: buildFilterSetLabel(index),
+      color: filterSet.color,
+      filters: storyFiltersPayload(filterSet.appliedFilters),
+      selected_tropes: filterSet.appliedSelectedTropes.map((trope) => ({
+        id: trope.id,
+        text: trope.text,
+      })),
+    }));
+}
+
+function summarizeMarkerTitles(markers: ExplorationMarker[]): string {
+  if (!markers.length) {
+    return "No stories";
+  }
+  const titles = markers.slice(0, 3).map((marker) => marker.title);
+  if (markers.length <= 3) {
+    return titles.join(" · ");
+  }
+  return `${titles.join(" · ")} · +${markers.length - 3} more`;
+}
+
+function renderMarkerTitleList(markers: ExplorationMarker[]) {
+  if (!markers.length) {
+    return <p className="muted">No stories.</p>;
+  }
+
+  return (
+    <ul className="exploration-story-title-list">
+      {markers.map((marker) => (
+        <li key={marker.story_id}>{marker.title}</li>
+      ))}
+    </ul>
+  );
+}
+
+function summarizeAppliedFilter(filter: ExplorationAppliedFilter): string {
+  const fieldLabel = getStoryFieldLabel(filter.field);
+  const valuesLabel = filter.selected_values.join(" or ");
+  return `${fieldLabel}: ${valuesLabel}`;
+}
+
 function ExplorationMap({
   markers,
   connections,
   bounds,
+  filterSetLegends,
 }: {
-  markers: Array<ExplorationMarker & { coordinates: CoordinatePair; has_location: true }>;
+  markers: VisibleExplorationMarker[];
   connections: RenderableConnection[];
   bounds: [CoordinatePair, CoordinatePair] | null;
+  filterSetLegends?: FilterSetLegend[];
 }) {
-  if (!markers.length && !connections.length) {
-    return (
-      <div className="card subdued">
-        <p className="muted">
-          No stories in this network have a usable precise location, so the map cannot be drawn for this trope.
-        </p>
-      </div>
-    );
-  }
-
   const mapElementRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
   const overlayLayerRef = useRef<L.LayerGroup | null>(null);
@@ -403,40 +555,92 @@ function ExplorationMap({
     });
   }, [dataSignature]);
 
+  if (!markers.length && !connections.length) {
+    return (
+      <div className="card subdued">
+        <p className="muted">
+          No stories in this network have a usable precise location, so the map cannot be drawn for this trope.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="map-shell">
       <div className="map-canvas" ref={mapElementRef} />
       <div className="legend-row">
-        <span className="legend-item">
-          <span className="legend-dot legend-dot-original" />
-          Original markers
-        </span>
-        <span className="legend-item">
-          <span className="legend-dot legend-dot-related" />
-          Related markers
-        </span>
-        <span className="legend-item">
-          <span className="legend-line" />
-          Closest connection
-        </span>
+        {filterSetLegends && filterSetLegends.length > 0 ? (
+          <>
+            {filterSetLegends.map((legend) => (
+              <span className="legend-item" key={legend.id}>
+                <span className="legend-dot" style={{ background: legend.color }} />
+                {legend.label}
+              </span>
+            ))}
+            <span className="legend-item">Solid markers are selected stories. Lighter markers and lines are related stories.</span>
+          </>
+        ) : (
+          <>
+            <span className="legend-item">
+              <span className="legend-dot legend-dot-original" />
+              Original markers
+            </span>
+            <span className="legend-item">
+              <span className="legend-dot legend-dot-related" />
+              Related markers
+            </span>
+            <span className="legend-item">
+              <span className="legend-line" />
+              Closest connection
+            </span>
+          </>
+        )}
       </div>
     </div>
   );
 }
 
 export function ExplorationPage() {
+  const { user } = useAuth();
   const hashSearch = useHashSearch();
+  const nextFilterIdRef = useRef(1);
+  const nextSetIdRef = useRef(2);
   const [query, setQuery] = useState("");
   const [selectedTropeId, setSelectedTropeId] = useState<string | null>(null);
+  const [selectedTropePreview, setSelectedTropePreview] = useState<string | null>(null);
+  const [stories, setStories] = useState<StorySummary[]>([]);
+  const [storiesLoading, setStoriesLoading] = useState(false);
+  const [filterSets, setFilterSets] = useState<ExplorationFilterSetState[]>([createExplorationFilterSet(1)]);
   const [network, setNetwork] = useState<ExplorationNetworkResponse | null>(null);
   const [threshold, setThreshold] = useState(0.62);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [resultMode, setResultMode] = useState<"idle" | "candidate_search" | "map">("idle");
   const selectedTropeParam = new URLSearchParams(hashSearch).get("selected_trope_id");
+  const canUseFilterSets = roleAtLeast(user?.role, "admin");
+  const canUseSingleTropeExploration = !canUseFilterSets;
+
+  const hasPendingFilterChanges = filterSets.some(filterSetHasPendingChanges);
+  const appliedFilterSetCount = filterSets.filter(filterSetHasAppliedCriteria).length;
+  const canMapWithCurrentSelection = appliedFilterSetCount > 0;
+  const showNoStoriesForSelectedFilters =
+    resultMode === "map" &&
+    appliedFilterSetCount > 0 &&
+    network !== null &&
+    network.original_markers.length === 0 &&
+    network.related_markers.length === 0;
 
   async function requestNetwork(payload: {
     selected_trope_id?: string | null;
     query?: string | null;
+    story_filters?: Array<{ field: string; selected_values: string[] }>;
+    story_filter_sets?: Array<{
+      id: string;
+      label: string;
+      color: string;
+      filters: Array<{ field: string; selected_values: string[] }>;
+      selected_tropes?: Array<{ id: string; text: string }>;
+    }>;
     min_similarity?: number;
   }) {
     try {
@@ -457,18 +661,83 @@ export function ExplorationPage() {
   }
 
   useEffect(() => {
+    if (canUseFilterSets) {
+      setSelectedTropeId(null);
+      setSelectedTropePreview(null);
+      return;
+    }
     if (!selectedTropeParam) {
       setSelectedTropeId(null);
+      setSelectedTropePreview(null);
       return;
     }
     setSelectedTropeId((current) => (current === selectedTropeParam ? current : selectedTropeParam));
-  }, [selectedTropeParam]);
+  }, [canUseFilterSets, selectedTropeParam]);
+
+  useEffect(() => {
+    if (!canUseFilterSets) {
+      setStories([]);
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        setStoriesLoading(true);
+        const result = await getStories();
+        if (cancelled) {
+          return;
+        }
+        setStories(result.items);
+      } catch (caughtError) {
+        if (cancelled) {
+          return;
+        }
+        setError(getErrorMessage(caughtError));
+      } finally {
+        if (!cancelled) {
+          setStoriesLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [canUseFilterSets]);
+
+  useEffect(() => {
+    if (!canUseFilterSets) {
+      return;
+    }
+
+    const normalizedFilterSets = filterSets.map((filterSet) => ({
+      ...filterSet,
+      draftFilters: normalizeStoryFieldFilters(
+        filterSet.draftFilters,
+        filterStoriesBySelectedTropes(stories, filterSet.draftSelectedTropes),
+      ),
+    }));
+    if (serializeExplorationFilterSets(normalizedFilterSets) !== serializeExplorationFilterSets(filterSets)) {
+      setFilterSets(normalizedFilterSets);
+    }
+  }, [canUseFilterSets, filterSets, stories]);
+
+  useEffect(() => {
+    if (network?.selected_trope) {
+      setSelectedTropePreview(network.selected_trope.text);
+    }
+  }, [network]);
 
   useEffect(() => {
     if (!selectedTropeId) {
       return;
     }
+    if (!canUseSingleTropeExploration) {
+      return;
+    }
 
+    setResultMode("map");
     const timeoutId = window.setTimeout(() => {
       void requestNetwork({
         selected_trope_id: selectedTropeId,
@@ -479,12 +748,14 @@ export function ExplorationPage() {
     return () => {
       window.clearTimeout(timeoutId);
     };
-  }, [selectedTropeId, threshold]);
+  }, [canUseSingleTropeExploration, selectedTropeId, threshold]);
 
   async function handleSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     window.location.hash = routeHref("/exploration");
     setSelectedTropeId(null);
+    setSelectedTropePreview(null);
+    setResultMode("candidate_search");
     await requestNetwork({
       query,
       min_similarity: threshold,
@@ -492,81 +763,378 @@ export function ExplorationPage() {
   }
 
   function handleSelectCandidate(candidate: ExplorationCandidate) {
+    setSelectedTropePreview(candidate.text);
     window.location.hash = routeHref("/exploration", { selected_trope_id: candidate.id });
   }
 
-  const originalWithoutLocation = network?.original_markers.filter((marker) => !markerHasRenderableLocation(marker)) ?? [];
-  const relatedWithoutLocation = network?.related_markers.filter((marker) => !markerHasRenderableLocation(marker)) ?? [];
-  const visibleMarkers = [
-    ...(network?.original_markers.filter(markerHasRenderableLocation) ?? []),
-    ...(network?.related_markers.filter(markerHasRenderableLocation) ?? []),
-  ];
-  const visibleConnections = network?.connections.filter(connectionHasRenderableCoordinates) ?? [];
+  function addFilterSet() {
+    const nextSetId = nextSetIdRef.current;
+    nextSetIdRef.current += 1;
+    setFilterSets((current) => [...current, createExplorationFilterSet(nextSetId)]);
+  }
+
+  function removeFilterSet(filterSetId: number) {
+    setFilterSets((current) => current.filter((filterSet) => filterSet.id !== filterSetId));
+  }
+
+  function updateFilterSetTropeQuery(filterSetId: number, tropeQuery: string) {
+    setFilterSets((current) =>
+      current.map((filterSet) =>
+        filterSet.id === filterSetId
+          ? {
+              ...filterSet,
+              tropeQuery,
+            }
+          : filterSet,
+      ),
+    );
+  }
+
+  function toggleFilterSetSelectedTrope(filterSetId: number, trope: ExplorationAppliedTropeFilter) {
+    setFilterSets((current) =>
+      current.map((filterSet) => {
+        if (filterSet.id !== filterSetId) {
+          return filterSet;
+        }
+        const alreadySelected = filterSet.draftSelectedTropes.some((item) => item.id === trope.id);
+        return {
+          ...filterSet,
+          draftSelectedTropes: alreadySelected
+            ? filterSet.draftSelectedTropes.filter((item) => item.id !== trope.id)
+            : [...filterSet.draftSelectedTropes, trope],
+        };
+      }),
+    );
+  }
+
+  function addDraftFilter(filterSetId: number) {
+    const nextId = nextFilterIdRef.current;
+    nextFilterIdRef.current += 1;
+    setFilterSets((current) =>
+      current.map((filterSet) =>
+        filterSet.id === filterSetId
+          ? {
+              ...filterSet,
+              draftFilters: [...filterSet.draftFilters, createEmptyStoryFieldFilter(nextId)],
+            }
+          : filterSet,
+      ),
+    );
+  }
+
+  function updateDraftFilterField(filterSetId: number, filterId: number, field: string) {
+    setFilterSets((current) =>
+      current.map((filterSet) =>
+        filterSet.id === filterSetId
+          ? {
+              ...filterSet,
+              draftFilters: filterSet.draftFilters.map((filter) =>
+                filter.id === filterId
+                  ? {
+                      ...filter,
+                      field,
+                      selectedValues: [],
+                    }
+                  : filter,
+              ),
+            }
+          : filterSet,
+      ),
+    );
+  }
+
+  function updateDraftFilterValues(filterSetId: number, filterId: number, selectedValues: string[]) {
+    setFilterSets((current) =>
+      current.map((filterSet) =>
+        filterSet.id === filterSetId
+          ? {
+              ...filterSet,
+              draftFilters: filterSet.draftFilters.map((filter) =>
+                filter.id === filterId
+                  ? {
+                      ...filter,
+                      selectedValues,
+                    }
+                  : filter,
+              ),
+            }
+          : filterSet,
+      ),
+    );
+  }
+
+  function removeDraftFilter(filterSetId: number, filterId: number) {
+    setFilterSets((current) =>
+      current.map((filterSet) =>
+        filterSet.id === filterSetId
+          ? {
+              ...filterSet,
+              draftFilters: filterSet.draftFilters.filter((filter) => filter.id !== filterId),
+            }
+          : filterSet,
+      ),
+    );
+  }
+
+  function applyDraftFilters(filterSetId: number) {
+    setFilterSets((current) =>
+      current.map((filterSet) => {
+        if (filterSet.id !== filterSetId || !storyFieldFiltersAreComplete(filterSet.draftFilters)) {
+          return filterSet;
+        }
+        return {
+          ...filterSet,
+          appliedFilters: filterSet.draftFilters.map((filter) => ({
+            ...filter,
+            selectedValues: [...filter.selectedValues],
+          })),
+          appliedSelectedTropes: filterSet.draftSelectedTropes.map((trope) => ({
+            ...trope,
+          })),
+        };
+      }),
+    );
+  }
+
+  function clearFilterSet(filterSetId: number) {
+    setFilterSets((current) =>
+      current.map((filterSet) =>
+        filterSet.id === filterSetId
+          ? {
+              ...filterSet,
+              draftFilters: [],
+              appliedFilters: [],
+              tropeQuery: "",
+              draftSelectedTropes: [],
+              appliedSelectedTropes: [],
+            }
+          : filterSet,
+      ),
+    );
+  }
+
+  async function handleMap() {
+    if (!canMapWithCurrentSelection || hasPendingFilterChanges) {
+      return;
+    }
+
+    setResultMode("map");
+    await requestNetwork({
+      selected_trope_id: selectedTropeId,
+      story_filter_sets: buildStoryFilterSetsPayload(filterSets),
+      min_similarity: threshold,
+    });
+  }
+
+  const filterSetResults = network?.filter_set_results ?? [];
+  const isMultiSetNetwork = filterSetResults.length > 0;
+  const originalWithoutLocation = isMultiSetNetwork
+    ? filterSetResults.flatMap((result) => result.original_markers.filter((marker) => !markerHasRenderableLocation(marker)))
+    : network?.original_markers.filter((marker) => !markerHasRenderableLocation(marker)) ?? [];
+  const relatedWithoutLocation = isMultiSetNetwork
+    ? filterSetResults.flatMap((result) => result.related_markers.filter((marker) => !markerHasRenderableLocation(marker)))
+    : network?.related_markers.filter((marker) => !markerHasRenderableLocation(marker)) ?? [];
+  const visibleMarkers: VisibleExplorationMarker[] = isMultiSetNetwork
+    ? filterSetResults.flatMap((result) => [
+        ...result.original_markers.filter(markerHasRenderableLocation),
+        ...result.related_markers.filter(markerHasRenderableLocation),
+      ])
+    : [
+        ...(network?.original_markers.filter(markerHasRenderableLocation) ?? []),
+        ...(network?.related_markers.filter(markerHasRenderableLocation) ?? []),
+      ];
+  const visibleConnections = isMultiSetNetwork
+    ? filterSetResults.flatMap((result) => result.connections.filter(connectionHasRenderableCoordinates))
+    : network?.connections.filter(connectionHasRenderableCoordinates) ?? [];
   const mapBounds = sanitizeBounds(network?.bounds ?? null) ?? computeBoundsFromMarkers(visibleMarkers);
+  const filterSetLegends = filterSetResults.map((result) => ({
+    id: result.filter_set_id,
+    label: result.filter_set_label,
+    color: result.filter_set_color,
+  }));
+  const shouldShowCandidateCards =
+    resultMode === "candidate_search" &&
+    network !== null &&
+    network.selected_trope === null &&
+    network.selected_trope_candidates.length > 0;
+  const shouldShowMultiSetResults = resultMode === "map" && network !== null && isMultiSetNetwork;
+  const shouldShowNoStoriesForFilterSets =
+    shouldShowMultiSetResults &&
+    filterSetResults.every((result) => result.original_markers.length === 0 && result.related_markers.length === 0);
+  const shouldShowFilterOnlyResults =
+    resultMode === "map" &&
+    network !== null &&
+    !isMultiSetNetwork &&
+    network.selected_trope === null &&
+    network.selected_trope_candidates.length === 0;
 
   return (
     <div className="page-stack">
-      <section className="panel">
-        <div className="panel-header">
-          <div>
-            <h1>Explore the story network around a trope</h1>
+      {canUseSingleTropeExploration ? (
+        <section className="panel">
+          <div className="panel-header">
+            <div>
+              <h1>Explore the story network around a trope</h1>
+            </div>
           </div>
-        </div>
-        <form className="inline-form wrap-row" onSubmit={(event) => void handleSearch(event)}>
-          <input
-            className="input"
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Type a phrase to find candidate tropes"
-            value={query}
-          />
-          <button className="button" disabled={busy || !query.trim()} type="submit">
-            {busy ? "Loading..." : "Find candidates"}
-          </button>
-          {(selectedTropeId || network) && (
+          <form className="inline-form wrap-row" onSubmit={(event) => void handleSearch(event)}>
+            <input
+              className="input"
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Type a phrase to find candidate tropes"
+              value={query}
+            />
+            <button className="button" disabled={busy || !query.trim()} type="submit">
+              {busy ? "Loading..." : "Find candidates"}
+            </button>
+            {(selectedTropeId || network) && (
+              <button
+                className="button button-ghost"
+                onClick={() => {
+                  window.location.hash = routeHref("/exploration");
+                  setSelectedTropeId(null);
+                  setSelectedTropePreview(null);
+                  setNetwork(null);
+                  setError(null);
+                  setResultMode("idle");
+                }}
+                type="button"
+              >
+                Clear
+              </button>
+            )}
+          </form>
+          <div className="field">
+            <div className="card-row">
+              <label htmlFor="similarity-threshold">
+                <strong>Similarity threshold</strong>
+              </label>
+              <span className="pill">{threshold.toFixed(2)}</span>
+            </div>
+            <input
+              className="range-input"
+              disabled={busy}
+              id="similarity-threshold"
+              max="0.95"
+              min="0.5"
+              onChange={(event) => setThreshold(Number(event.target.value))}
+              step="0.01"
+              type="range"
+              value={threshold}
+            />
+          </div>
+        </section>
+      ) : null}
+
+      {canUseFilterSets ? (
+        <section className="panel">
+          <div className="panel-header">
+            <div>
+              <h1>Filter Sets</h1>
+              <p className="muted">Build trope-aware story sets and compare them on the map.</p>
+            </div>
+          </div>
+          <div className="stack">
+            <strong>Filter sets</strong>
+            <div className="stack">
+              {filterSets.map((filterSet, index) => {
+                const storiesMatchingSelectedTropes = filterStoriesBySelectedTropes(stories, filterSet.draftSelectedTropes);
+                return (
+                  <article className="panel exploration-filter-set-panel" key={filterSet.id}>
+                    <div className="card-row">
+                      <div className="exploration-filter-set-heading">
+                        <span className="exploration-filter-set-swatch" style={{ backgroundColor: filterSet.color }} />
+                        <strong>{buildFilterSetLabel(index)}</strong>
+                      </div>
+                      <button
+                        className="button button-ghost"
+                        disabled={busy || storiesLoading}
+                        onClick={() => removeFilterSet(filterSet.id)}
+                        type="button"
+                      >
+                        Remove set
+                      </button>
+                    </div>
+                    <StoryFieldFilterBuilder
+                      activeCount={filterSet.appliedFilters.length + filterSet.appliedSelectedTropes.length}
+                      appliedFilters={filterSet.appliedFilters}
+                      clearDisabled={
+                        filterSet.draftFilters.length === 0 &&
+                        filterSet.appliedFilters.length === 0 &&
+                        filterSet.draftSelectedTropes.length === 0 &&
+                        filterSet.appliedSelectedTropes.length === 0 &&
+                        !filterSet.tropeQuery.trim()
+                      }
+                      draftFilters={filterSet.draftFilters}
+                      hasPendingChanges={filterSetHasPendingChanges(filterSet)}
+                      loading={storiesLoading || busy}
+                      onAddFilter={() => addDraftFilter(filterSet.id)}
+                      onApplyFilters={() => applyDraftFilters(filterSet.id)}
+                      onClearFilters={() => clearFilterSet(filterSet.id)}
+                      onRemoveFilter={(filterId) => removeDraftFilter(filterSet.id, filterId)}
+                      onUpdateFilterField={(filterId, field) => updateDraftFilterField(filterSet.id, filterId, field)}
+                      onUpdateFilterValues={(filterId, selectedValues) =>
+                        updateDraftFilterValues(filterSet.id, filterId, selectedValues)
+                      }
+                      stories={storiesMatchingSelectedTropes}
+                    >
+                      {canUseFilterSets ? (
+                        <div className="stack">
+                          <ExplorationFilterSetTropePicker
+                            loading={storiesLoading || busy}
+                            onQueryChange={(value) => updateFilterSetTropeQuery(filterSet.id, value)}
+                            onToggleTrope={(trope) => toggleFilterSetSelectedTrope(filterSet.id, trope)}
+                            query={filterSet.tropeQuery}
+                            selectedTropes={filterSet.draftSelectedTropes}
+                          />
+                          {filterSet.draftSelectedTropes.length > 0 && storiesMatchingSelectedTropes.length === 0 ? (
+                            <p className="muted">
+                              No stories match the selected tropes yet, so no hard filters are available for this set.
+                            </p>
+                          ) : null}
+                        </div>
+                      ) : null}
+                      </StoryFieldFilterBuilder>
+                    </article>
+                  );
+                })}
+            </div>
+            <div className="button-row">
+              <button className="button button-ghost" disabled={busy || storiesLoading} onClick={addFilterSet} type="button">
+                Add filter set
+              </button>
+            </div>
+          </div>
+          <div className="stack">
+            {selectedTropeId ? (
+              <p className="muted">
+                Selected trope: {selectedTropePreview || "Ready to map"}
+              </p>
+            ) : null}
+            {!selectedTropeId && appliedFilterSetCount === 0 ? (
+              <p className="muted">Add and apply at least one filter set, or select a trope to map without filters.</p>
+            ) : null}
             <button
-              className="button button-ghost"
-              onClick={() => {
-                window.location.hash = routeHref("/exploration");
-                setSelectedTropeId(null);
-                setNetwork(null);
-                setError(null);
-              }}
+              className="button"
+              disabled={busy || storiesLoading || hasPendingFilterChanges || !canMapWithCurrentSelection}
+              onClick={() => void handleMap()}
               type="button"
             >
-              Clear
+              {busy && resultMode === "map" ? "Mapping..." : "Map it"}
             </button>
-          )}
-        </form>
-        <div className="field">
-          <div className="card-row">
-            <label htmlFor="similarity-threshold">
-              <strong>Similarity threshold</strong>
-            </label>
-            <span className="pill">{threshold.toFixed(2)}</span>
           </div>
-          <input
-            className="range-input"
-            disabled={busy}
-            id="similarity-threshold"
-            max="0.95"
-            min="0.5"
-            onChange={(event) => setThreshold(Number(event.target.value))}
-            step="0.01"
-            type="range"
-            value={threshold}
-          />
-        </div>
-      </section>
+        </section>
+      ) : null}
 
       {error && <section className="notice notice-error">{error}</section>}
       {busy ? (
         <section className="panel">
           <p className="muted">
-            {selectedTropeId ? "Loading exploration network..." : "Searching for candidate tropes..."}
+            {resultMode === "candidate_search" ? "Searching for candidate tropes..." : "Loading exploration network..."}
           </p>
         </section>
       ) : null}
-      {network && !network.selected_trope ? (
+      {shouldShowCandidateCards ? (
         <section className="panel">
           <div className="panel-header">
             <h2>Candidate similar tropes</h2>
@@ -575,7 +1143,132 @@ export function ExplorationPage() {
         </section>
       ) : null}
 
-      {network?.selected_trope ? (
+      {shouldShowMultiSetResults ? (
+        <ExplorationResultBoundary key={network.selected_trope?.id || "multi-filter-sets"}>
+          <section className="panel">
+            <div className="panel-header">
+              <h2>{network.selected_trope ? network.selected_trope.text : "Filter set comparison"}</h2>
+            </div>
+            <div className="stats-grid">
+              <article className="stat-card">
+                <span className="stat-label">Filter sets</span>
+                <strong>{filterSetResults.length}</strong>
+              </article>
+              <article className="stat-card">
+                <span className="stat-label">Mapped stories</span>
+                <strong>
+                  {filterSetResults.reduce(
+                    (sum, result) => sum + result.original_markers.length + result.related_markers.length,
+                    0,
+                  )}
+                </strong>
+              </article>
+              <article className="stat-card">
+                <span className="stat-label">No precise location</span>
+                <strong>{originalWithoutLocation.length + relatedWithoutLocation.length}</strong>
+              </article>
+            </div>
+          </section>
+
+          <section className="panel">
+            <div className="panel-header">
+              <h2>Map</h2>
+            </div>
+            {shouldShowNoStoriesForFilterSets ? (
+              <p className="muted">No stories corresponding to the filters selected</p>
+            ) : (
+              <ExplorationMap
+                bounds={mapBounds}
+                connections={visibleConnections}
+                filterSetLegends={filterSetLegends}
+                markers={visibleMarkers}
+              />
+            )}
+          </section>
+
+          <section className="two-column-layout">
+            {filterSetResults.map((result) => {
+              const setIsEmpty = result.original_markers.length === 0 && result.related_markers.length === 0;
+              return (
+                <article className="panel exploration-filter-set-summary" key={result.filter_set_id}>
+                  <div className="card-row">
+                    <div className="exploration-filter-set-heading">
+                      <span className="exploration-filter-set-swatch" style={{ backgroundColor: result.filter_set_color }} />
+                      <h3>{result.filter_set_label}</h3>
+                    </div>
+                  </div>
+                  <div className="stack">
+                    <strong>Filters</strong>
+                    {result.filters.length > 0 ? (
+                      <div className="tag-list">
+                        {result.filters.map((filter) => (
+                          <span
+                            className="pill exploration-filter-summary-pill"
+                            key={`${result.filter_set_id}-${filter.field}`}
+                          >
+                            {summarizeAppliedFilter(filter)}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="muted">No hard field filters applied.</p>
+                    )}
+                  </div>
+                  {result.selected_tropes.length > 0 ? (
+                    <div className="stack">
+                      <strong>Selected tropes</strong>
+                      <div className="tag-list">
+                        {result.selected_tropes.map((trope) => (
+                          <span className="pill exploration-filter-summary-pill" key={`${result.filter_set_id}-${trope.id}`}>
+                            {trope.text}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                  <div className="stats-grid">
+                    <article className="stat-card">
+                      <span className="stat-label">Original</span>
+                      <strong>{result.original_markers.length}</strong>
+                    </article>
+                    <article className="stat-card">
+                      <span className="stat-label">Related</span>
+                      <strong>{result.related_markers.length}</strong>
+                    </article>
+                    <article className="stat-card">
+                      <span className="stat-label">No precise location</span>
+                      <strong>{result.missing_original_coords + result.missing_related_coords}</strong>
+                    </article>
+                  </div>
+                  {setIsEmpty ? (
+                    <p className="muted">No stories corresponding to the filters selected</p>
+                  ) : (
+                    <div className="stack">
+                      {network.selected_trope ? (
+                        <p className="muted">Related stories: {summarizeMarkerTitles(result.related_markers)}</p>
+                      ) : null}
+                    </div>
+                  )}
+                  {network.selected_trope ? (
+                    <div className="stack">
+                      <strong>Related tropes</strong>
+                      {renderRelatedTropes(result.related_tropes)}
+                    </div>
+                  ) : null}
+                  {!setIsEmpty ? (
+                    <div className="stack">
+                      <strong>Original stories</strong>
+                      {renderMarkerTitleList(result.original_markers)}
+                    </div>
+                  ) : null}
+                </article>
+              );
+            })}
+          </section>
+        </ExplorationResultBoundary>
+      ) : null}
+
+      {network?.selected_trope && !shouldShowMultiSetResults ? (
         <ExplorationResultBoundary key={network.selected_trope.id}>
           <section className="panel">
             <div className="panel-header">
@@ -609,7 +1302,11 @@ export function ExplorationPage() {
             <div className="panel-header">
               <h2>Map</h2>
             </div>
-            <ExplorationMap bounds={mapBounds} connections={visibleConnections} markers={visibleMarkers} />
+            {showNoStoriesForSelectedFilters ? (
+              <p className="muted">No stories corresponding to the filters selected</p>
+            ) : (
+              <ExplorationMap bounds={mapBounds} connections={visibleConnections} markers={visibleMarkers} />
+            )}
           </section>
 
           <section className="two-column-layout">
@@ -668,6 +1365,67 @@ export function ExplorationPage() {
             </div>
           </section>
         </ExplorationResultBoundary>
+      ) : null}
+
+      {shouldShowFilterOnlyResults && !shouldShowMultiSetResults ? (
+        <>
+          <section className="panel">
+            <div className="panel-header">
+              <h2>Filtered stories</h2>
+            </div>
+            <div className="stats-grid">
+              <article className="stat-card">
+                <span className="stat-label">Stories</span>
+                <strong>{network.original_markers.length}</strong>
+              </article>
+              <article className="stat-card">
+                <span className="stat-label">No precise location</span>
+                <strong>{network.missing_original_coords}</strong>
+              </article>
+            </div>
+          </section>
+
+          <section className="panel">
+            <div className="panel-header">
+              <h2>Map</h2>
+            </div>
+            {showNoStoriesForSelectedFilters ? (
+              <p className="muted">No stories corresponding to the filters selected</p>
+            ) : (
+              <ExplorationMap bounds={mapBounds} connections={visibleConnections} markers={visibleMarkers} />
+            )}
+          </section>
+
+          <section className="two-column-layout">
+            <div className="panel">
+              <h2>Matching story markers</h2>
+              <div className="stack">
+                {network.original_markers.length ? (
+                  network.original_markers.map((marker) => (
+                    <article className="card" key={marker.story_id}>
+                      <h3>{marker.title}</h3>
+                      <p className="muted">{formatCoordinateLabel(marker)}</p>
+                      <p>{marker.abstract || "No abstract available."}</p>
+                      <div className="stack">
+                        <strong>Story tropes</strong>
+                        {renderStoryTropeCards(storyTropesForMarker(marker), "No tropes on this story.")}
+                      </div>
+                    </article>
+                  ))
+                ) : (
+                  <p className="muted">No stories corresponding to the filters selected</p>
+                )}
+              </div>
+            </div>
+            <div className="panel">
+              <h2>Stories without precise location</h2>
+              <MissingLocationList
+                emptyLabel="Every matching story has a valid map location."
+                markers={originalWithoutLocation}
+              />
+            </div>
+          </section>
+        </>
       ) : null}
     </div>
   );
