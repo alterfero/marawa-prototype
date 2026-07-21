@@ -9,6 +9,7 @@ import type {
   DatasetRebuildResponse,
   DatasetUploadResponse,
   CanonicalTropeListItem,
+  ConfirmTropesResponse,
   DeleteStoryKeywordResponse,
   DeleteStoryTropeResponse,
   DeleteTropeResponse,
@@ -26,7 +27,9 @@ import type {
   StoryListResponse,
   StoryTropeMutationResponse,
   StoryTropesResponse,
+  TropeConfirmationStatus,
   UserLifecycleResponse,
+  UpdateTropeConfirmationResponse,
   ValidateTropesResponse,
   SearchResponse,
   TropeSequenceGraphResponse,
@@ -200,6 +203,7 @@ export function getCanonicalTropes(payload?: {
   unused_only?: boolean;
   q?: string;
   limit?: number;
+  include_story_ids?: boolean;
 }): Promise<CanonicalTropeListItem[]> {
   const params = new URLSearchParams();
   if (payload?.unused_only) {
@@ -210,6 +214,9 @@ export function getCanonicalTropes(payload?: {
   }
   if (typeof payload?.limit === "number") {
     params.set("limit", String(payload.limit));
+  }
+  if (payload?.include_story_ids) {
+    params.set("include_story_ids", "true");
   }
   const suffix = params.toString() ? `?${params.toString()}` : "";
   return request<CanonicalTropeListItem[]>(`/tropes${suffix}`);
@@ -226,6 +233,22 @@ export function createCanonicalTrope(text: string): Promise<CreateTropeResponse>
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ text }),
+  });
+}
+
+export function updateTropeConfirmationStatus(
+  tropeId: string,
+  payload: {
+    expected_trope_version: number;
+    confirmation_status: TropeConfirmationStatus;
+  },
+): Promise<UpdateTropeConfirmationResponse> {
+  return request<UpdateTropeConfirmationResponse>(`/tropes/${tropeId}/confirmation`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
   });
 }
 
@@ -411,6 +434,21 @@ export function validateTropeMerges(payload: {
   }>;
 }): Promise<ValidateTropesResponse> {
   return request<ValidateTropesResponse>("/curation/validate-merges", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function confirmTropes(payload: {
+  tropes: Array<{
+    trope_id: string;
+    expected_trope_version: number;
+  }>;
+}): Promise<ConfirmTropesResponse> {
+  return request<ConfirmTropesResponse>("/curation/confirm-tropes", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

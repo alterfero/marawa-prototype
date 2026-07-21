@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db_session, require_minimum_role, require_minimum_role_with_csrf
 from app.api.errors import api_error
-from app.db.models import UserRole
+from app.db.models import TropeConfirmationStatus, UserRole
 from app.services.auth import AuthSessionContext
 from app.services.curation import (
     CurationConflictError,
@@ -13,6 +13,12 @@ from app.services.curation import (
     list_near_duplicate_tropes,
     merge_tropes,
     validate_trope_merges,
+)
+from app.services.tropes import (
+    TropeLookupNotFoundError,
+    TropeMutationValidationError,
+    TropeVersionConflictError,
+    set_trope_confirmation_statuses,
 )
 
 
@@ -24,7 +30,9 @@ class JobSummaryResponse(BaseModel):
 
 class TropeSummaryResponse(BaseModel):
     id: str
+    version: int | None = None
     text: str
+    confirmation_status: TropeConfirmationStatus | None = None
     story_count: int
 
 
@@ -73,6 +81,19 @@ class ValidateTropesResponse(BaseModel):
     queued_job: JobSummaryResponse | None
 
 
+class ConfirmTropeRequest(BaseModel):
+    trope_id: str
+    expected_trope_version: int
+
+
+class ConfirmTropesRequest(BaseModel):
+    tropes: list[ConfirmTropeRequest]
+
+
+class ConfirmTropesResponse(BaseModel):
+    tropes: list[TropeSummaryResponse]
+
+
 router = APIRouter(prefix="/curation", tags=["curation"])
 
 
@@ -97,6 +118,12 @@ def _raise_curation_error(exc: Exception) -> None:
         raise api_error(409, "trope_merge_conflict", str(exc)) from exc
     if isinstance(exc, CurationValidationError):
         raise api_error(400, "trope_merge_invalid", str(exc)) from exc
+    if isinstance(exc, TropeLookupNotFoundError):
+        raise api_error(404, "trope_not_found", str(exc)) from exc
+    if isinstance(exc, TropeVersionConflictError):
+        raise api_error(409, "trope_version_conflict", str(exc)) from exc
+    if isinstance(exc, TropeMutationValidationError):
+        raise api_error(400, "trope_mutation_invalid", str(exc)) from exc
     raise exc
 
 
@@ -170,4 +197,31 @@ def validate_canonical_trope_merges(
         affected_story_count=summary["affected_story_count"],
         dataset_version=dataset.version,
         queued_job=_queued_job_summary(job),
+    )
+
+
+@router.post("/confirm-tropes", response_model=ConfirmTropesResponse)
+def confirm_canonical_tropes(
+    payload: ConfirmTropesRequest,
+    auth_context: AuthSessionContext = Depends(require_minimum_role_with_csrf(UserRole.ADMIN)),
+    session: Session = Depends(get_db_session),
+) -> ConfirmTropesResponse:
+    try:
+        tropes = set_trope_confirmation_statuses(
+            session,
+            updates=[
+                {
+                    "trope_id": trope.trope_id,
+                    "expected_version": trope.expected_trope_version,
+                    "confirmation_status": TropeConfirmationStatus.CONFIRMED,
+                }
+                for trope in payload.tropes
+            ],
+            actor_user_id=auth_context.user.id,
+        )
+    except Exception as exc:
+        _raise_curation_error(exc)
+
+    return ConfirmTropesResponse(
+        tropes=[TropeSummaryResponse(**trope) for trope in tropes]
     )

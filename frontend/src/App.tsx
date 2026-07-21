@@ -10,11 +10,11 @@ import { AdminUsersPage } from "./pages/AdminUsersPage";
 import { CreateEntryPage } from "./pages/CreateEntryPage";
 import { CurationPage } from "./pages/CurationPage";
 import { DatasetPage } from "./pages/DatasetPage";
-import { ExperimentalTropeForce3DPage } from "./pages/ExperimentalTropeForce3DPage";
 import { ExplorationPage } from "./pages/ExplorationPage";
 import { LoginPage } from "./pages/LoginPage";
 import { RedeemTokenPage } from "./pages/RedeemTokenPage";
 import { StoriesPage } from "./pages/StoriesPage";
+import { TropeManagementView } from "./pages/TropeManagementView";
 
 const SIDEBAR_STATUS_POLL_INTERVAL_MS = 5000;
 const REBUILD_JOB_POLL_INTERVAL_MS = 2000;
@@ -34,20 +34,20 @@ const NAV_ITEMS: NavItem[] = [
   { route: "/stories", label: "Stories", minimumRole: "guest" },
   { route: "/create", label: "Create new entry", minimumRole: "contributor" },
   { route: "/review", label: "Review queue", minimumRole: "admin" },
-  { route: "/curation", label: "Curation", minimumRole: "admin" },
+  { route: "/trope-management", label: "Trope management", minimumRole: "admin" },
+  { route: "/curation", label: "Trope curation", minimumRole: "admin" },
   { route: "/users", label: "Users", minimumRole: "admin" },
-  { route: "/experimental/trope-force-3d", label: "Experimental visualization", minimumRole: "guest" },
 ];
 
 function minimumRoleForRoute(route: AppRoute): UserRole | null {
   switch (route) {
     case "/dataset":
     case "/stories":
-    case "/experimental/trope-force-3d":
       return "guest";
     case "/create":
       return "contributor";
     case "/review":
+    case "/trope-management":
     case "/curation":
     case "/users":
       return "admin";
@@ -132,14 +132,14 @@ function CurrentPage({
       return <CreateEntryPage />;
     case "/review":
       return <AdminReviewPage />;
+    case "/trope-management":
+      return <TropeManagementView />;
     case "/curation":
       return <CurationPage />;
     case "/users":
       return <AdminUsersPage />;
     case "/exploration":
       return <ExplorationPage />;
-    case "/experimental/trope-force-3d":
-      return <ExperimentalTropeForce3DPage />;
     default:
       return <ExplorationPage />;
   }

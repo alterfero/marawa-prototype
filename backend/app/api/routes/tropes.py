@@ -4,14 +4,16 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db_session, require_minimum_role, require_minimum_role_with_csrf
 from app.api.errors import api_error
-from app.db.models import UserRole
+from app.db.models import TropeConfirmationStatus, UserRole
 from app.services.auth import AuthSessionContext
 from app.services.curation import CurationConflictError, CurationNotFoundError, delete_trope, list_canonical_tropes
 from app.services.tropes import (
     TropeLookupNotFoundError,
+    TropeVersionConflictError,
     TropeMutationValidationError,
     ensure_canonical_trope,
     get_trope_detail,
+    set_trope_confirmation_status,
 )
 
 
@@ -30,8 +32,11 @@ class DeleteTropeResponse(BaseModel):
 
 class TropeListItemResponse(BaseModel):
     id: str
+    version: int
     text: str
+    confirmation_status: str
     story_count: int
+    story_ids: list[str] = Field(default_factory=list)
 
 
 class CreateTropeRequest(BaseModel):
@@ -51,9 +56,20 @@ class TropeStorySummaryResponse(BaseModel):
 
 class TropeDetailResponse(BaseModel):
     id: str
+    version: int
     text: str
+    confirmation_status: str
     story_count: int
     stories: list[TropeStorySummaryResponse]
+
+
+class UpdateTropeConfirmationRequest(BaseModel):
+    expected_trope_version: int = Field(ge=1)
+    confirmation_status: TropeConfirmationStatus
+
+
+class UpdateTropeConfirmationResponse(BaseModel):
+    trope: TropeListItemResponse
 
 
 router = APIRouter(prefix="/tropes", tags=["tropes"])
@@ -73,11 +89,21 @@ def _queued_job_summary(job) -> JobSummaryResponse | None:
 def read_tropes(
     unused_only: bool = Query(default=False),
     q: str | None = Query(default=None),
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=100, ge=1, le=5000),
+    include_story_ids: bool = Query(default=False),
     _: object = Depends(require_minimum_role(UserRole.GUEST)),
     session: Session = Depends(get_db_session),
 ) -> list[TropeListItemResponse]:
-    return [TropeListItemResponse(**item) for item in list_canonical_tropes(session, unused_only=unused_only, query=q, limit=limit)]
+    return [
+        TropeListItemResponse(**item)
+        for item in list_canonical_tropes(
+            session,
+            unused_only=unused_only,
+            query=q,
+            limit=limit,
+            include_story_ids=include_story_ids,
+        )
+    ]
 
 
 @router.get("/{trope_id}", response_model=TropeDetailResponse)
@@ -111,6 +137,33 @@ def create_canonical_trope(
     return CreateTropeResponse(
         trope=TropeListItemResponse(**trope),
         created=created,
+    )
+
+
+@router.put("/{trope_id}/confirmation", response_model=UpdateTropeConfirmationResponse)
+def update_trope_confirmation(
+    trope_id: str,
+    payload: UpdateTropeConfirmationRequest,
+    auth_context: AuthSessionContext = Depends(require_minimum_role_with_csrf(UserRole.ADMIN)),
+    session: Session = Depends(get_db_session),
+) -> UpdateTropeConfirmationResponse:
+    try:
+        trope = set_trope_confirmation_status(
+            session,
+            trope_id,
+            expected_version=payload.expected_trope_version,
+            confirmation_status=payload.confirmation_status,
+            actor_user_id=auth_context.user.id,
+        )
+    except TropeLookupNotFoundError as exc:
+        raise api_error(404, "trope_not_found", str(exc)) from exc
+    except TropeVersionConflictError as exc:
+        raise api_error(409, "trope_version_conflict", str(exc)) from exc
+    except TropeMutationValidationError as exc:
+        raise api_error(400, "trope_mutation_invalid", str(exc)) from exc
+
+    return UpdateTropeConfirmationResponse(
+        trope=TropeListItemResponse(**trope),
     )
 
 

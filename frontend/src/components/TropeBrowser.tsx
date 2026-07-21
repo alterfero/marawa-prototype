@@ -144,7 +144,7 @@ export function TropeBrowserProvider({ children }: { children: ReactNode }) {
                       className="list-row"
                       key={story.id}
                       onClick={() => {
-                        window.location.hash = routeHref("/review", { selected_story_id: story.id });
+                        window.location.hash = routeHref("/stories", { selected_story_id: story.id });
                         closeTrope();
                       }}
                       type="button"

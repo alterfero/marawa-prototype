@@ -76,10 +76,57 @@ def test_near_duplicate_tropes_route_uses_similarity_cache(monkeypatch, tmp_path
     assert body["artifact_version"] == 1
     assert body["total"] == 1
     assert body["items"][0]["source_trope"]["text"] == "first trope"
+    assert body["items"][0]["source_trope"]["version"] == 1
+    assert body["items"][0]["source_trope"]["confirmation_status"] == "unconfirmed"
     assert body["items"][0]["target_trope"]["text"] == "first trope variant"
+    assert body["items"][0]["target_trope"]["version"] == 1
+    assert body["items"][0]["target_trope"]["confirmation_status"] == "unconfirmed"
     assert body["items"][0]["source_trope"]["story_count"] == 1
     assert body["items"][0]["target_trope"]["story_count"] == 1
     assert body["items"][0]["similarity_score"] > 0.9
+
+
+def test_confirm_tropes_route_confirms_both_and_hides_fully_confirmed_pair(monkeypatch, tmp_path) -> None:
+    configure_auth_env(monkeypatch)
+    with build_client(tmp_path, "curation-confirm-tropes.db") as client:
+        authenticate_admin(client)
+        upload_dataset(
+            client,
+            [make_row(title="Story One", tropes="§§ first trope\n§§ first trope variant\n§§ second trope")],
+        )
+        request_rebuild(client)
+        process_next_job(client)
+
+        pairs_response = client.get("/api/curation/near-duplicate-tropes")
+        pair = pairs_response.json()["items"][0]
+
+        confirm_response = client.post(
+            "/api/curation/confirm-tropes",
+            json={
+                "tropes": [
+                    {
+                        "trope_id": pair["source_trope"]["id"],
+                        "expected_trope_version": pair["source_trope"]["version"],
+                    },
+                    {
+                        "trope_id": pair["target_trope"]["id"],
+                        "expected_trope_version": pair["target_trope"]["version"],
+                    },
+                ]
+            },
+        )
+
+        filtered_pairs_response = client.get("/api/curation/near-duplicate-tropes")
+
+    assert confirm_response.status_code == 200
+    confirm_body = confirm_response.json()
+    assert [item["confirmation_status"] for item in confirm_body["tropes"]] == ["confirmed", "confirmed"]
+    assert [item["version"] for item in confirm_body["tropes"]] == [2, 2]
+
+    assert filtered_pairs_response.status_code == 200
+    filtered_body = filtered_pairs_response.json()
+    assert filtered_body["total"] == 0
+    assert filtered_body["items"] == []
 
 
 def test_merge_tropes_moves_assignments_and_deduplicates_links(monkeypatch, tmp_path) -> None:

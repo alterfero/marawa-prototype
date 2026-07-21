@@ -1222,6 +1222,7 @@ def _serialize_story_trope(link: StoryTrope) -> dict:
         "id": link.trope.id,
         "text": link.trope.text,
         "story_count": int(link.trope.cached_story_count or 0),
+        "confirmation_status": link.trope.confirmation_status.value,
         "origin": link.origin.value,
         "status": link.status.value,
         "position": link.position,

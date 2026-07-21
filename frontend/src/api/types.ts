@@ -9,6 +9,7 @@ export type UserStatus = "active" | "inactive" | "pending_invite";
 export type ReviewStatus = "pending" | "approved" | "rejected";
 export type ReviewType = "story_created" | "story_updated" | "trope_pending" | "keyword_pending";
 export type StoryCompleteness = "incomplete" | "pending review" | "complete";
+export type TropeConfirmationStatus = "unconfirmed" | "confirmed";
 
 export interface CurrentUser {
   id: string;
@@ -105,6 +106,7 @@ export interface StoryTrope {
   id: string;
   text: string;
   story_count: number;
+  confirmation_status: TropeConfirmationStatus;
   origin: string;
   status: string;
   position: number | null;
@@ -175,8 +177,11 @@ export interface DeleteStoryKeywordResponse {
 
 export interface TropeSummary {
   id: string;
+  version?: number;
   text: string;
+  confirmation_status?: TropeConfirmationStatus;
   story_count: number;
+  story_ids?: string[];
 }
 
 export interface NearDuplicateTropePair {
@@ -191,6 +196,10 @@ export interface NearDuplicateTropeListResponse {
   artifact_version: number | null;
   model_name: string;
   total: number;
+}
+
+export interface ConfirmTropesResponse {
+  tropes: TropeSummary[];
 }
 
 export interface MergeTropesResponse {
@@ -225,6 +234,10 @@ export interface DeleteTropeResponse {
 export interface CreateTropeResponse {
   trope: TropeSummary;
   created: boolean;
+}
+
+export interface UpdateTropeConfirmationResponse {
+  trope: CanonicalTropeListItem;
 }
 
 export interface CanonicalKeywordListItem {
@@ -368,8 +381,11 @@ export type TropeSearchResponse = SearchResponse;
 
 export interface CanonicalTropeListItem {
   id: string;
+  version: number;
   text: string;
+  confirmation_status: TropeConfirmationStatus;
   story_count: number;
+  story_ids: string[];
 }
 
 export interface TropeStorySummary {
@@ -380,15 +396,20 @@ export interface TropeStorySummary {
 
 export interface TropeDetail {
   id: string;
+  version: number;
   text: string;
+  confirmation_status: TropeConfirmationStatus;
   story_count: number;
   stories: TropeStorySummary[];
 }
 
 export interface TropeReference {
   id: string;
+  version?: number;
   text: string;
+  confirmation_status?: TropeConfirmationStatus;
   story_count: number;
+  story_ids?: string[];
 }
 
 export interface TropeSequenceGraphSelectedTrope {

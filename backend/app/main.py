@@ -4,7 +4,6 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.engine import Engine
@@ -42,10 +41,6 @@ async def lifespan(app: FastAPI):
 def _mount_frontend(app: FastAPI, frontend_dist_dir: Path) -> None:
     if not frontend_dist_dir.exists():
         return
-
-    @app.get("/experimental/trope-force-3d", include_in_schema=False)
-    def experimental_trope_force_redirect():
-        return RedirectResponse(url="/#/experimental/trope-force-3d")
 
     app.mount("/", StaticFiles(directory=frontend_dist_dir, html=True), name="frontend")
 

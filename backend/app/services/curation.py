@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import case, delete, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.parsing import clean_text
@@ -18,6 +18,7 @@ from app.db.models import (
     TermKind,
     TermSimilarityCache,
     Trope,
+    TropeConfirmationStatus,
 )
 from app.services.audit import record_audit_event
 from app.services.stories import sync_story_derived_fields
@@ -45,6 +46,7 @@ def list_canonical_tropes(
     unused_only: bool = False,
     query: str | None = None,
     limit: int = 100,
+    include_story_ids: bool = False,
 ) -> list[dict]:
     active_dataset = _get_active_dataset(session)
     if active_dataset is None:
@@ -55,6 +57,8 @@ def list_canonical_tropes(
         select(
             Trope.id,
             Trope.text,
+            Trope.version,
+            Trope.confirmation_status,
             Trope.cached_story_count.label("story_count"),
         )
         .select_from(Trope)
@@ -68,11 +72,40 @@ def list_canonical_tropes(
     rows = session.execute(
         statement.order_by(Trope.text.asc(), Trope.id.asc()).limit(limit)
     ).all()
+    story_ids_by_trope_id: dict[str, list[str]] = {}
+    if include_story_ids and rows:
+        trope_ids = [row.id for row in rows]
+        story_ids_by_trope_id = {trope_id: [] for trope_id in trope_ids}
+        story_rows = session.execute(
+            select(
+                StoryTrope.trope_id.label("trope_id"),
+                Story.id.label("story_id"),
+            )
+            .select_from(StoryTrope)
+            .join(Story, Story.id == StoryTrope.story_id)
+            .where(
+                Story.dataset_id == active_dataset.id,
+                StoryTrope.trope_id.in_(trope_ids),
+            )
+            .order_by(
+                StoryTrope.trope_id.asc(),
+                case((Story.source_row_number.is_(None), 1), else_=0),
+                Story.source_row_number.asc(),
+                Story.created_at.asc(),
+                Story.id.asc(),
+            )
+        ).all()
+        for story_row in story_rows:
+            story_ids_by_trope_id.setdefault(story_row.trope_id, []).append(story_row.story_id)
+
     return [
         {
             "id": row.id,
             "text": row.text,
+            "version": int(row.version or 1),
+            "confirmation_status": row.confirmation_status.value,
             "story_count": int(row.story_count or 0),
+            "story_ids": story_ids_by_trope_id.get(row.id, []),
         }
         for row in rows
     ]
@@ -185,12 +218,16 @@ def list_near_duplicate_tropes(session: Session, *, model_name: str) -> dict:
         candidate = {
             "source_trope": {
                 "id": stable_tropes[0].id,
+                "version": stable_tropes[0].version,
                 "text": stable_tropes[0].text,
+                "confirmation_status": stable_tropes[0].confirmation_status.value,
                 "story_count": active_story_counts.get(stable_tropes[0].id, 0),
             },
             "target_trope": {
                 "id": stable_tropes[1].id,
+                "version": stable_tropes[1].version,
                 "text": stable_tropes[1].text,
+                "confirmation_status": stable_tropes[1].confirmation_status.value,
                 "story_count": active_story_counts.get(stable_tropes[1].id, 0),
             },
             "similarity_score": float(entry.similarity_score),
@@ -201,7 +238,14 @@ def list_near_duplicate_tropes(session: Session, *, model_name: str) -> dict:
             pair_map[pair_key] = candidate
 
     items = sorted(
-        pair_map.values(),
+        [
+            item
+            for item in pair_map.values()
+            if not (
+                item["source_trope"]["confirmation_status"] == TropeConfirmationStatus.CONFIRMED.value
+                and item["target_trope"]["confirmation_status"] == TropeConfirmationStatus.CONFIRMED.value
+            )
+        ],
         key=lambda item: (
             -item["similarity_score"],
             item["source_trope"]["text"].lower(),

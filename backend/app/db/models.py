@@ -67,6 +67,11 @@ class TermReviewStatus(str, Enum):
     REJECTED = "rejected"
 
 
+class TropeConfirmationStatus(str, Enum):
+    UNCONFIRMED = "unconfirmed"
+    CONFIRMED = "confirmed"
+
+
 class StoryCompleteness(str, Enum):
     INCOMPLETE = "incomplete"
     PENDING_REVIEW = "pending review"
@@ -288,6 +293,7 @@ class Trope(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
     dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.id", ondelete="RESTRICT"), nullable=False, index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
     normalized_text: Mapped[str] = mapped_column(String(512), nullable=False)
     review_status: Mapped[TermReviewStatus] = mapped_column(
@@ -298,6 +304,17 @@ class Trope(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             values_callable=enum_values,
         ),
         default=TermReviewStatus.APPROVED,
+        nullable=False,
+        index=True,
+    )
+    confirmation_status: Mapped[TropeConfirmationStatus] = mapped_column(
+        SqlEnum(
+            TropeConfirmationStatus,
+            native_enum=False,
+            validate_strings=True,
+            values_callable=enum_values,
+        ),
+        default=TropeConfirmationStatus.UNCONFIRMED,
         nullable=False,
         index=True,
     )

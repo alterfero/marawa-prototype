@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.api.errors import api_error
 from app.api.deps import get_db_session, require_minimum_role, require_minimum_role_with_csrf
-from app.db.models import StoryCompleteness, StoryTropeOrigin, UserRole
+from app.db.models import StoryCompleteness, StoryTropeOrigin, TropeConfirmationStatus, UserRole
 from app.services.auth import AuthSessionContext
 from app.services.stories import (
     ActiveDatasetNotFoundError,
@@ -63,6 +63,7 @@ class StoryTropeResponse(BaseModel):
     id: str
     text: str
     story_count: int
+    confirmation_status: TropeConfirmationStatus
     origin: str
     status: str
     position: int | None
@@ -352,6 +353,7 @@ def create_story_trope(
             id=link.trope.id,
             text=link.trope.text,
             story_count=int(link.trope.cached_story_count or 0),
+            confirmation_status=link.trope.confirmation_status,
             origin=link.origin.value,
             status=link.status.value,
             position=link.position,
@@ -423,6 +425,7 @@ def update_story_trope(
             id=link.trope.id,
             text=link.trope.text,
             story_count=int(link.trope.cached_story_count or 0),
+            confirmation_status=link.trope.confirmation_status,
             origin=link.origin.value,
             status=link.status.value,
             position=link.position,
@@ -552,6 +555,7 @@ def approve_story_trope(
             id=link.trope.id,
             text=link.trope.text,
             story_count=int(link.trope.cached_story_count or 0),
+            confirmation_status=link.trope.confirmation_status,
             origin=link.origin.value,
             status=link.status.value,
             position=link.position,

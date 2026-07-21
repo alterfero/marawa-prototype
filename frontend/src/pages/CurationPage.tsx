@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import {
+  confirmTropes,
   createCanonicalTrope,
   deleteTrope,
   getCanonicalTropes,
@@ -100,6 +101,10 @@ function buildPendingMergeDecision(
     target_story_count: target.story_count,
     similarity_score: similarityScore,
   };
+}
+
+function pairHasUsableVersions(pair: NearDuplicateTropePair): boolean {
+  return typeof pair.source_trope.version === "number" && typeof pair.target_trope.version === "number";
 }
 
 function resolvePairSelection(
@@ -404,6 +409,61 @@ export function CurationPage() {
     setNotice(null);
   }
 
+  async function handleKeepBoth(pair: NearDuplicateTropePair) {
+    if (!pairHasUsableVersions(pair)) {
+      setNotice({
+        tone: "error",
+        title: "Could not confirm both tropes",
+        body: "The current pair is missing trope version data. Refresh and try again.",
+      });
+      return;
+    }
+
+    const pairId = pairKey(pair);
+    try {
+      setBusy(true);
+      setNotice(null);
+      await confirmTropes({
+        tropes: [
+          {
+            trope_id: pair.source_trope.id,
+            expected_trope_version: pair.source_trope.version!,
+          },
+          {
+            trope_id: pair.target_trope.id,
+            expected_trope_version: pair.target_trope.version!,
+          },
+        ],
+      });
+      setPendingMerges((current) => current.filter((merge) => merge.pair_id !== pairId));
+      setTargetOverrides((current) => {
+        if (!(pairId in current)) {
+          return current;
+        }
+        const next = { ...current };
+        delete next[pairId];
+        return next;
+      });
+      if (editingPairId === pairId) {
+        resetTargetEditor();
+      }
+      setNotice({
+        tone: "success",
+        title: "Both tropes confirmed",
+        body: `Confirmed ${pair.source_trope.text} and ${pair.target_trope.text}. Fully confirmed pairs no longer appear in the near-duplicate list.`,
+      });
+      await refresh({ clearNotice: false });
+    } catch (caughtError) {
+      setNotice({
+        tone: "error",
+        title: "Could not confirm both tropes",
+        body: getErrorMessage(caughtError),
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleKeepTypedTarget() {
     if (!editingPairId || !editingTargetQuery.trim() || !pairs) {
       return;
@@ -695,7 +755,7 @@ export function CurationPage() {
                       {affectedStoryCount} stor{affectedStoryCount === 1 ? "y" : "ies"} affected
                     </p>
 
-                    <div className="button-row">
+                    <div className="button-row wrap-row">
                       {pendingDecision ? (
                         <button
                           className="button button-ghost"
@@ -715,6 +775,14 @@ export function CurationPage() {
                           {sourceAlreadyPending ? "Source already in batch" : "Add merge to batch"}
                         </button>
                       )}
+                      <button
+                        className="button button-ghost"
+                        disabled={busy || !pairHasUsableVersions(pair)}
+                        onClick={() => void handleKeepBoth(pair)}
+                        type="button"
+                      >
+                        Keep both
+                      </button>
                     </div>
                   </article>
                 );

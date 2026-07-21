@@ -7,10 +7,10 @@ export type AppRoute =
   | "/stories"
   | "/create"
   | "/review"
+  | "/trope-management"
   | "/curation"
   | "/users"
-  | "/exploration"
-  | "/experimental/trope-force-3d";
+  | "/exploration";
 
 const DEFAULT_ROUTE: AppRoute = "/exploration";
 const KNOWN_ROUTES: AppRoute[] = [
@@ -20,10 +20,10 @@ const KNOWN_ROUTES: AppRoute[] = [
   "/stories",
   "/create",
   "/review",
+  "/trope-management",
   "/curation",
   "/users",
   "/exploration",
-  "/experimental/trope-force-3d",
 ];
 
 function readHashPathAndSearch(): { path: string; search: string } {

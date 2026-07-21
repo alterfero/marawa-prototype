@@ -32,10 +32,18 @@ import {
   StoryFieldFilterBuilder,
   type StoryFieldFilter,
 } from "../components/StoryFieldFilters";
+import { StorySummaryCard } from "../components/StorySummaryCard";
 import { TermCard } from "../components/TermCard";
 import { TropeCard } from "../components/TropeCard";
 import { roleAtLeast, useAuth } from "../auth";
-import type { SearchItem, StoryCompleteness, StoryDetail, StorySummary, TropeSearchItem } from "../api/types";
+import type {
+  SearchItem,
+  StoryCompleteness,
+  StoryDetail,
+  StorySummary,
+  TropeConfirmationStatus,
+  TropeSearchItem,
+} from "../api/types";
 import { LEGACY_METADATA_SECTIONS, normalizeDraftText } from "../constants/csv";
 import { routeHref, useHashSearch } from "../router";
 
@@ -49,6 +57,10 @@ const ALL_COMPLETENESS_OPTIONS: StoryCompleteness[] = ["incomplete", "pending re
 
 function completenessBadgeClassName(completeness: StoryCompleteness): string {
   return `story-completeness-${completeness.replace(/\s+/g, "-")}`;
+}
+
+function confirmationStatusLabel(status: TropeConfirmationStatus): string {
+  return status === "confirmed" ? "Confirmed" : "Unconfirmed";
 }
 
 function canSelectCompleteness(
@@ -103,16 +115,6 @@ function summarizeStory(detail: StoryDetail): string {
     detail.fields["1-sentence summary"] ||
     "No summary available."
   );
-}
-
-function storyListPreview(story: StorySummary): string {
-  if (story.summary) {
-    return story.summary;
-  }
-  if (story.territory) {
-    return story.territory;
-  }
-  return `${story.trope_count} tropes · ${story.keyword_count} keywords`;
 }
 
 function storyFieldsChanged(current: Record<string, string>, baseline: Record<string, string>): boolean {
@@ -894,24 +896,15 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
             {storiesLoading ? <p className="muted">Loading stories...</p> : null}
             {!storiesLoading && filteredStories.length === 0 ? <p className="muted">No stories match the current search and filters.</p> : null}
             {filteredStories.map((story) => (
-              <button
-                className={`list-row story-browser-row ${story.id === selectedStoryId ? "list-row-active" : ""}`}
+              <StorySummaryCard
+                active={story.id === selectedStoryId}
                 disabled={storiesLoading}
-                key={story.id}
                 onClick={() => {
                   window.location.hash = routeHref("/stories", { selected_story_id: story.id });
                 }}
-                type="button"
-              >
-                <div className="story-browser-row-top">
-                  <strong className="story-browser-title">{story.title || `Story ${story.source_row_number ?? "?"}`}</strong>
-                  <span className={`story-completeness-badge ${completenessBadgeClassName(story.completeness)}`}>
-                    {story.completeness}
-                  </span>
-                </div>
-                {!story.has_location ? <span className="story-list-alert">Location missing</span> : null}
-                <span className="muted story-browser-preview">{storyListPreview(story)}</span>
-              </button>
+                key={story.id}
+                story={story}
+              />
             ))}
           </div>
         </aside>
@@ -1239,11 +1232,22 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
               {detail?.tropes.length ? (
                 detail.tropes.map((trope) => (
                   <TropeCard
+                    badge={
+                      <span
+                        className={`story-completeness-badge trope-confirmation-badge trope-confirmation-${trope.confirmation_status}`}
+                      >
+                        {confirmationStatusLabel(trope.confirmation_status)}
+                      </span>
+                    }
+                    className="stories-current-trope-card"
                     key={trope.id}
+                    onOpen={() => {
+                      window.location.hash = routeHref("/trope-management", { selected_trope_id: trope.id });
+                    }}
                     trope={trope}
                     actions={
                       canEdit ? (
-                        <>
+                        <div className="story-trope-action-row">
                           <button
                             className="button button-ghost"
                             disabled={interactionDisabled}
@@ -1277,7 +1281,7 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
                           >
                             Delete
                           </button>
-                        </>
+                        </div>
                       ) : undefined
                     }
                   >

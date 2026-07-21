@@ -22,7 +22,6 @@ function normalizeNextRoute(value: string | null): AppRoute | null {
     "/curation",
     "/users",
     "/exploration",
-    "/experimental/trope-force-3d",
   ];
   if (allowedRoutes.includes(value as AppRoute)) {
     return value as AppRoute;

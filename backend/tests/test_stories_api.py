@@ -109,6 +109,7 @@ def test_stories_api_lists_story_detail_and_tropes(client: TestClient) -> None:
     assert detail["fields"][KEYWORD_FIELD] == "wolf ; moon"
     assert [item["text"] for item in detail["tropes"]] == ["first trope", "second trope"]
     assert detail["tropes"][0]["story_count"] == 1
+    assert detail["tropes"][0]["confirmation_status"] == "unconfirmed"
     assert detail["tropes"][0]["origin"] == "csv_import"
     assert detail["tropes"][0]["status"] == "validated"
 
@@ -119,6 +120,7 @@ def test_stories_api_lists_story_detail_and_tropes(client: TestClient) -> None:
     assert tropes_payload["story_version"] == 1
     assert [item["text"] for item in tropes_payload["items"]] == ["first trope", "second trope"]
     assert tropes_payload["items"][0]["story_count"] == 1
+    assert tropes_payload["items"][0]["confirmation_status"] == "unconfirmed"
 
 
 def test_stories_api_marks_missing_or_malformed_locations(client: TestClient) -> None:
@@ -157,6 +159,7 @@ def test_add_story_trope_creates_new_canonical_trope_and_queues_rebuild(client: 
     assert body["dataset_version"] == 2
     assert body["trope"]["text"] == "Moon Bride"
     assert body["trope"]["origin"] == "human_entered"
+    assert body["trope"]["confirmation_status"] == "unconfirmed"
     assert body["trope"]["status"] == "validated"
     assert body["queued_job"] is None
 
@@ -203,6 +206,7 @@ def test_create_story_adds_manual_entry_with_metadata_keywords_and_tropes(client
     assert body["story"]["fields"][TROPE_FIELD] == "§§ Moon Bride\n§§ existing trope"
     assert body["story"]["fields"][KEYWORD_FIELD] == "breadfruit ; night canoe"
     assert [item["text"] for item in body["story"]["tropes"]] == ["Moon Bride", "existing trope"]
+    assert [item["confirmation_status"] for item in body["story"]["tropes"]] == ["unconfirmed", "unconfirmed"]
     assert [item["origin"] for item in body["story"]["tropes"]] == ["human_entered", "human_entered"]
     assert [item["status"] for item in body["story"]["tropes"]] == ["validated", "validated"]
     assert [item["text"] for item in body["story"]["keywords"]] == ["breadfruit", "night canoe"]

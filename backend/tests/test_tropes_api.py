@@ -65,7 +65,7 @@ def test_trope_detail_lists_story_titles_for_active_dataset(monkeypatch, tmp_pat
             ],
         )
 
-        trope_list = client.get("/api/tropes").json()
+        trope_list = client.get("/api/tropes?include_story_ids=true").json()
         first_trope = next(item for item in trope_list if item["text"] == "first trope")
 
         response = client.get(f"/api/tropes/{first_trope['id']}")
@@ -73,9 +73,12 @@ def test_trope_detail_lists_story_titles_for_active_dataset(monkeypatch, tmp_pat
     assert response.status_code == 200
     body = response.json()
     assert body["id"] == first_trope["id"]
+    assert body["version"] == 1
     assert body["text"] == "first trope"
+    assert body["confirmation_status"] == "unconfirmed"
     assert body["story_count"] == 2
     assert [item["title"] for item in body["stories"]] == ["Story One", "Story Two"]
+    assert first_trope["story_ids"]
 
 
 def test_create_canonical_trope_creates_unused_trope(monkeypatch, tmp_path) -> None:
@@ -98,6 +101,8 @@ def test_create_canonical_trope_creates_unused_trope(monkeypatch, tmp_path) -> N
     assert body["created"] is True
     assert body["trope"]["text"] == "Moon Bride"
     assert body["trope"]["story_count"] == 0
+    assert body["trope"]["confirmation_status"] == "unconfirmed"
+    assert body["trope"]["version"] == 1
     assert any(item["id"] == body["trope"]["id"] and item["text"] == "Moon Bride" for item in trope_list)
 
 
@@ -123,3 +128,45 @@ def test_create_canonical_trope_reuses_existing_trope_by_normalized_text(monkeyp
     assert body["trope"]["id"] == existing["id"]
     assert body["trope"]["text"] == "moon bride"
     assert body["trope"]["story_count"] == 1
+    assert body["trope"]["confirmation_status"] == "unconfirmed"
+    assert body["trope"]["version"] == 1
+
+
+def test_admin_can_update_trope_confirmation_status_with_version_check(monkeypatch, tmp_path) -> None:
+    configure_auth_env(monkeypatch)
+    db_path = tmp_path / "tropes-confirmation-api.db"
+    engine = build_engine(f"sqlite:///{db_path}")
+    session_factory = build_session_factory(engine)
+    app = create_app(db_engine=engine, session_factory=session_factory, job_runner_enabled=False)
+
+    with TestClient(app) as client:
+        authenticate_admin(client)
+        upload_dataset(client, [make_row(title="Story One", tropes="§§ first trope")])
+
+        trope = next(item for item in client.get("/api/tropes").json() if item["text"] == "first trope")
+
+        response = client.put(
+            f"/api/tropes/{trope['id']}/confirmation",
+            json={
+                "expected_trope_version": trope["version"],
+                "confirmation_status": "confirmed",
+            },
+        )
+
+        stale_response = client.put(
+            f"/api/tropes/{trope['id']}/confirmation",
+            json={
+                "expected_trope_version": trope["version"],
+                "confirmation_status": "unconfirmed",
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["trope"]["id"] == trope["id"]
+    assert body["trope"]["confirmation_status"] == "confirmed"
+    assert body["trope"]["version"] == 2
+
+    assert stale_response.status_code == 409
+    stale_body = stale_response.json()
+    assert stale_body["detail"]["code"] == "trope_version_conflict"
