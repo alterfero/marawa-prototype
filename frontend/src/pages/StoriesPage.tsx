@@ -1082,7 +1082,11 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
                     }
                   >
                     {editingKeywordId === keyword.id && canEdit ? (
-                      <div className="card subdued trope-card-editor">
+                      <div
+                        className="card subdued trope-card-editor"
+                        onClick={(event) => event.stopPropagation()}
+                        onKeyDown={(event) => event.stopPropagation()}
+                      >
                         <label className="field">
                           <span>Edit keyword</span>
                           <input
@@ -1286,7 +1290,11 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
                     }
                   >
                     {editingTropeId === trope.id && canEdit ? (
-                      <div className="card subdued trope-card-editor">
+                      <div
+                        className="card subdued trope-card-editor"
+                        onClick={(event) => event.stopPropagation()}
+                        onKeyDown={(event) => event.stopPropagation()}
+                      >
                         <label className="field">
                           <span>Edit trope</span>
                           <input

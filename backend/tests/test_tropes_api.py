@@ -169,4 +169,76 @@ def test_admin_can_update_trope_confirmation_status_with_version_check(monkeypat
 
     assert stale_response.status_code == 409
     stale_body = stale_response.json()
-    assert stale_body["detail"]["code"] == "trope_version_conflict"
+    assert stale_body["code"] == "trope_version_conflict"
+
+
+def test_admin_can_rename_canonical_trope_and_story_detail_updates(monkeypatch, tmp_path) -> None:
+    configure_auth_env(monkeypatch)
+    db_path = tmp_path / "tropes-rename-api.db"
+    engine = build_engine(f"sqlite:///{db_path}")
+    session_factory = build_session_factory(engine)
+    app = create_app(db_engine=engine, session_factory=session_factory, job_runner_enabled=False)
+
+    with TestClient(app) as client:
+        authenticate_admin(client)
+        upload_dataset(client, [make_row(title="Story One", tropes="§§ first trope")])
+
+        trope = next(item for item in client.get("/api/tropes").json() if item["text"] == "first trope")
+        story = client.get("/api/stories").json()["items"][0]
+
+        response = client.put(
+            f"/api/tropes/{trope['id']}",
+            json={
+                "expected_trope_version": trope["version"],
+                "text": "Renamed trope",
+            },
+        )
+
+        detail_response = client.get(f"/api/stories/{story['id']}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["trope"]["id"] == trope["id"]
+    assert body["trope"]["text"] == "Renamed trope"
+    assert body["trope"]["version"] == 2
+
+    assert detail_response.status_code == 200
+    detail_body = detail_response.json()
+    assert detail_body["version"] == story["version"] + 1
+    assert detail_body["fields"][TROPE_FIELD] == "§§ Renamed trope"
+    assert [item["text"] for item in detail_body["tropes"]] == ["Renamed trope"]
+
+
+def test_rename_canonical_trope_returns_409_for_stale_expected_version(monkeypatch, tmp_path) -> None:
+    configure_auth_env(monkeypatch)
+    db_path = tmp_path / "tropes-rename-stale-api.db"
+    engine = build_engine(f"sqlite:///{db_path}")
+    session_factory = build_session_factory(engine)
+    app = create_app(db_engine=engine, session_factory=session_factory, job_runner_enabled=False)
+
+    with TestClient(app) as client:
+        authenticate_admin(client)
+        upload_dataset(client, [make_row(title="Story One", tropes="§§ first trope")])
+
+        trope = next(item for item in client.get("/api/tropes").json() if item["text"] == "first trope")
+
+        first_response = client.put(
+            f"/api/tropes/{trope['id']}",
+            json={
+                "expected_trope_version": trope["version"],
+                "text": "Renamed trope",
+            },
+        )
+
+        stale_response = client.put(
+            f"/api/tropes/{trope['id']}",
+            json={
+                "expected_trope_version": trope["version"],
+                "text": "Second rename",
+            },
+        )
+
+    assert first_response.status_code == 200
+    assert stale_response.status_code == 409
+    stale_body = stale_response.json()
+    assert stale_body["code"] == "trope_version_conflict"

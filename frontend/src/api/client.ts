@@ -29,6 +29,7 @@ import type {
   StoryTropesResponse,
   TropeConfirmationStatus,
   UserLifecycleResponse,
+  UpdateTropeResponse,
   UpdateTropeConfirmationResponse,
   ValidateTropesResponse,
   SearchResponse,
@@ -233,6 +234,23 @@ export function createCanonicalTrope(text: string): Promise<CreateTropeResponse>
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ text }),
+  });
+}
+
+export function updateCanonicalTrope(payload: {
+  trope_id: string;
+  expected_trope_version: number;
+  text: string;
+}): Promise<UpdateTropeResponse> {
+  return request<UpdateTropeResponse>(`/tropes/${payload.trope_id}`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      expected_trope_version: payload.expected_trope_version,
+      text: payload.text,
+    }),
   });
 }
 

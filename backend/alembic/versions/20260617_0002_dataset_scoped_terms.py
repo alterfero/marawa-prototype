@@ -33,6 +33,39 @@ assignment_status_enum = sa.Enum("pending", "validated", name="assignmentstatus"
 term_kind_enum = sa.Enum("trope", "keyword", name="termkind", native_enum=False)
 
 
+def _recover_interrupted_sqlite_upgrade(bind: sa.Connection) -> None:
+    inspector = sa.inspect(bind)
+    table_names = set(inspector.get_table_names())
+    staging_tables = {
+        "tropes_scoped",
+        "keywords_scoped",
+        "story_tropes_scoped",
+        "story_keywords_scoped",
+    }
+    legacy_tables = {"tropes", "keywords", "story_tropes", "story_keywords"}
+
+    if not (staging_tables & table_names):
+        return
+
+    if legacy_tables.issubset(table_names):
+        # SQLite DDL is non-transactional, so an interrupted first attempt can
+        # leave staging tables behind while the legacy schema is still intact.
+        for table_name in (
+            "story_keywords_scoped",
+            "story_tropes_scoped",
+            "keywords_scoped",
+            "tropes_scoped",
+        ):
+            if table_name in table_names:
+                op.drop_table(table_name)
+        return
+
+    raise RuntimeError(
+        "Cannot recover interrupted 20260617_0002 migration automatically because the legacy "
+        "term tables are missing. Restore the database from backup or recreate the local SQLite DB."
+    )
+
+
 def _create_scoped_term_tables() -> tuple[sa.Table, sa.Table, sa.Table, sa.Table]:
     tropes = op.create_table(
         "tropes_scoped",
@@ -573,6 +606,7 @@ def _populate_global_terms(
 
 def upgrade() -> None:
     bind = op.get_bind()
+    _recover_interrupted_sqlite_upgrade(bind)
     metadata = sa.MetaData()
     datasets = sa.Table("datasets", metadata, autoload_with=bind)
     stories = sa.Table("stories", metadata, autoload_with=bind)

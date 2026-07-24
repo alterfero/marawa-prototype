@@ -236,6 +236,10 @@ export interface CreateTropeResponse {
   created: boolean;
 }
 
+export interface UpdateTropeResponse {
+  trope: CanonicalTropeListItem;
+}
+
 export interface UpdateTropeConfirmationResponse {
   trope: CanonicalTropeListItem;
 }

@@ -571,6 +571,33 @@ p {
   align-items: flex-start;
 }
 
+.trope-management-row {
+  gap: 0.75rem;
+}
+
+.trope-management-row:focus-visible {
+  outline: 2px solid rgba(46, 126, 131, 0.26);
+  outline-offset: 2px;
+}
+
+.trope-management-row-title {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.trope-management-row-actions {
+  display: grid;
+  gap: 0.65rem;
+  justify-items: end;
+  align-content: start;
+  flex: 0 0 auto;
+}
+
+.trope-management-row-actions .button-row {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .trope-management-confirmation-card {
   gap: 0.85rem;
 }

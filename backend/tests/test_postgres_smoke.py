@@ -42,7 +42,7 @@ def test_postgres_smoke_migrations_and_job_runner() -> None:
 
     with engine.connect() as connection:
         version = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-    assert version == "20260617_0004"
+    assert version == "20260721_0006"
 
     SessionLocal = build_session_factory(engine)
 

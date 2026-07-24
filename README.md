@@ -17,7 +17,9 @@ For backend deployment outside Railway, including a university-managed PostgreSQ
 
 ```bash
 cd backend
-MARAWA_DATABASE_URL="$(../scripts/local_postgres.sh url dev)" ../.venv/bin/python -m uvicorn app.main:app --reload --port 8000
+MARAWA_DATABASE_URL="$(../scripts/local_postgres.sh url dev)" 
+../.venv/bin/python -m uvicorn app.main:app --reload --port 8000
+
 ```
 
 - Frontend:

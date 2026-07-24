@@ -23,29 +23,43 @@ trope_confirmation_status_enum = sa.Enum(
 )
 
 
+def _set_sqlite_foreign_keys(enabled: bool) -> None:
+    bind = op.get_bind()
+    if bind.dialect.name == "sqlite":
+        bind.exec_driver_sql(f"PRAGMA foreign_keys={'ON' if enabled else 'OFF'}")
+
+
 def upgrade() -> None:
-    with op.batch_alter_table("tropes", recreate="auto") as batch_op:
-        batch_op.add_column(
-            sa.Column(
-                "version",
-                sa.Integer(),
-                nullable=False,
-                server_default="1",
+    _set_sqlite_foreign_keys(False)
+    try:
+        with op.batch_alter_table("tropes", recreate="auto") as batch_op:
+            batch_op.add_column(
+                sa.Column(
+                    "version",
+                    sa.Integer(),
+                    nullable=False,
+                    server_default="1",
+                )
             )
-        )
-        batch_op.add_column(
-            sa.Column(
-                "confirmation_status",
-                trope_confirmation_status_enum,
-                nullable=False,
-                server_default="unconfirmed",
+            batch_op.add_column(
+                sa.Column(
+                    "confirmation_status",
+                    trope_confirmation_status_enum,
+                    nullable=False,
+                    server_default="unconfirmed",
+                )
             )
-        )
-        batch_op.create_index("ix_tropes_confirmation_status", ["confirmation_status"], unique=False)
+            batch_op.create_index("ix_tropes_confirmation_status", ["confirmation_status"], unique=False)
+    finally:
+        _set_sqlite_foreign_keys(True)
 
 
 def downgrade() -> None:
-    with op.batch_alter_table("tropes", recreate="auto") as batch_op:
-        batch_op.drop_index("ix_tropes_confirmation_status")
-        batch_op.drop_column("confirmation_status")
-        batch_op.drop_column("version")
+    _set_sqlite_foreign_keys(False)
+    try:
+        with op.batch_alter_table("tropes", recreate="auto") as batch_op:
+            batch_op.drop_index("ix_tropes_confirmation_status")
+            batch_op.drop_column("confirmation_status")
+            batch_op.drop_column("version")
+    finally:
+        _set_sqlite_foreign_keys(True)

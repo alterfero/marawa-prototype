@@ -1,14 +1,19 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   ApiError,
+  deleteTrope,
   getCanonicalTropes,
   getErrorMessage,
   getStories,
+  mergeTropes,
+  searchTropes,
+  updateCanonicalTrope,
   updateTropeConfirmationStatus,
 } from "../api/client";
 import { ExplorationFilterSetTropePicker } from "../components/ExplorationFilterSetTropePicker";
 import { StorySummaryCard } from "../components/StorySummaryCard";
+import { TropeCard } from "../components/TropeCard";
 import {
   createEmptyStoryFieldFilter,
   filterStoriesBySelectedTropes,
@@ -23,7 +28,9 @@ import type {
   ExplorationAppliedTropeFilter,
   StorySummary,
   TropeConfirmationStatus,
+  TropeSearchItem,
 } from "../api/types";
+import { normalizeDraftText } from "../constants/csv";
 import { routeHref, useHashSearch } from "../router";
 
 interface PageNotice {
@@ -61,6 +68,10 @@ export function TropeManagementView() {
   const [stories, setStories] = useState<StorySummary[]>([]);
   const [tropes, setTropes] = useState<CanonicalTropeListItem[]>([]);
   const [selectedTropeId, setSelectedTropeId] = useState<string | null>(null);
+  const [editingTropeId, setEditingTropeId] = useState<string | null>(null);
+  const [editingTropeQuery, setEditingTropeQuery] = useState("");
+  const [editingTropeResults, setEditingTropeResults] = useState<TropeSearchItem[]>([]);
+  const [editingTropeSearchStatus, setEditingTropeSearchStatus] = useState<"idle" | "loading" | "ready">("idle");
   const [draftFilters, setDraftFilters] = useState<StoryFieldFilter[]>([]);
   const [appliedFilters, setAppliedFilters] = useState<StoryFieldFilter[]>([]);
   const [tropeQuery, setTropeQuery] = useState("");
@@ -70,6 +81,22 @@ export function TropeManagementView() {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<PageNotice | null>(null);
   const selectedTropeParam = new URLSearchParams(hashSearch).get("selected_trope_id");
+  const editingTrope = tropes.find((trope) => trope.id === editingTropeId) ?? null;
+
+  function resetTropeEditor() {
+    setEditingTropeId(null);
+    setEditingTropeQuery("");
+    setEditingTropeResults([]);
+    setEditingTropeSearchStatus("idle");
+  }
+
+  function handleStartEditingTrope(trope: CanonicalTropeListItem) {
+    setSelectedTropeId(trope.id);
+    setEditingTropeId(trope.id);
+    setEditingTropeQuery(trope.text);
+    setEditingTropeResults([]);
+    setEditingTropeSearchStatus("idle");
+  }
 
   async function refresh(options?: { clearNotice?: boolean }) {
     try {
@@ -97,6 +124,52 @@ export function TropeManagementView() {
   useEffect(() => {
     void refresh();
   }, []);
+
+  useEffect(() => {
+    if (!editingTropeId) {
+      setEditingTropeResults([]);
+      setEditingTropeSearchStatus("idle");
+      return;
+    }
+
+    const trimmedQuery = editingTropeQuery.trim();
+    if (!trimmedQuery) {
+      setEditingTropeResults([]);
+      setEditingTropeSearchStatus("idle");
+      return;
+    }
+
+    let cancelled = false;
+    const timeoutId = window.setTimeout(() => {
+      void (async () => {
+        try {
+          setEditingTropeSearchStatus("loading");
+          const result = await searchTropes({ query: trimmedQuery, limit: 8 });
+          if (cancelled) {
+            return;
+          }
+          setEditingTropeResults(result.items);
+          setEditingTropeSearchStatus("ready");
+        } catch (caughtError) {
+          if (cancelled) {
+            return;
+          }
+          setEditingTropeResults([]);
+          setEditingTropeSearchStatus("ready");
+          setNotice({
+            tone: "error",
+            title: "Could not search replacement tropes",
+            body: getErrorMessage(caughtError),
+          });
+        }
+      })();
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [editingTropeId, editingTropeQuery]);
 
   const storiesMatchingDraftSelectedTropes = useMemo(
     () => filterStoriesBySelectedTropes(stories, draftSelectedTropes),
@@ -159,6 +232,12 @@ export function TropeManagementView() {
     }
     setSelectedTropeId(visibleTropes[0]?.id || null);
   }, [selectedTropeId, selectedTropeParam, visibleTropes]);
+
+  useEffect(() => {
+    if (editingTropeId && !tropes.some((trope) => trope.id === editingTropeId)) {
+      resetTropeEditor();
+    }
+  }, [editingTropeId, tropes]);
 
   const selectedTrope = visibleTropes.find((trope) => trope.id === selectedTropeId) ?? null;
   const storiesById = useMemo(() => new Map(stories.map((story) => [story.id, story])), [stories]);
@@ -248,6 +327,133 @@ export function TropeManagementView() {
     setAppliedSelectedTropes([]);
   }
 
+  function handleTropeRowKeyDown(event: KeyboardEvent<HTMLElement>, tropeId: string) {
+    if (loading || busy) {
+      return;
+    }
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      setSelectedTropeId(tropeId);
+    }
+  }
+
+  async function handleTropeVersionConflict(title: string) {
+    await refresh({ clearNotice: false });
+    resetTropeEditor();
+    setNotice({
+      tone: "error",
+      title,
+      body: "This trope changed in another browser session. The list has been refreshed with the latest version.",
+    });
+  }
+
+  async function handleRenameTrope(trope: CanonicalTropeListItem) {
+    if (!editingTropeQuery.trim()) {
+      return;
+    }
+
+    try {
+      setBusy(true);
+      setNotice(null);
+      await updateCanonicalTrope({
+        trope_id: trope.id,
+        expected_trope_version: trope.version,
+        text: editingTropeQuery.trim(),
+      });
+      setSelectedTropeId(trope.id);
+      await refresh({ clearNotice: false });
+      resetTropeEditor();
+      setNotice({
+        tone: "success",
+        title: "Trope edited",
+        body: "The canonical trope text was updated everywhere it is used.",
+      });
+    } catch (caughtError) {
+      if (isTropeVersionConflict(caughtError)) {
+        await handleTropeVersionConflict("Could not edit trope");
+        return;
+      }
+      setNotice({
+        tone: "error",
+        title: "Could not edit trope",
+        body: getErrorMessage(caughtError),
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleMergeEditedTrope(sourceTrope: CanonicalTropeListItem, targetTropeId: string) {
+    try {
+      setBusy(true);
+      setNotice(null);
+      setSelectedTropeId(targetTropeId);
+      const result = await mergeTropes({
+        source_trope_id: sourceTrope.id,
+        target_trope_id: targetTropeId,
+      });
+      await refresh({ clearNotice: false });
+      resetTropeEditor();
+      setNotice({
+        tone: "success",
+        title: "Trope edited",
+        body: `Merged this trope into an existing canonical trope across ${result.affected_story_count} stor${
+          result.affected_story_count === 1 ? "y" : "ies"
+        }. Run Rebuild in the menu when you want fresh derived artifacts.`,
+      });
+    } catch (caughtError) {
+      setNotice({
+        tone: "error",
+        title: "Could not merge trope",
+        body: getErrorMessage(caughtError),
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDeleteTrope(trope: CanonicalTropeListItem) {
+    const confirmed = window.confirm(
+      trope.story_count > 0
+        ? `Delete trope "${trope.text}" from all ${trope.story_count} stor${
+            trope.story_count === 1 ? "y" : "ies"
+          } and remove the canonical trope?\n\nRebuilds are manual, so use Rebuild in the menu afterward if you want fresh derived artifacts.`
+        : `Delete unused trope "${trope.text}"?\n\nRebuilds are manual, so use Rebuild in the menu afterward if you want fresh derived artifacts.`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setBusy(true);
+      setNotice(null);
+      if (selectedTropeId === trope.id) {
+        setSelectedTropeId(null);
+      }
+      const result = await deleteTrope(trope.id, trope.story_count > 0);
+      await refresh({ clearNotice: false });
+      resetTropeEditor();
+      setNotice({
+        tone: "success",
+        title: "Trope deleted",
+        body:
+          result.affected_story_count > 0
+            ? `Deleted the canonical trope and removed it from ${result.affected_story_count} stor${
+                result.affected_story_count === 1 ? "y" : "ies"
+              }. Run Rebuild in the menu when you want fresh derived artifacts.`
+            : "Deleted the unused canonical trope.",
+      });
+    } catch (caughtError) {
+      setNotice({
+        tone: "error",
+        title: "Could not delete trope",
+        body: getErrorMessage(caughtError),
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleUpdateConfirmationStatus(nextStatus: TropeConfirmationStatus) {
     if (!selectedTrope) {
       return;
@@ -277,12 +483,7 @@ export function TropeManagementView() {
       });
     } catch (caughtError) {
       if (isTropeVersionConflict(caughtError)) {
-        await refresh({ clearNotice: false });
-        setNotice({
-          tone: "error",
-          title: "Could not update trope confirmation",
-          body: "This trope changed in another browser session. The list has been refreshed with the latest version.",
-        });
+        await handleTropeVersionConflict("Could not update trope confirmation");
       } else {
         setNotice({
           tone: "error",
@@ -369,27 +570,145 @@ export function TropeManagementView() {
           <div className="list story-browser-list">
             {loading ? <p className="muted">Loading tropes...</p> : null}
             {!loading && visibleTropes.length === 0 ? <p className="muted">No tropes match the current filters.</p> : null}
-            {visibleTropes.map((trope) => (
-              <button
-                className={`list-row ${trope.id === selectedTropeId ? "list-row-active" : ""}`.trim()}
-                disabled={loading || busy}
-                key={trope.id}
-                onClick={() => setSelectedTropeId(trope.id)}
-                type="button"
-              >
-                <div className="card-row trope-management-row-top">
-                  <strong>{trope.text}</strong>
-                  <span
-                    className={`story-completeness-badge trope-confirmation-badge trope-confirmation-${trope.confirmation_status}`}
-                  >
-                    {confirmationStatusLabel(trope.confirmation_status)}
-                  </span>
-                </div>
-                <span className="muted">
-                  {trope.story_count} stor{trope.story_count === 1 ? "y" : "ies"}
-                </span>
-              </button>
-            ))}
+            {visibleTropes.map((trope) => {
+              const isEditing = editingTropeId === trope.id;
+              return (
+                <article
+                  aria-pressed={trope.id === selectedTropeId}
+                  className={`list-row trope-management-row ${trope.id === selectedTropeId ? "list-row-active" : ""}`.trim()}
+                  key={trope.id}
+                  onClick={() => {
+                    if (!loading && !busy) {
+                      setSelectedTropeId(trope.id);
+                    }
+                  }}
+                  onKeyDown={(event) => handleTropeRowKeyDown(event, trope.id)}
+                  role="button"
+                  tabIndex={loading || busy ? -1 : 0}
+                >
+                  <div className="card-row trope-management-row-top">
+                    <div className="trope-management-row-title">
+                      <strong>{trope.text}</strong>
+                      <span className="muted">
+                        {trope.story_count} stor{trope.story_count === 1 ? "y" : "ies"}
+                      </span>
+                    </div>
+                    <div
+                      className="trope-management-row-actions"
+                      onClick={(event) => event.stopPropagation()}
+                      onKeyDown={(event) => event.stopPropagation()}
+                    >
+                      <span
+                        className={`story-completeness-badge trope-confirmation-badge trope-confirmation-${trope.confirmation_status}`}
+                      >
+                        {confirmationStatusLabel(trope.confirmation_status)}
+                      </span>
+                      <div className="button-row">
+                        <button
+                          className="button button-ghost"
+                          disabled={loading || busy}
+                          onClick={() => {
+                            if (isEditing) {
+                              resetTropeEditor();
+                              return;
+                            }
+                            handleStartEditingTrope(trope);
+                          }}
+                          type="button"
+                        >
+                          {isEditing ? "Cancel edit" : "Edit"}
+                        </button>
+                        <button
+                          className="button button-danger"
+                          disabled={loading || busy}
+                          onClick={() => void handleDeleteTrope(trope)}
+                          type="button"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {isEditing ? (
+                    <div
+                      className="card subdued trope-card-editor"
+                      onClick={(event) => event.stopPropagation()}
+                      onKeyDown={(event) => event.stopPropagation()}
+                    >
+                      <label className="field">
+                        <span>Edit trope</span>
+                        <input
+                          className="input"
+                          disabled={loading || busy}
+                          onChange={(event) => setEditingTropeQuery(event.target.value)}
+                          placeholder="Type a replacement trope or reuse a similar existing one"
+                          value={editingTropeQuery}
+                        />
+                      </label>
+
+                      <div className="button-row wrap-row">
+                        <button
+                          className="button"
+                          disabled={
+                            loading ||
+                            busy ||
+                            !editingTropeQuery.trim() ||
+                            (editingTrope ? editingTropeQuery.trim() === editingTrope.text : true)
+                          }
+                          onClick={() => void handleRenameTrope(trope)}
+                          type="button"
+                        >
+                          Save typed trope
+                        </button>
+                        <button className="button button-ghost" disabled={loading || busy} onClick={resetTropeEditor} type="button">
+                          Cancel
+                        </button>
+                      </div>
+
+                      <div className="stack">
+                        <div className="panel-header">
+                          <h3>Similar existing tropes</h3>
+                          <span className="pill">
+                            {editingTropeSearchStatus === "loading" ? "searching" : `${editingTropeResults.length} results`}
+                          </span>
+                        </div>
+                        {editingTropeQuery.trim() && editingTropeSearchStatus === "loading" ? (
+                          <p className="muted">Searching tropes...</p>
+                        ) : null}
+                        {editingTropeQuery.trim() &&
+                        editingTropeSearchStatus === "ready" &&
+                        editingTropeResults.length === 0 ? (
+                          <p className="muted">No similar tropes were returned for this query.</p>
+                        ) : null}
+                        {editingTropeResults.map((item) => {
+                          const isCurrentTrope = item.id === trope.id;
+                          const sameNormalizedText = normalizeDraftText(item.text) === normalizeDraftText(trope.text);
+                          return (
+                            <TropeCard
+                              compact
+                              key={`edit-${trope.id}-${item.id}`}
+                              onOpen={() => setSelectedTropeId(item.id)}
+                              trope={item}
+                              actions={
+                                <button
+                                  className="button button-ghost"
+                                  disabled={loading || busy || isCurrentTrope}
+                                  onClick={() => void handleMergeEditedTrope(trope, item.id)}
+                                  type="button"
+                                >
+                                  {isCurrentTrope ? "Current trope" : sameNormalizedText ? "Merge duplicate" : "Use existing trope"}
+                                </button>
+                              }
+                            />
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : null}
+                </article>
+              );
+            })}
           </div>
         </aside>
 

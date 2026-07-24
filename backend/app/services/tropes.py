@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import case, select
+from sqlalchemy import case, delete, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -10,6 +10,8 @@ from app.db.models import (
     DatasetStatus,
     Story,
     StoryTrope,
+    TermEmbedding,
+    TermSimilarityCache,
     TermKind,
     TermReviewStatus,
     Trope,
@@ -18,6 +20,7 @@ from app.db.models import (
 )
 from app.services.audit import record_audit_event
 from app.services.reviews import queue_term_review_item
+from app.services.stories import sync_story_derived_fields
 
 
 TITLE_FIELDS = [
@@ -245,6 +248,78 @@ def set_trope_confirmation_status(
     return _serialize_trope_summary(trope)
 
 
+def update_trope_text(
+    session: Session,
+    trope_id: str,
+    *,
+    expected_version: int,
+    text: str,
+    actor_user_id: str,
+) -> dict:
+    active_dataset = _get_active_dataset(session)
+    tropes_by_id = _get_active_tropes_by_id(session, active_dataset.id, [trope_id])
+    trope = tropes_by_id[trope_id]
+
+    if expected_version < 1:
+        raise TropeMutationValidationError("Expected trope version must be at least 1.")
+
+    if trope.version != expected_version:
+        raise TropeVersionConflictError(
+            f"Trope version conflict: expected version {expected_version}, current version is {trope.version}."
+        )
+
+    trope_text = clean_text(text)
+    marker = normalize_text(trope_text)
+    if not marker:
+        raise TropeMutationValidationError("Trope text cannot be empty.")
+
+    existing_trope = session.scalar(
+        select(Trope).where(
+            Trope.dataset_id == active_dataset.id,
+            Trope.normalized_text == marker,
+            Trope.id != trope.id,
+        )
+    )
+    if existing_trope is not None:
+        raise TropeMutationValidationError("Another canonical trope already uses that text. Merge into it instead.")
+
+    if trope.text == trope_text:
+        return _serialize_trope_summary(trope)
+
+    previous_text = trope.text
+    trope.text = trope_text
+    trope.version += 1
+    trope.updated_by_user_id = actor_user_id
+
+    affected_stories = session.scalars(
+        select(Story).join(StoryTrope, StoryTrope.story_id == Story.id).where(StoryTrope.trope_id == trope.id)
+    ).all()
+    for story in affected_stories:
+        sync_story_derived_fields(story)
+        story.version += 1
+
+    _delete_trope_artifacts(session, trope.id)
+    active_dataset.version += 1
+    record_audit_event(
+        session,
+        event_type="trope.text_updated",
+        actor_user_id=actor_user_id,
+        dataset_id=active_dataset.id,
+        subject_table="tropes",
+        subject_id=trope.id,
+        payload={
+            "previous_text": previous_text,
+            "text": trope.text,
+            "affected_story_count": len(affected_stories),
+            "rebuild_queued": False,
+            "version": trope.version,
+        },
+    )
+    session.flush()
+    session.commit()
+    return _serialize_trope_summary(trope)
+
+
 def set_trope_confirmation_statuses(
     session: Session,
     *,
@@ -299,3 +374,16 @@ def _serialize_trope_summary(trope: Trope) -> dict:
         "confirmation_status": trope.confirmation_status.value,
         "story_count": int(trope.cached_story_count or 0),
     }
+
+
+def _delete_trope_artifacts(session: Session, trope_id: str) -> None:
+    session.execute(
+        delete(TermSimilarityCache).where(
+            TermSimilarityCache.term_kind == TermKind.TROPE,
+            or_(
+                TermSimilarityCache.source_term_id == trope_id,
+                TermSimilarityCache.target_term_id == trope_id,
+            ),
+        )
+    )
+    session.execute(delete(TermEmbedding).where(TermEmbedding.trope_id == trope_id))

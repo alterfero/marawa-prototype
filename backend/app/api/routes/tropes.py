@@ -14,6 +14,7 @@ from app.services.tropes import (
     ensure_canonical_trope,
     get_trope_detail,
     set_trope_confirmation_status,
+    update_trope_text,
 )
 
 
@@ -66,6 +67,15 @@ class TropeDetailResponse(BaseModel):
 class UpdateTropeConfirmationRequest(BaseModel):
     expected_trope_version: int = Field(ge=1)
     confirmation_status: TropeConfirmationStatus
+
+
+class UpdateTropeRequest(BaseModel):
+    expected_trope_version: int = Field(ge=1)
+    text: str = Field(min_length=1)
+
+
+class UpdateTropeResponse(BaseModel):
+    trope: TropeListItemResponse
 
 
 class UpdateTropeConfirmationResponse(BaseModel):
@@ -137,6 +147,33 @@ def create_canonical_trope(
     return CreateTropeResponse(
         trope=TropeListItemResponse(**trope),
         created=created,
+    )
+
+
+@router.put("/{trope_id}", response_model=UpdateTropeResponse)
+def update_canonical_trope(
+    trope_id: str,
+    payload: UpdateTropeRequest,
+    auth_context: AuthSessionContext = Depends(require_minimum_role_with_csrf(UserRole.ADMIN)),
+    session: Session = Depends(get_db_session),
+) -> UpdateTropeResponse:
+    try:
+        trope = update_trope_text(
+            session,
+            trope_id,
+            expected_version=payload.expected_trope_version,
+            text=payload.text,
+            actor_user_id=auth_context.user.id,
+        )
+    except TropeLookupNotFoundError as exc:
+        raise api_error(404, "trope_not_found", str(exc)) from exc
+    except TropeVersionConflictError as exc:
+        raise api_error(409, "trope_version_conflict", str(exc)) from exc
+    except TropeMutationValidationError as exc:
+        raise api_error(400, "trope_mutation_invalid", str(exc)) from exc
+
+    return UpdateTropeResponse(
+        trope=TropeListItemResponse(**trope),
     )
 
 
