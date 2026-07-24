@@ -1,5 +1,5 @@
 import L from "leaflet";
-import { Component, type ReactNode, FormEvent, useEffect, useRef, useState } from "react";
+import { Component, type ReactNode, FormEvent, useEffect, useId, useRef, useState } from "react";
 
 import { buildExplorationNetwork, getErrorMessage, getStories } from "../api/client";
 import { ExplorationFilterSetTropePicker } from "../components/ExplorationFilterSetTropePicker";
@@ -33,8 +33,14 @@ const DEFAULT_CENTER: [number, number] = [0, 0];
 const DEFAULT_ZOOM = 2;
 const SINGLE_POINT_ZOOM = 6;
 const FILTER_SET_PALETTE = ["#1d4ed8", "#d97706", "#15803d", "#b91c1c", "#7c3aed", "#0f766e"];
+const ORIGINAL_DENSITY_COLOR = "#d7263d";
+const RELATED_DENSITY_COLOR = "#2c7bb6";
+const DENSITY_RADIUS = 72;
+const DENSITY_RADIUS_MIN = 44;
+const DENSITY_RADIUS_MAX = 92;
 
 type CoordinatePair = [number, number];
+type MapRenderMode = "markers" | "density";
 type ExplorationFilterSetState = {
   id: number;
   color: string;
@@ -53,10 +59,24 @@ type VisibleExplorationMarker = ExplorationMarker & {
   coordinates: CoordinatePair;
   has_location: true;
 };
+type DensityPoint = {
+  coordinates: CoordinatePair;
+  weight: number;
+};
+type DensityGroup = {
+  id: string;
+  label: string;
+  color: string;
+  points: DensityPoint[];
+};
 type RenderableConnection = ExplorationConnection & {
   source_coordinates: CoordinatePair;
   target_coordinates: CoordinatePair;
 };
+
+function clamp(value: number, minimum: number, maximum: number): number {
+  return Math.min(maximum, Math.max(minimum, value));
+}
 
 function isFiniteCoordinatePair(value: unknown): value is CoordinatePair {
   return (
@@ -102,6 +122,42 @@ function sanitizeBounds(bounds: number[][] | null): [CoordinatePair, CoordinateP
   }
 
   return [southWest, northEast];
+}
+
+function colorToRgb(color: string): [number, number, number] {
+  const normalized = color.trim();
+  const hexMatch = normalized.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+  if (hexMatch) {
+    const hex = hexMatch[1];
+    if (hex.length === 3) {
+      return [
+        Number.parseInt(`${hex[0]}${hex[0]}`, 16),
+        Number.parseInt(`${hex[1]}${hex[1]}`, 16),
+        Number.parseInt(`${hex[2]}${hex[2]}`, 16),
+      ];
+    }
+    return [
+      Number.parseInt(hex.slice(0, 2), 16),
+      Number.parseInt(hex.slice(2, 4), 16),
+      Number.parseInt(hex.slice(4, 6), 16),
+    ];
+  }
+
+  const rgbMatch = normalized.match(/^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})/i);
+  if (rgbMatch) {
+    return [
+      clamp(Number.parseInt(rgbMatch[1], 10), 0, 255),
+      clamp(Number.parseInt(rgbMatch[2], 10), 0, 255),
+      clamp(Number.parseInt(rgbMatch[3], 10), 0, 255),
+    ];
+  }
+
+  return [31, 113, 119];
+}
+
+function colorWithAlpha(color: string, alpha: number): string {
+  const [red, green, blue] = colorToRgb(color);
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
 }
 
 function computeBoundsFromMarkers(
@@ -259,6 +315,201 @@ function buildExplorationMapDataSignature(
       similarity: connection.similarity,
     })),
   });
+}
+
+function buildDensityGroups(
+  markers: VisibleExplorationMarker[],
+  filterSetLegends?: FilterSetLegend[],
+): DensityGroup[] {
+  if (!markers.length) {
+    return [];
+  }
+
+  if (filterSetLegends && filterSetLegends.length > 0) {
+    const groups = new Map<string, DensityGroup>(
+      filterSetLegends.map((legend) => [
+        legend.id,
+        {
+          id: legend.id,
+          label: legend.label,
+          color: legend.color,
+          points: [],
+        },
+      ]),
+    );
+
+    markers.forEach((marker) => {
+      const groupId = marker.filter_set_id ?? marker.color;
+      const group = groups.get(groupId) ?? {
+        id: groupId,
+        label: marker.filter_set_label ?? "Stories",
+        color: marker.color,
+        points: [],
+      };
+      group.points.push({
+        coordinates: marker.coordinates,
+        weight: marker.kind === "original" ? 1 : 0.72,
+      });
+      groups.set(groupId, group);
+    });
+
+    return Array.from(groups.values()).filter((group) => group.points.length > 0);
+  }
+
+  const originalStories: DensityGroup = {
+    id: "original",
+    label: "Original stories",
+    color: ORIGINAL_DENSITY_COLOR,
+    points: [],
+  };
+  const relatedStories: DensityGroup = {
+    id: "related",
+    label: "Related stories",
+    color: RELATED_DENSITY_COLOR,
+    points: [],
+  };
+
+  markers.forEach((marker) => {
+    const targetGroup = marker.kind === "original" ? originalStories : relatedStories;
+    targetGroup.points.push({
+      coordinates: marker.coordinates,
+      weight: marker.kind === "original" ? 1 : 0.78,
+    });
+  });
+
+  return [originalStories, relatedStories].filter((group) => group.points.length > 0);
+}
+
+function buildDensityDataSignature(groups: DensityGroup[]): string {
+  return JSON.stringify(
+    groups.map((group) => ({
+      id: group.id,
+      color: group.color,
+      label: group.label,
+      points: group.points.map((point) => ({
+        coordinates: point.coordinates,
+        weight: point.weight,
+      })),
+    })),
+  );
+}
+
+class ExplorationDensityLayer extends L.Layer {
+  private activeMap: L.Map | null = null;
+  private canvasElement: HTMLCanvasElement | null = null;
+  private groups: DensityGroup[] = [];
+  private isVisible = false;
+
+  onAdd(map: L.Map): this {
+    this.activeMap = map;
+    this.canvasElement = L.DomUtil.create("canvas", "exploration-density-layer") as HTMLCanvasElement;
+    this.canvasElement.style.pointerEvents = "none";
+    this.canvasElement.setAttribute("aria-hidden", "true");
+    map.getPanes().overlayPane.appendChild(this.canvasElement);
+    map.on("moveend zoomend resize viewreset", this.resetCanvas, this);
+    this.resetCanvas();
+    this.updateVisibility();
+    return this;
+  }
+
+  onRemove(map: L.Map): this {
+    map.off("moveend zoomend resize viewreset", this.resetCanvas, this);
+    if (this.canvasElement) {
+      L.DomUtil.remove(this.canvasElement);
+      this.canvasElement = null;
+    }
+    this.activeMap = null;
+    return this;
+  }
+
+  setGroups(groups: DensityGroup[]): this {
+    this.groups = groups;
+    this.redraw();
+    return this;
+  }
+
+  setVisible(isVisible: boolean): this {
+    this.isVisible = isVisible;
+    this.updateVisibility();
+    this.redraw();
+    return this;
+  }
+
+  private updateVisibility(): void {
+    if (!this.canvasElement) {
+      return;
+    }
+    this.canvasElement.style.display = this.isVisible ? "block" : "none";
+  }
+
+  private resetCanvas = (): void => {
+    if (!this.activeMap || !this.canvasElement) {
+      return;
+    }
+
+    const size = this.activeMap.getSize();
+    const pixelRatio = window.devicePixelRatio || 1;
+    const topLeft = this.activeMap.containerPointToLayerPoint([0, 0]);
+
+    L.DomUtil.setPosition(this.canvasElement, topLeft);
+    this.canvasElement.width = Math.max(1, Math.round(size.x * pixelRatio));
+    this.canvasElement.height = Math.max(1, Math.round(size.y * pixelRatio));
+    this.canvasElement.style.width = `${size.x}px`;
+    this.canvasElement.style.height = `${size.y}px`;
+    this.redraw();
+  };
+
+  private redraw(): void {
+    if (!this.activeMap || !this.canvasElement) {
+      return;
+    }
+
+    const context = this.canvasElement.getContext("2d");
+    if (!context) {
+      return;
+    }
+
+    const map = this.activeMap;
+    if (!map) {
+      return;
+    }
+
+    const pixelRatio = window.devicePixelRatio || 1;
+
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.clearRect(0, 0, this.canvasElement.width, this.canvasElement.height);
+
+    if (!this.isVisible || this.groups.length === 0) {
+      return;
+    }
+
+    context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+    context.globalCompositeOperation = "source-over";
+
+    const radius = clamp(
+      DENSITY_RADIUS + (DEFAULT_ZOOM - map.getZoom()) * 4,
+      DENSITY_RADIUS_MIN,
+      DENSITY_RADIUS_MAX,
+    );
+
+    this.groups.forEach((group) => {
+      group.points.forEach((point) => {
+        const pixelPoint = map.latLngToContainerPoint(point.coordinates);
+
+        const strength = clamp(0.16 * point.weight, 0.09, 0.24);
+        const gradient = context.createRadialGradient(pixelPoint.x, pixelPoint.y, 0, pixelPoint.x, pixelPoint.y, radius);
+        gradient.addColorStop(0, colorWithAlpha(group.color, strength));
+        gradient.addColorStop(0.34, colorWithAlpha(group.color, strength * 0.82));
+        gradient.addColorStop(0.7, colorWithAlpha(group.color, strength * 0.36));
+        gradient.addColorStop(1, colorWithAlpha(group.color, 0));
+
+        context.fillStyle = gradient;
+        context.beginPath();
+        context.arc(pixelPoint.x, pixelPoint.y, radius, 0, Math.PI * 2);
+        context.fill();
+      });
+    });
+  }
 }
 
 function MissingLocationList({
@@ -469,10 +720,15 @@ function ExplorationMap({
   bounds: [CoordinatePair, CoordinatePair] | null;
   filterSetLegends?: FilterSetLegend[];
 }) {
+  const mapViewId = useId();
   const mapElementRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
   const overlayLayerRef = useRef<L.LayerGroup | null>(null);
+  const densityLayerRef = useRef<ExplorationDensityLayer | null>(null);
+  const [renderMode, setRenderMode] = useState<MapRenderMode>("markers");
   const dataSignature = buildExplorationMapDataSignature(markers, connections, bounds);
+  const densityGroups = buildDensityGroups(markers, filterSetLegends);
+  const densitySignature = buildDensityDataSignature(densityGroups);
 
   useEffect(() => {
     if (!mapElementRef.current || mapRef.current) {
@@ -490,12 +746,15 @@ function ExplorationMap({
     }).addTo(map);
 
     const overlayLayer = L.layerGroup().addTo(map);
+    const densityLayer = new ExplorationDensityLayer().addTo(map);
     mapRef.current = map;
     overlayLayerRef.current = overlayLayer;
+    densityLayerRef.current = densityLayer;
 
     return () => {
       overlayLayer.clearLayers();
       overlayLayerRef.current = null;
+      densityLayerRef.current = null;
       map.remove();
       mapRef.current = null;
     };
@@ -504,38 +763,44 @@ function ExplorationMap({
   useEffect(() => {
     const map = mapRef.current;
     const overlayLayer = overlayLayerRef.current;
-    if (!map || !overlayLayer) {
+    const densityLayer = densityLayerRef.current;
+    if (!map || !overlayLayer || !densityLayer) {
       return;
     }
 
     overlayLayer.clearLayers();
 
-    connections.forEach((connection) => {
-      L.polyline([connection.source_coordinates, connection.target_coordinates], {
-        color: connection.color,
-        opacity: 0.62,
-        weight: 2,
-      }).addTo(overlayLayer);
-    });
+    if (renderMode === "markers") {
+      connections.forEach((connection) => {
+        L.polyline([connection.source_coordinates, connection.target_coordinates], {
+          color: connection.color,
+          opacity: 0.62,
+          weight: 2,
+        }).addTo(overlayLayer);
+      });
 
-    markers.forEach((marker) => {
-      L.circleMarker(marker.coordinates, {
-        color: marker.color,
-        fillColor: marker.color,
-        fillOpacity: marker.kind === "original" ? 0.88 : 0.62,
-        weight: marker.kind === "original" ? 2.5 : 1.5,
-        radius: marker.kind === "original" ? 9 : 7,
-      })
-        .bindTooltip(escapeHtml(marker.title), {
-          direction: "top",
-          opacity: 0.92,
-          sticky: true,
+      markers.forEach((marker) => {
+        L.circleMarker(marker.coordinates, {
+          color: marker.color,
+          fillColor: marker.color,
+          fillOpacity: marker.kind === "original" ? 0.88 : 0.62,
+          weight: marker.kind === "original" ? 2.5 : 1.5,
+          radius: marker.kind === "original" ? 9 : 7,
         })
-        .bindPopup(markerPopupHtml(marker), {
-          maxWidth: 320,
-        })
-        .addTo(overlayLayer);
-    });
+          .bindTooltip(escapeHtml(marker.title), {
+            direction: "top",
+            opacity: 0.92,
+            sticky: true,
+          })
+          .bindPopup(markerPopupHtml(marker), {
+            maxWidth: 320,
+          })
+          .addTo(overlayLayer);
+      });
+    }
+
+    densityLayer.setGroups(densityGroups);
+    densityLayer.setVisible(renderMode === "density");
 
     if (bounds) {
       const [southWest, northEast] = bounds;
@@ -553,7 +818,7 @@ function ExplorationMap({
     window.requestAnimationFrame(() => {
       map.invalidateSize();
     });
-  }, [dataSignature]);
+  }, [dataSignature, densitySignature, renderMode]);
 
   if (!markers.length && !connections.length) {
     return (
@@ -567,9 +832,51 @@ function ExplorationMap({
 
   return (
     <div className="map-shell">
+      <div className="map-toolbar">
+        <label className="field map-view-control" htmlFor={mapViewId}>
+          <span className="map-view-label">Map view</span>
+          <select
+            className="input map-view-select"
+            id={mapViewId}
+            onChange={(event) => setRenderMode(event.target.value as MapRenderMode)}
+            value={renderMode}
+          >
+            <option value="markers">Exact locations</option>
+            <option value="density">Density zones</option>
+          </select>
+        </label>
+      </div>
       <div className="map-canvas" ref={mapElementRef} />
       <div className="legend-row">
-        {filterSetLegends && filterSetLegends.length > 0 ? (
+        {renderMode === "density" ? (
+          filterSetLegends && filterSetLegends.length > 0 ? (
+            <>
+              {filterSetLegends.map((legend) => (
+                <span className="legend-item" key={legend.id}>
+                  <span className="legend-dot" style={{ background: legend.color }} />
+                  {legend.label}
+                </span>
+              ))}
+              <span className="legend-item">
+                Darker zones mean more stories. Switch back to exact locations to inspect individual stories.
+              </span>
+            </>
+          ) : (
+            <>
+              <span className="legend-item">
+                <span className="legend-dot legend-dot-original" />
+                Original story density
+              </span>
+              <span className="legend-item">
+                <span className="legend-dot legend-dot-related" />
+                Related story density
+              </span>
+              <span className="legend-item">
+                Darker zones mean more stories. Switch back to exact locations for markers and connections.
+              </span>
+            </>
+          )
+        ) : filterSetLegends && filterSetLegends.length > 0 ? (
           <>
             {filterSetLegends.map((legend) => (
               <span className="legend-item" key={legend.id}>

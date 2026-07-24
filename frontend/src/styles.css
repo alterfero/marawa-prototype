@@ -742,7 +742,32 @@ p {
   gap: 0.85rem;
 }
 
+.map-toolbar {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.map-view-control {
+  width: min(100%, 15rem);
+}
+
+.map-view-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #53737a;
+}
+
+.map-view-select {
+  appearance: none;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 245, 239, 0.94)),
+    #fffdf9;
+}
+
 .map-canvas {
+  position: relative;
   height: 42rem;
   overflow: hidden;
   border-radius: 1rem;
@@ -763,6 +788,12 @@ p {
   overflow-y: auto;
   overscroll-behavior: contain;
   padding-right: 0.25rem;
+}
+
+.exploration-density-layer {
+  mix-blend-mode: multiply;
+  opacity: 0.94;
+  filter: saturate(118%);
 }
 
 .legend-row {
