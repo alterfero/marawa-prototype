@@ -149,7 +149,7 @@ def test_admin_can_update_trope_confirmation_status_with_version_check(monkeypat
             f"/api/tropes/{trope['id']}/confirmation",
             json={
                 "expected_trope_version": trope["version"],
-                "confirmation_status": "confirmed",
+                "confirmation_status": "canonical",
             },
         )
 
@@ -164,7 +164,7 @@ def test_admin_can_update_trope_confirmation_status_with_version_check(monkeypat
     assert response.status_code == 200
     body = response.json()
     assert body["trope"]["id"] == trope["id"]
-    assert body["trope"]["confirmation_status"] == "confirmed"
+    assert body["trope"]["confirmation_status"] == "canonical"
     assert body["trope"]["version"] == 2
 
     assert stale_response.status_code == 409

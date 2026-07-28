@@ -552,8 +552,8 @@ p {
   color: #8a5425;
 }
 
-.trope-confirmation-confirmed,
-.trope-confirmation-toggle-confirmed {
+.trope-confirmation-canonical,
+.trope-confirmation-toggle-canonical {
   background: rgba(53, 133, 118, 0.16);
   border-color: rgba(53, 133, 118, 0.28);
   color: #1d6857;
@@ -608,6 +608,42 @@ p {
   align-items: center;
   justify-content: flex-end;
   flex-wrap: wrap;
+}
+
+.trope-management-selected-card .card-row,
+.trope-management-similar-trope-card .card-row {
+  align-items: flex-start;
+}
+
+.trope-management-selected-card .trope-card-header-right,
+.trope-management-similar-trope-card .trope-card-header-right {
+  justify-content: flex-end;
+}
+
+.trope-management-similar-section {
+  display: grid;
+  gap: 0.85rem;
+  padding-top: 0.25rem;
+  border-top: 1px solid rgba(19, 52, 59, 0.09);
+}
+
+.trope-management-similarity-threshold {
+  max-width: 22rem;
+}
+
+.trope-management-similar-trope-actions {
+  display: flex;
+  gap: 0.65rem;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.trope-management-similar-list {
+  max-height: min(calc((var(--story-browser-row-height) * 3) + (0.65rem * 2)), calc(100vh - 22rem));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 0.2rem;
 }
 
 .trope-management-story-list {

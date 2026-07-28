@@ -1,6 +1,7 @@
 import csv
 import io
 
+import numpy as np
 from fastapi.testclient import TestClient
 
 from app.core.csv_schema import CSV_COLUMNS, KEYWORD_FIELD, TROPE_FIELD
@@ -8,6 +9,13 @@ from app.db import build_engine, build_session_factory
 from app.main import create_app
 from tests.auth_helpers import authenticate_admin, configure_auth_env
 from tests.search_fakes import FakeEmbeddingBackend
+
+
+class ModerateSimilarityEmbeddingBackend(FakeEmbeddingBackend):
+    def _vector_for_text(self, text: str) -> np.ndarray:
+        if text.strip().lower() == "moderately related trope":
+            return np.array([0.7, 0.71414284, 0.0], dtype=np.float32)
+        return super()._vector_for_text(text)
 
 
 def make_csv_bytes(rows: list[dict[str, str]]) -> bytes:
@@ -27,7 +35,7 @@ def make_row(*, title: str, tropes: str = "", keywords: str = "") -> dict[str, s
     return row
 
 
-def build_client(tmp_path, name: str) -> TestClient:
+def build_client(tmp_path, name: str, *, embedding_backend=None) -> TestClient:
     db_path = tmp_path / name
     engine = build_engine(f"sqlite:///{db_path}")
     session_factory = build_session_factory(engine)
@@ -35,7 +43,7 @@ def build_client(tmp_path, name: str) -> TestClient:
         db_engine=engine,
         session_factory=session_factory,
         job_runner_enabled=False,
-        embedding_backend=FakeEmbeddingBackend(),
+        embedding_backend=embedding_backend or FakeEmbeddingBackend(),
     )
     return TestClient(app)
 
@@ -86,9 +94,58 @@ def test_near_duplicate_tropes_route_uses_similarity_cache(monkeypatch, tmp_path
     assert body["items"][0]["similarity_score"] > 0.9
 
 
-def test_confirm_tropes_route_confirms_both_and_hides_fully_confirmed_pair(monkeypatch, tmp_path) -> None:
+def test_similar_unconfirmed_tropes_uses_selected_threshold_and_excludes_canonical_candidates(monkeypatch, tmp_path) -> None:
     configure_auth_env(monkeypatch)
-    with build_client(tmp_path, "curation-confirm-tropes.db") as client:
+    with build_client(
+        tmp_path,
+        "curation-similar-unconfirmed.db",
+        embedding_backend=ModerateSimilarityEmbeddingBackend(),
+    ) as client:
+        authenticate_admin(client)
+        upload_dataset(
+            client,
+            [make_row(title="Story One", tropes="§§ first trope\n§§ moderately related trope\n§§ second trope")],
+        )
+        request_rebuild(client)
+        process_next_job(client)
+
+        tropes = client.get("/api/tropes").json()
+        source_trope = next(item for item in tropes if item["text"] == "first trope")
+        related_response = client.get(f"/api/curation/tropes/{source_trope['id']}/similar-unconfirmed")
+        strict_response = client.get(
+            f"/api/curation/tropes/{source_trope['id']}/similar-unconfirmed?minimum_similarity=0.8"
+        )
+
+        related_item = related_response.json()["items"][0]
+        canonicalize_response = client.put(
+            f"/api/tropes/{related_item['id']}/confirmation",
+            json={
+                "expected_trope_version": related_item["version"],
+                "confirmation_status": "canonical",
+            },
+        )
+        after_canonicalize_response = client.get(f"/api/curation/tropes/{source_trope['id']}/similar-unconfirmed")
+
+    assert related_response.status_code == 200
+    related_body = related_response.json()
+    assert related_body["artifact_version"] == 1
+    assert related_body["minimum_similarity"] == 0.6
+    assert related_body["total"] == 1
+    assert related_body["items"][0]["text"] == "moderately related trope"
+    assert related_body["items"][0]["confirmation_status"] == "unconfirmed"
+    assert 0.6 <= related_body["items"][0]["similarity_score"] < 0.8
+
+    assert strict_response.status_code == 200
+    assert strict_response.json()["items"] == []
+
+    assert canonicalize_response.status_code == 200
+    assert after_canonicalize_response.status_code == 200
+    assert after_canonicalize_response.json()["items"] == []
+
+
+def test_canonicalize_tropes_route_marks_both_canonical_and_hides_fully_canonical_pair(monkeypatch, tmp_path) -> None:
+    configure_auth_env(monkeypatch)
+    with build_client(tmp_path, "curation-canonicalize-tropes.db") as client:
         authenticate_admin(client)
         upload_dataset(
             client,
@@ -100,8 +157,8 @@ def test_confirm_tropes_route_confirms_both_and_hides_fully_confirmed_pair(monke
         pairs_response = client.get("/api/curation/near-duplicate-tropes")
         pair = pairs_response.json()["items"][0]
 
-        confirm_response = client.post(
-            "/api/curation/confirm-tropes",
+        canonicalize_response = client.post(
+            "/api/curation/canonicalize-tropes",
             json={
                 "tropes": [
                     {
@@ -118,10 +175,10 @@ def test_confirm_tropes_route_confirms_both_and_hides_fully_confirmed_pair(monke
 
         filtered_pairs_response = client.get("/api/curation/near-duplicate-tropes")
 
-    assert confirm_response.status_code == 200
-    confirm_body = confirm_response.json()
-    assert [item["confirmation_status"] for item in confirm_body["tropes"]] == ["confirmed", "confirmed"]
-    assert [item["version"] for item in confirm_body["tropes"]] == [2, 2]
+    assert canonicalize_response.status_code == 200
+    canonicalize_body = canonicalize_response.json()
+    assert [item["confirmation_status"] for item in canonicalize_body["tropes"]] == ["canonical", "canonical"]
+    assert [item["version"] for item in canonicalize_body["tropes"]] == [2, 2]
 
     assert filtered_pairs_response.status_code == 200
     filtered_body = filtered_pairs_response.json()

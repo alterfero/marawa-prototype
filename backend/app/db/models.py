@@ -69,7 +69,7 @@ class TermReviewStatus(str, Enum):
 
 class TropeConfirmationStatus(str, Enum):
     UNCONFIRMED = "unconfirmed"
-    CONFIRMED = "confirmed"
+    CANONICAL = "canonical"
 
 
 class StoryCompleteness(str, Enum):

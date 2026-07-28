@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -11,6 +11,7 @@ from app.services.curation import (
     CurationNotFoundError,
     CurationValidationError,
     list_near_duplicate_tropes,
+    list_similar_unconfirmed_tropes,
     merge_tropes,
     validate_trope_merges,
 )
@@ -50,6 +51,19 @@ class NearDuplicateTropeListResponse(BaseModel):
     total: int
 
 
+class SimilarUnconfirmedTropeResponse(TropeSummaryResponse):
+    similarity_score: float
+
+
+class SimilarUnconfirmedTropeListResponse(BaseModel):
+    source_trope_id: str
+    items: list[SimilarUnconfirmedTropeResponse]
+    artifact_version: int | None
+    model_name: str
+    minimum_similarity: float
+    total: int
+
+
 class MergeTropesRequest(BaseModel):
     source_trope_id: str
     target_trope_id: str
@@ -81,16 +95,16 @@ class ValidateTropesResponse(BaseModel):
     queued_job: JobSummaryResponse | None
 
 
-class ConfirmTropeRequest(BaseModel):
+class CanonicalizeTropeRequest(BaseModel):
     trope_id: str
     expected_trope_version: int
 
 
-class ConfirmTropesRequest(BaseModel):
-    tropes: list[ConfirmTropeRequest]
+class CanonicalizeTropesRequest(BaseModel):
+    tropes: list[CanonicalizeTropeRequest]
 
 
-class ConfirmTropesResponse(BaseModel):
+class CanonicalizeTropesResponse(BaseModel):
     tropes: list[TropeSummaryResponse]
 
 
@@ -136,6 +150,27 @@ def read_near_duplicate_tropes(
     return NearDuplicateTropeListResponse(
         **list_near_duplicate_tropes(session, model_name=search_service.model_name)
     )
+
+
+@router.get("/tropes/{trope_id}/similar-unconfirmed", response_model=SimilarUnconfirmedTropeListResponse)
+def read_similar_unconfirmed_tropes(
+    trope_id: str,
+    minimum_similarity: float = Query(default=0.6, ge=0.0, le=1.0),
+    _: object = Depends(require_minimum_role(UserRole.ADMIN)),
+    session: Session = Depends(get_db_session),
+    search_service=Depends(get_search_service),
+) -> SimilarUnconfirmedTropeListResponse:
+    try:
+        return SimilarUnconfirmedTropeListResponse(
+            **list_similar_unconfirmed_tropes(
+                session,
+                source_trope_id=trope_id,
+                minimum_similarity=minimum_similarity,
+                search_service=search_service,
+            )
+        )
+    except Exception as exc:
+        _raise_curation_error(exc)
 
 
 @router.post("/merge-tropes", response_model=MergeTropesResponse)
@@ -200,12 +235,12 @@ def validate_canonical_trope_merges(
     )
 
 
-@router.post("/confirm-tropes", response_model=ConfirmTropesResponse)
-def confirm_canonical_tropes(
-    payload: ConfirmTropesRequest,
+@router.post("/canonicalize-tropes", response_model=CanonicalizeTropesResponse)
+def canonicalize_tropes(
+    payload: CanonicalizeTropesRequest,
     auth_context: AuthSessionContext = Depends(require_minimum_role_with_csrf(UserRole.ADMIN)),
     session: Session = Depends(get_db_session),
-) -> ConfirmTropesResponse:
+) -> CanonicalizeTropesResponse:
     try:
         tropes = set_trope_confirmation_statuses(
             session,
@@ -213,7 +248,7 @@ def confirm_canonical_tropes(
                 {
                     "trope_id": trope.trope_id,
                     "expected_version": trope.expected_trope_version,
-                    "confirmation_status": TropeConfirmationStatus.CONFIRMED,
+                    "confirmation_status": TropeConfirmationStatus.CANONICAL,
                 }
                 for trope in payload.tropes
             ],
@@ -222,6 +257,6 @@ def confirm_canonical_tropes(
     except Exception as exc:
         _raise_curation_error(exc)
 
-    return ConfirmTropesResponse(
+    return CanonicalizeTropesResponse(
         tropes=[TropeSummaryResponse(**trope) for trope in tropes]
     )

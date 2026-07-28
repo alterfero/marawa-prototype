@@ -60,7 +60,7 @@ function completenessBadgeClassName(completeness: StoryCompleteness): string {
 }
 
 function confirmationStatusLabel(status: TropeConfirmationStatus): string {
-  return status === "confirmed" ? "Confirmed" : "Unconfirmed";
+  return status === "canonical" ? "Canonical" : "Unconfirmed";
 }
 
 function canSelectCompleteness(

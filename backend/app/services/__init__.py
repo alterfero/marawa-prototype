@@ -7,6 +7,7 @@ from app.services.curation import (
     delete_trope,
     list_canonical_tropes,
     list_near_duplicate_tropes,
+    list_similar_unconfirmed_tropes,
     merge_tropes,
 )
 from app.services.csv_io import CSVImportValidationError, export_active_dataset_to_csv_bytes, import_csv_bytes
@@ -43,6 +44,7 @@ __all__ = [
     "import_csv_bytes",
     "list_canonical_tropes",
     "list_near_duplicate_tropes",
+    "list_similar_unconfirmed_tropes",
     "list_jobs",
     "merge_tropes",
     "primary_abstract",

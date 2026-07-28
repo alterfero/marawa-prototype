@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import {
-  confirmTropes,
+  canonicalizeTropes,
   createCanonicalTrope,
   deleteTrope,
   getCanonicalTropes,
@@ -413,7 +413,7 @@ export function CurationPage() {
     if (!pairHasUsableVersions(pair)) {
       setNotice({
         tone: "error",
-        title: "Could not confirm both tropes",
+        title: "Could not mark both tropes as canonical",
         body: "The current pair is missing trope version data. Refresh and try again.",
       });
       return;
@@ -423,7 +423,7 @@ export function CurationPage() {
     try {
       setBusy(true);
       setNotice(null);
-      await confirmTropes({
+      await canonicalizeTropes({
         tropes: [
           {
             trope_id: pair.source_trope.id,
@@ -449,14 +449,14 @@ export function CurationPage() {
       }
       setNotice({
         tone: "success",
-        title: "Both tropes confirmed",
-        body: `Confirmed ${pair.source_trope.text} and ${pair.target_trope.text}. Fully confirmed pairs no longer appear in the near-duplicate list.`,
+        title: "Both tropes are canonical",
+        body: `Marked ${pair.source_trope.text} and ${pair.target_trope.text} as canonical. Fully canonical pairs no longer appear in the near-duplicate list.`,
       });
       await refresh({ clearNotice: false });
     } catch (caughtError) {
       setNotice({
         tone: "error",
-        title: "Could not confirm both tropes",
+        title: "Could not mark both tropes as canonical",
         body: getErrorMessage(caughtError),
       });
     } finally {
@@ -505,10 +505,10 @@ export function CurationPage() {
       return;
     }
 
-    const confirmed = window.confirm(
+    const shouldValidate = window.confirm(
       `Validate ${pendingMerges.length} merge decision${pendingMerges.length === 1 ? "" : "s"}?\n\nThis will apply the selected merges in one batch. Rebuilds are manual, so run Rebuild from the menu when you want fresh derived artifacts.`,
     );
-    if (!confirmed) {
+    if (!shouldValidate) {
       return;
     }
 
@@ -545,10 +545,10 @@ export function CurationPage() {
   }
 
   async function handleDeleteUnusedTrope(trope: CanonicalTropeListItem) {
-    const confirmed = window.confirm(
+    const shouldDelete = window.confirm(
       `Delete unused trope "${trope.text}"?\n\nRebuilds are manual, so use Rebuild in the menu afterward if you want fresh derived artifacts.`,
     );
-    if (!confirmed) {
+    if (!shouldDelete) {
       return;
     }
 

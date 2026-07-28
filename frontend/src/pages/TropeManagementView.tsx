@@ -5,6 +5,7 @@ import {
   deleteTrope,
   getCanonicalTropes,
   getErrorMessage,
+  getSimilarUnconfirmedTropes,
   getStories,
   mergeTropes,
   searchTropes,
@@ -26,6 +27,7 @@ import {
 import type {
   CanonicalTropeListItem,
   ExplorationAppliedTropeFilter,
+  SimilarUnconfirmedTropeListResponse,
   StorySummary,
   TropeConfirmationStatus,
   TropeSearchItem,
@@ -39,6 +41,11 @@ interface PageNotice {
   body?: string;
 }
 
+type ConfirmationStatusTrope = Pick<
+  CanonicalTropeListItem,
+  "id" | "version" | "text" | "confirmation_status" | "story_count"
+>;
+
 function serializeSelectedTropes(tropes: ExplorationAppliedTropeFilter[]): string {
   return JSON.stringify(
     tropes
@@ -48,7 +55,7 @@ function serializeSelectedTropes(tropes: ExplorationAppliedTropeFilter[]): strin
 }
 
 function confirmationStatusLabel(status: TropeConfirmationStatus): string {
-  return status === "confirmed" ? "Confirmed" : "Unconfirmed";
+  return status === "canonical" ? "Canonical" : "Unconfirmed";
 }
 
 function isTropeVersionConflict(error: unknown): boolean {
@@ -77,6 +84,9 @@ export function TropeManagementView() {
   const [tropeQuery, setTropeQuery] = useState("");
   const [draftSelectedTropes, setDraftSelectedTropes] = useState<ExplorationAppliedTropeFilter[]>([]);
   const [appliedSelectedTropes, setAppliedSelectedTropes] = useState<ExplorationAppliedTropeFilter[]>([]);
+  const [similarityThreshold, setSimilarityThreshold] = useState(0.6);
+  const [similarUnconfirmedTropes, setSimilarUnconfirmedTropes] = useState<SimilarUnconfirmedTropeListResponse | null>(null);
+  const [similarUnconfirmedTropesLoading, setSimilarUnconfirmedTropesLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<PageNotice | null>(null);
@@ -240,6 +250,45 @@ export function TropeManagementView() {
   }, [editingTropeId, tropes]);
 
   const selectedTrope = visibleTropes.find((trope) => trope.id === selectedTropeId) ?? null;
+
+  useEffect(() => {
+    if (!selectedTrope) {
+      setSimilarUnconfirmedTropes(null);
+      setSimilarUnconfirmedTropesLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        setSimilarUnconfirmedTropesLoading(true);
+        const response = await getSimilarUnconfirmedTropes(selectedTrope.id, {
+          minimum_similarity: similarityThreshold,
+        });
+        if (!cancelled) {
+          setSimilarUnconfirmedTropes(response);
+        }
+      } catch (caughtError) {
+        if (!cancelled) {
+          setSimilarUnconfirmedTropes(null);
+          setNotice({
+            tone: "error",
+            title: "Could not load similar unconfirmed tropes",
+            body: getErrorMessage(caughtError),
+          });
+        }
+      } finally {
+        if (!cancelled) {
+          setSimilarUnconfirmedTropesLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedTrope, similarityThreshold]);
+
   const storiesById = useMemo(() => new Map(stories.map((story) => [story.id, story])), [stories]);
   const selectedTropeStories = useMemo(
     () =>
@@ -383,7 +432,7 @@ export function TropeManagementView() {
     }
   }
 
-  async function handleMergeEditedTrope(sourceTrope: CanonicalTropeListItem, targetTropeId: string) {
+  async function handleMergeTrope(sourceTrope: Pick<CanonicalTropeListItem, "id" | "text">, targetTropeId: string) {
     try {
       setBusy(true);
       setNotice(null);
@@ -396,8 +445,8 @@ export function TropeManagementView() {
       resetTropeEditor();
       setNotice({
         tone: "success",
-        title: "Trope edited",
-        body: `Merged this trope into an existing canonical trope across ${result.affected_story_count} stor${
+        title: "Tropes merged",
+        body: `Merged ${sourceTrope.text} into the selected canonical trope across ${result.affected_story_count} stor${
           result.affected_story_count === 1 ? "y" : "ies"
         }. Run Rebuild in the menu when you want fresh derived artifacts.`,
       });
@@ -413,14 +462,14 @@ export function TropeManagementView() {
   }
 
   async function handleDeleteTrope(trope: CanonicalTropeListItem) {
-    const confirmed = window.confirm(
+    const shouldDelete = window.confirm(
       trope.story_count > 0
         ? `Delete trope "${trope.text}" from all ${trope.story_count} stor${
             trope.story_count === 1 ? "y" : "ies"
           } and remove the canonical trope?\n\nRebuilds are manual, so use Rebuild in the menu afterward if you want fresh derived artifacts.`
         : `Delete unused trope "${trope.text}"?\n\nRebuilds are manual, so use Rebuild in the menu afterward if you want fresh derived artifacts.`,
     );
-    if (!confirmed) {
+    if (!shouldDelete) {
       return;
     }
 
@@ -454,20 +503,16 @@ export function TropeManagementView() {
     }
   }
 
-  async function handleUpdateConfirmationStatus(nextStatus: TropeConfirmationStatus) {
-    if (!selectedTrope) {
-      return;
-    }
-
+  async function handleUpdateConfirmationStatus(trope: ConfirmationStatusTrope, nextStatus: TropeConfirmationStatus) {
     try {
       setBusy(true);
-      const response = await updateTropeConfirmationStatus(selectedTrope.id, {
-        expected_trope_version: selectedTrope.version,
+      const response = await updateTropeConfirmationStatus(trope.id, {
+        expected_trope_version: trope.version,
         confirmation_status: nextStatus,
       });
       setTropes((current) =>
         current.map((trope) =>
-          trope.id === selectedTrope.id
+          trope.id === response.trope.id
             ? {
                 ...trope,
                 ...response.trope,
@@ -476,6 +521,19 @@ export function TropeManagementView() {
             : trope,
         ),
       );
+      setSimilarUnconfirmedTropes((current) => {
+        if (!current || trope.id === current.source_trope_id) {
+          return current;
+        }
+        const items = current.items
+          .map((item) => (item.id === response.trope.id ? { ...item, ...response.trope } : item))
+          .filter((item) => item.confirmation_status === "unconfirmed");
+        return {
+          ...current,
+          items,
+          total: items.length,
+        };
+      });
       setNotice({
         tone: "success",
         title: "Trope updated",
@@ -496,6 +554,39 @@ export function TropeManagementView() {
     }
   }
 
+  function renderConfirmationActions(trope: ConfirmationStatusTrope) {
+    return (
+      <>
+        <button
+          aria-pressed={trope.confirmation_status === "unconfirmed"}
+          className={`button ${
+            trope.confirmation_status === "unconfirmed"
+              ? "trope-confirmation-toggle-active trope-confirmation-toggle-unconfirmed"
+              : "button-ghost"
+          }`}
+          disabled={busy || trope.confirmation_status === "unconfirmed"}
+          onClick={() => void handleUpdateConfirmationStatus(trope, "unconfirmed")}
+          type="button"
+        >
+          Unconfirmed
+        </button>
+        <button
+          aria-pressed={trope.confirmation_status === "canonical"}
+          className={`button ${
+            trope.confirmation_status === "canonical"
+              ? "trope-confirmation-toggle-active trope-confirmation-toggle-canonical"
+              : "button-ghost"
+          }`}
+          disabled={busy || trope.confirmation_status === "canonical"}
+          onClick={() => void handleUpdateConfirmationStatus(trope, "canonical")}
+          type="button"
+        >
+          Canonical
+        </button>
+      </>
+    );
+  }
+
   return (
     <div className="page-stack">
       <section className="panel">
@@ -503,7 +594,7 @@ export function TropeManagementView() {
           <div>
             <h1>Trope management</h1>
             <p className="muted">
-              Browse canonical tropes, filter them with semantic and hard story filters, and confirm them independently from contributor review.
+              Browse canonical tropes, filter them with semantic and hard story filters, and set their status independently from contributor review.
             </p>
           </div>
         </div>
@@ -694,7 +785,7 @@ export function TropeManagementView() {
                                 <button
                                   className="button button-ghost"
                                   disabled={loading || busy || isCurrentTrope}
-                                  onClick={() => void handleMergeEditedTrope(trope, item.id)}
+                                  onClick={() => void handleMergeTrope(trope, item.id)}
                                   type="button"
                                 >
                                   {isCurrentTrope ? "Current trope" : sameNormalizedText ? "Merge duplicate" : "Use existing trope"}
@@ -721,49 +812,20 @@ export function TropeManagementView() {
 
           {selectedTrope ? (
             <section className="panel">
-              <div className="panel-header">
-                <div>
-                  <h2>{selectedTrope.text}</h2>
-                  <p className="muted">
-                    {selectedTrope.story_count} stor{selectedTrope.story_count === 1 ? "y" : "ies"} total
-                    {hasAppliedHardFilters ? ` · ${displayedSelectedTropeStories.length} shown with current hard filters` : ""}
-                  </p>
-                </div>
-                <span className={`story-completeness-badge trope-confirmation-badge trope-confirmation-${selectedTrope.confirmation_status}`}>
-                  {confirmationStatusLabel(selectedTrope.confirmation_status)}
-                </span>
-              </div>
-
-              <article className="card subdued trope-management-confirmation-card">
-                <div className="trope-management-confirmation-controls">
-                  <button
-                    aria-pressed={selectedTrope.confirmation_status === "unconfirmed"}
-                    className={`button ${
-                      selectedTrope.confirmation_status === "unconfirmed"
-                        ? "trope-confirmation-toggle-active trope-confirmation-toggle-unconfirmed"
-                        : "button-ghost"
-                    }`}
-                    disabled={busy || selectedTrope.confirmation_status === "unconfirmed"}
-                    onClick={() => void handleUpdateConfirmationStatus("unconfirmed")}
-                    type="button"
-                  >
-                    Unconfirmed
-                  </button>
-                  <button
-                    aria-pressed={selectedTrope.confirmation_status === "confirmed"}
-                    className={`button ${
-                      selectedTrope.confirmation_status === "confirmed"
-                        ? "trope-confirmation-toggle-active trope-confirmation-toggle-confirmed"
-                        : "button-ghost"
-                    }`}
-                    disabled={busy || selectedTrope.confirmation_status === "confirmed"}
-                    onClick={() => void handleUpdateConfirmationStatus("confirmed")}
-                    type="button"
-                  >
-                    Confirmed
-                  </button>
-                </div>
-              </article>
+              <TropeCard
+                badge={
+                  <span className={`story-completeness-badge trope-confirmation-badge trope-confirmation-${selectedTrope.confirmation_status}`}>
+                    {confirmationStatusLabel(selectedTrope.confirmation_status)}
+                  </span>
+                }
+                className="subdued trope-management-selected-card"
+                meta={`${selectedTrope.story_count} stor${selectedTrope.story_count === 1 ? "y" : "ies"} total${
+                  hasAppliedHardFilters ? ` · ${displayedSelectedTropeStories.length} shown with current hard filters` : ""
+                }`}
+                onOpen={() => setSelectedTropeId(selectedTrope.id)}
+                trope={selectedTrope}
+                actions={<div className="trope-management-confirmation-controls">{renderConfirmationActions(selectedTrope)}</div>}
+              />
 
               <div className="panel-header">
                 <h3>Stories</h3>
@@ -787,6 +849,78 @@ export function TropeManagementView() {
                     story={story}
                   />
                 ))}
+              </div>
+
+              <div className="trope-management-similar-section">
+                <div className="panel-header">
+                  <div>
+                    <h3>Similar unconfirmed tropes</h3>
+                    <p className="muted">Candidates are ordered by embedding similarity to the top trope.</p>
+                  </div>
+                  <span className="pill">
+                    {similarUnconfirmedTropesLoading ? "loading" : `${similarUnconfirmedTropes?.total ?? 0} results`}
+                  </span>
+                </div>
+
+                <label className="field trope-management-similarity-threshold" htmlFor="trope-management-similarity-threshold">
+                  <div className="card-row">
+                    <strong>Similarity threshold</strong>
+                    <span className="pill">{similarityThreshold.toFixed(2)}</span>
+                  </div>
+                  <input
+                    className="range-input"
+                    disabled={busy || loading}
+                    id="trope-management-similarity-threshold"
+                    max="1"
+                    min="0"
+                    onChange={(event) => setSimilarityThreshold(Number(event.target.value))}
+                    step="0.01"
+                    type="range"
+                    value={similarityThreshold}
+                  />
+                </label>
+
+                {similarUnconfirmedTropesLoading ? <p className="muted">Loading similar unconfirmed tropes...</p> : null}
+                {!similarUnconfirmedTropesLoading && similarUnconfirmedTropes?.artifact_version === null ? (
+                  <p className="muted">No current trope embeddings are available. Run Rebuild, then refresh this view.</p>
+                ) : null}
+                {!similarUnconfirmedTropesLoading &&
+                similarUnconfirmedTropes?.artifact_version !== null &&
+                similarUnconfirmedTropes?.items.length === 0 ? (
+                  <p className="muted">No unconfirmed tropes meet the current threshold.</p>
+                ) : null}
+
+                <div className="list trope-management-similar-list">
+                  {similarUnconfirmedTropes?.items.map((trope) => (
+                    <TropeCard
+                      badge={
+                        <span className={`story-completeness-badge trope-confirmation-badge trope-confirmation-${trope.confirmation_status}`}>
+                          {confirmationStatusLabel(trope.confirmation_status)}
+                        </span>
+                      }
+                      className="trope-management-similar-trope-card"
+                      key={trope.id}
+                      meta={`Similarity ${trope.similarity_score.toFixed(2)} · ${trope.story_count} stor${
+                        trope.story_count === 1 ? "y" : "ies"
+                      }`}
+                      onOpen={(openedTrope) => setSelectedTropeId(openedTrope.id)}
+                      trope={trope}
+                      actions={
+                        <div className="trope-management-similar-trope-actions">
+                          {renderConfirmationActions(trope)}
+                          <button
+                            className="button"
+                            disabled={busy}
+                            onClick={() => void handleMergeTrope(trope, selectedTrope.id)}
+                            type="button"
+                          >
+                            Merge with top trope
+                          </button>
+                        </div>
+                      }
+                    />
+                  ))}
+                </div>
               </div>
             </section>
           ) : null}

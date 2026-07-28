@@ -254,6 +254,77 @@ class SearchService:
 
         return similarities
 
+    def get_similar_trope_scores(
+        self,
+        session: Session,
+        source_trope_id: str,
+        candidate_trope_ids: list[str],
+        *,
+        minimum_score: float = 0.0,
+    ) -> tuple[int | None, dict[str, float]]:
+        """Return current embedding similarities from one trope to candidate tropes.
+
+        Similarity-cache rows intentionally only retain near duplicates. This method
+        reads the current embeddings directly so callers can support a lower,
+        user-selected threshold without changing the cache's curation threshold.
+        """
+        candidate_ids = list(
+            dict.fromkeys(
+                trope_id
+                for trope_id in candidate_trope_ids
+                if trope_id and trope_id != source_trope_id
+            )
+        )
+        if not candidate_ids:
+            return None, {}
+
+        source_embedding = session.scalar(
+            select(TermEmbedding)
+            .where(
+                TermEmbedding.term_kind == TermKind.TROPE,
+                TermEmbedding.model_name == self.model_name,
+                TermEmbedding.trope_id == source_trope_id,
+            )
+            .order_by(TermEmbedding.artifact_version.desc())
+        )
+        if source_embedding is None or source_embedding.vector_blob is None or source_embedding.vector_dimensions is None:
+            return None, {}
+
+        artifact_version = source_embedding.artifact_version
+        candidate_embeddings = list(
+            session.scalars(
+                select(TermEmbedding).where(
+                    TermEmbedding.term_kind == TermKind.TROPE,
+                    TermEmbedding.model_name == self.model_name,
+                    TermEmbedding.artifact_version == artifact_version,
+                    TermEmbedding.trope_id.in_(candidate_ids),
+                )
+            ).all()
+        )
+        usable_candidates = [
+            embedding
+            for embedding in candidate_embeddings
+            if embedding.trope_id is not None
+            and embedding.vector_blob is not None
+            and embedding.vector_dimensions == source_embedding.vector_dimensions
+        ]
+        if not usable_candidates:
+            return artifact_version, {}
+
+        source_vector = blob_to_vector(source_embedding.vector_blob, source_embedding.vector_dimensions)
+        candidate_matrix = np.vstack(
+            [
+                blob_to_vector(embedding.vector_blob, embedding.vector_dimensions)
+                for embedding in usable_candidates
+            ]
+        ).astype(np.float32)
+        scores = cosine_similarity(source_vector, candidate_matrix)
+        return artifact_version, {
+            embedding.trope_id: float(score)
+            for embedding, score in zip(usable_candidates, scores.tolist(), strict=True)
+            if score >= minimum_score
+        }
+
     def _lexical_fallback_result(
         self,
         terms: list[SearchTermRecord],

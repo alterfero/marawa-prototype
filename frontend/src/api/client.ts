@@ -9,7 +9,7 @@ import type {
   DatasetRebuildResponse,
   DatasetUploadResponse,
   CanonicalTropeListItem,
-  ConfirmTropesResponse,
+  CanonicalizeTropesResponse,
   DeleteStoryKeywordResponse,
   DeleteStoryTropeResponse,
   DeleteTropeResponse,
@@ -18,6 +18,7 @@ import type {
   KeywordDetail,
   MergeTropesResponse,
   NearDuplicateTropeListResponse,
+  SimilarUnconfirmedTropeListResponse,
   PasswordResetResponse,
   ReviewItem,
   ReviewStatus,
@@ -432,6 +433,20 @@ export function getNearDuplicateTropes(): Promise<NearDuplicateTropeListResponse
   return request<NearDuplicateTropeListResponse>("/curation/near-duplicate-tropes");
 }
 
+export function getSimilarUnconfirmedTropes(
+  tropeId: string,
+  payload?: { minimum_similarity?: number },
+): Promise<SimilarUnconfirmedTropeListResponse> {
+  const params = new URLSearchParams();
+  if (typeof payload?.minimum_similarity === "number") {
+    params.set("minimum_similarity", String(payload.minimum_similarity));
+  }
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return request<SimilarUnconfirmedTropeListResponse>(
+    `/curation/tropes/${encodeURIComponent(tropeId)}/similar-unconfirmed${suffix}`,
+  );
+}
+
 export function mergeTropes(payload: {
   source_trope_id: string;
   target_trope_id: string;
@@ -460,13 +475,13 @@ export function validateTropeMerges(payload: {
   });
 }
 
-export function confirmTropes(payload: {
+export function canonicalizeTropes(payload: {
   tropes: Array<{
     trope_id: string;
     expected_trope_version: number;
   }>;
-}): Promise<ConfirmTropesResponse> {
-  return request<ConfirmTropesResponse>("/curation/confirm-tropes", {
+}): Promise<CanonicalizeTropesResponse> {
+  return request<CanonicalizeTropesResponse>("/curation/canonicalize-tropes", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

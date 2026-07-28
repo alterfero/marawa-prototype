@@ -9,7 +9,7 @@ export type UserStatus = "active" | "inactive" | "pending_invite";
 export type ReviewStatus = "pending" | "approved" | "rejected";
 export type ReviewType = "story_created" | "story_updated" | "trope_pending" | "keyword_pending";
 export type StoryCompleteness = "incomplete" | "pending review" | "complete";
-export type TropeConfirmationStatus = "unconfirmed" | "confirmed";
+export type TropeConfirmationStatus = "unconfirmed" | "canonical";
 
 export interface CurrentUser {
   id: string;
@@ -198,7 +198,25 @@ export interface NearDuplicateTropeListResponse {
   total: number;
 }
 
-export interface ConfirmTropesResponse {
+export interface SimilarUnconfirmedTrope {
+  id: string;
+  version: number;
+  text: string;
+  confirmation_status: TropeConfirmationStatus;
+  story_count: number;
+  similarity_score: number;
+}
+
+export interface SimilarUnconfirmedTropeListResponse {
+  source_trope_id: string;
+  items: SimilarUnconfirmedTrope[];
+  artifact_version: number | null;
+  model_name: string;
+  minimum_similarity: number;
+  total: number;
+}
+
+export interface CanonicalizeTropesResponse {
   tropes: TropeSummary[];
 }
 

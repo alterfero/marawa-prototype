@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import TYPE_CHECKING
 
 from sqlalchemy import case, delete, func, or_, select
 from sqlalchemy.orm import Session, selectinload
@@ -22,6 +23,9 @@ from app.db.models import (
 )
 from app.services.audit import record_audit_event
 from app.services.stories import sync_story_derived_fields
+
+if TYPE_CHECKING:
+    from app.services.search_service import SearchService
 
 
 class CurationError(ValueError):
@@ -242,8 +246,8 @@ def list_near_duplicate_tropes(session: Session, *, model_name: str) -> dict:
             item
             for item in pair_map.values()
             if not (
-                item["source_trope"]["confirmation_status"] == TropeConfirmationStatus.CONFIRMED.value
-                and item["target_trope"]["confirmation_status"] == TropeConfirmationStatus.CONFIRMED.value
+                item["source_trope"]["confirmation_status"] == TropeConfirmationStatus.CANONICAL.value
+                and item["target_trope"]["confirmation_status"] == TropeConfirmationStatus.CANONICAL.value
             )
         ],
         key=lambda item: (
@@ -256,6 +260,78 @@ def list_near_duplicate_tropes(session: Session, *, model_name: str) -> dict:
         "items": items,
         "artifact_version": int(artifact_version),
         "model_name": model_name,
+        "total": len(items),
+    }
+
+
+def list_similar_unconfirmed_tropes(
+    session: Session,
+    *,
+    source_trope_id: str,
+    minimum_similarity: float,
+    search_service: SearchService,
+) -> dict:
+    """List unconfirmed canonical tropes similar to one selected trope.
+
+    This deliberately queries the current embedding vectors instead of the
+    near-duplicate cache. The cache only keeps very high-scoring pairs for the
+    Curation view, while trope management exposes a curator-selected threshold.
+    """
+    if not 0.0 <= minimum_similarity <= 1.0:
+        raise CurationValidationError("Minimum similarity must be between 0 and 1.")
+
+    active_dataset = _get_active_dataset(session)
+    if active_dataset is None:
+        raise CurationNotFoundError("Selected trope not found.")
+
+    source_trope = session.scalar(
+        select(Trope).where(
+            Trope.id == source_trope_id,
+            Trope.dataset_id == active_dataset.id,
+        )
+    )
+    if source_trope is None:
+        raise CurationNotFoundError("Selected trope not found.")
+
+    candidate_tropes = list(
+        session.scalars(
+            select(Trope)
+            .where(
+                Trope.dataset_id == active_dataset.id,
+                Trope.confirmation_status == TropeConfirmationStatus.UNCONFIRMED,
+                Trope.id != source_trope.id,
+            )
+            .order_by(Trope.text.asc(), Trope.id.asc())
+        ).all()
+    )
+    artifact_version, scores_by_trope_id = search_service.get_similar_trope_scores(
+        session,
+        source_trope.id,
+        [trope.id for trope in candidate_tropes],
+        minimum_score=minimum_similarity,
+    )
+
+    items = sorted(
+        [
+            {
+                "id": trope.id,
+                "version": trope.version,
+                "text": trope.text,
+                "confirmation_status": trope.confirmation_status.value,
+                "story_count": int(trope.cached_story_count or 0),
+                "similarity_score": scores_by_trope_id[trope.id],
+            }
+            for trope in candidate_tropes
+            if trope.id in scores_by_trope_id
+        ],
+        key=lambda item: (-item["similarity_score"], item["text"].lower(), item["id"]),
+    )
+    return {
+        "source_trope_id": source_trope.id,
+        "items": items,
+        "artifact_version": artifact_version,
+        "model_name": search_service.model_name,
+        "minimum_similarity": minimum_similarity,
         "total": len(items),
     }
 

@@ -38,13 +38,50 @@ def test_initialize_database_creates_expected_tables(tmp_path) -> None:
 
     assert busy_timeout == 5000
     assert str(journal_mode).lower() == "wal"
-    assert alembic_version == "20260721_0006"
+    assert alembic_version == "20260727_0007"
 
     story_columns = {column["name"] for column in inspector.get_columns("stories")}
     assert "completeness" in story_columns
     trope_columns = {column["name"] for column in inspector.get_columns("tropes")}
     assert "confirmation_status" in trope_columns
     assert "version" in trope_columns
+
+
+def test_initialize_database_upgrades_confirmed_trope_status_to_canonical(tmp_path) -> None:
+    db_path = tmp_path / "canonical-status-upgrade.db"
+    engine = build_engine(f"sqlite:///{db_path}")
+    config = _build_alembic_config(str(engine.url))
+
+    with engine.begin() as connection:
+        config.attributes["connection"] = connection
+        command.upgrade(config, "20260721_0006")
+        connection.exec_driver_sql(
+            """
+            INSERT INTO datasets (notes_json, id, created_at, updated_at)
+            VALUES ('{}', 'dataset-1', '2026-07-21T00:00:00+00:00', '2026-07-21T00:00:00+00:00')
+            """
+        )
+        connection.exec_driver_sql(
+            """
+            INSERT INTO tropes (
+                dataset_id, text, normalized_text, confirmation_status, id, created_at, updated_at
+            ) VALUES (
+                'dataset-1', 'Sky Woman', 'sky woman', 'confirmed', 'trope-1',
+                '2026-07-21T00:00:00+00:00', '2026-07-21T00:00:00+00:00'
+            )
+            """
+        )
+
+    initialize_database(engine)
+
+    with engine.connect() as connection:
+        status = connection.exec_driver_sql(
+            "SELECT confirmation_status FROM tropes WHERE id = 'trope-1'"
+        ).scalar_one()
+        alembic_version = connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one()
+
+    assert status == "canonical"
+    assert alembic_version == "20260727_0007"
 
 
 def test_initialize_database_recovers_from_interrupted_sqlite_dataset_scope_upgrade(tmp_path) -> None:
@@ -71,7 +108,7 @@ def test_initialize_database_recovers_from_interrupted_sqlite_dataset_scope_upgr
     with engine.connect() as connection:
         alembic_version = connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one()
 
-    assert alembic_version == "20260721_0006"
+    assert alembic_version == "20260727_0007"
 
 
 def test_initialize_database_upgrades_populated_sqlite_db_with_term_and_story_foreign_keys(tmp_path) -> None:
@@ -153,7 +190,7 @@ def test_initialize_database_upgrades_populated_sqlite_db_with_term_and_story_fo
         trope_count = connection.exec_driver_sql("SELECT COUNT(*) FROM story_tropes").scalar_one()
         keyword_count = connection.exec_driver_sql("SELECT COUNT(*) FROM story_keywords").scalar_one()
 
-    assert alembic_version == "20260721_0006"
+    assert alembic_version == "20260727_0007"
     assert trope_count == 1
     assert keyword_count == 1
 
