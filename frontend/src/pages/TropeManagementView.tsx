@@ -34,6 +34,7 @@ import type {
 } from "../api/types";
 import { normalizeDraftText } from "../constants/csv";
 import { routeHref, useHashSearch } from "../router";
+import { useDatasetMaintenance } from "../maintenance";
 
 interface PageNotice {
   tone: "error" | "success";
@@ -70,6 +71,7 @@ function isTropeVersionConflict(error: unknown): boolean {
 }
 
 export function TropeManagementView() {
+  const maintenance = useDatasetMaintenance();
   const hashSearch = useHashSearch();
   const nextFilterIdRef = useRef(1);
   const [stories, setStories] = useState<StorySummary[]>([]);
@@ -92,6 +94,7 @@ export function TropeManagementView() {
   const [notice, setNotice] = useState<PageNotice | null>(null);
   const selectedTropeParam = new URLSearchParams(hashSearch).get("selected_trope_id");
   const editingTrope = tropes.find((trope) => trope.id === editingTropeId) ?? null;
+  const mutationDisabled = busy || maintenance.active;
 
   function resetTropeEditor() {
     setEditingTropeId(null);
@@ -564,7 +567,7 @@ export function TropeManagementView() {
               ? "trope-confirmation-toggle-active trope-confirmation-toggle-unconfirmed"
               : "button-ghost"
           }`}
-          disabled={busy || trope.confirmation_status === "unconfirmed"}
+          disabled={mutationDisabled || trope.confirmation_status === "unconfirmed"}
           onClick={() => void handleUpdateConfirmationStatus(trope, "unconfirmed")}
           type="button"
         >
@@ -577,7 +580,7 @@ export function TropeManagementView() {
               ? "trope-confirmation-toggle-active trope-confirmation-toggle-canonical"
               : "button-ghost"
           }`}
-          disabled={busy || trope.confirmation_status === "canonical"}
+          disabled={mutationDisabled || trope.confirmation_status === "canonical"}
           onClick={() => void handleUpdateConfirmationStatus(trope, "canonical")}
           type="button"
         >
@@ -697,7 +700,7 @@ export function TropeManagementView() {
                       <div className="button-row">
                         <button
                           className="button button-ghost"
-                          disabled={loading || busy}
+                          disabled={loading || mutationDisabled}
                           onClick={() => {
                             if (isEditing) {
                               resetTropeEditor();
@@ -711,7 +714,7 @@ export function TropeManagementView() {
                         </button>
                         <button
                           className="button button-danger"
-                          disabled={loading || busy}
+                          disabled={loading || mutationDisabled}
                           onClick={() => void handleDeleteTrope(trope)}
                           type="button"
                         >
@@ -731,7 +734,7 @@ export function TropeManagementView() {
                         <span>Edit trope</span>
                         <input
                           className="input"
-                          disabled={loading || busy}
+                          disabled={loading || mutationDisabled}
                           onChange={(event) => setEditingTropeQuery(event.target.value)}
                           placeholder="Type a replacement trope or reuse a similar existing one"
                           value={editingTropeQuery}
@@ -743,7 +746,7 @@ export function TropeManagementView() {
                           className="button"
                           disabled={
                             loading ||
-                            busy ||
+                            mutationDisabled ||
                             !editingTropeQuery.trim() ||
                             (editingTrope ? editingTropeQuery.trim() === editingTrope.text : true)
                           }
@@ -784,7 +787,7 @@ export function TropeManagementView() {
                               actions={
                                 <button
                                   className="button button-ghost"
-                                  disabled={loading || busy || isCurrentTrope}
+                                  disabled={loading || mutationDisabled || isCurrentTrope}
                                   onClick={() => void handleMergeTrope(trope, item.id)}
                                   type="button"
                                 >
@@ -910,7 +913,7 @@ export function TropeManagementView() {
                           {renderConfirmationActions(trope)}
                           <button
                             className="button"
-                            disabled={busy}
+                            disabled={mutationDisabled}
                             onClick={() => void handleMergeTrope(trope, selectedTrope.id)}
                             type="button"
                           >

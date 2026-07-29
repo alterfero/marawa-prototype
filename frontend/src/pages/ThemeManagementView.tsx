@@ -15,6 +15,7 @@ import { StorySummaryCard } from "../components/StorySummaryCard";
 import { TermCard } from "../components/TermCard";
 import type { CanonicalThemeListItem, StorySummary, ThemeDetail, ThemeConfirmationStatus } from "../api/types";
 import { routeHref, useHashSearch } from "../router";
+import { useDatasetMaintenance } from "../maintenance";
 
 
 interface PageNotice {
@@ -38,6 +39,7 @@ function isThemeVersionConflict(error: unknown): boolean {
 
 
 export function ThemeManagementView() {
+  const maintenance = useDatasetMaintenance();
   const hashSearch = useHashSearch();
   const [themes, setThemes] = useState<CanonicalThemeListItem[]>([]);
   const [stories, setStories] = useState<StorySummary[]>([]);
@@ -51,6 +53,7 @@ export function ThemeManagementView() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<PageNotice | null>(null);
+  const mutationDisabled = busy || maintenance.active;
   const selectedThemeParam = new URLSearchParams(hashSearch).get("selected_theme_id");
 
   const selectedTheme = themes.find((theme) => theme.id === selectedThemeId) ?? null;
@@ -354,7 +357,7 @@ export function ThemeManagementView() {
               ? "trope-confirmation-toggle-active trope-confirmation-toggle-unconfirmed"
               : "button-ghost"
           }`}
-          disabled={busy || theme.confirmation_status === "unconfirmed"}
+          disabled={mutationDisabled || theme.confirmation_status === "unconfirmed"}
           onClick={() => void handleUpdateConfirmationStatus(theme, "unconfirmed")}
           type="button"
         >
@@ -367,7 +370,7 @@ export function ThemeManagementView() {
               ? "trope-confirmation-toggle-active trope-confirmation-toggle-canonical"
               : "button-ghost"
           }`}
-          disabled={busy || theme.confirmation_status === "canonical"}
+          disabled={mutationDisabled || theme.confirmation_status === "canonical"}
           onClick={() => void handleUpdateConfirmationStatus(theme, "canonical")}
           type="button"
         >
@@ -446,7 +449,7 @@ export function ThemeManagementView() {
                       <div className="button-row">
                         <button
                           className="button button-ghost"
-                          disabled={loading || busy}
+                          disabled={loading || mutationDisabled}
                           onClick={() => {
                             resetThemeMerge();
                             if (isEditing) {
@@ -464,7 +467,7 @@ export function ThemeManagementView() {
                         {theme.confirmation_status === "unconfirmed" ? (
                           <button
                             className="button button-ghost"
-                            disabled={loading || busy || mergeTargets.length === 0}
+                            disabled={loading || mutationDisabled || mergeTargets.length === 0}
                             onClick={() => {
                               if (isMerging) {
                                 resetThemeMerge();
@@ -483,7 +486,7 @@ export function ThemeManagementView() {
                         ) : null}
                         <button
                           className="button button-danger"
-                          disabled={loading || busy}
+                          disabled={loading || mutationDisabled}
                           onClick={() => void handleDeleteTheme(theme)}
                           type="button"
                         >
@@ -503,7 +506,7 @@ export function ThemeManagementView() {
                         <span>Edit theme</span>
                         <input
                           className="input"
-                          disabled={loading || busy}
+                          disabled={loading || mutationDisabled}
                           onChange={(event) => setEditingThemeText(event.target.value)}
                           value={editingThemeText}
                         />
@@ -511,7 +514,7 @@ export function ThemeManagementView() {
                       <div className="button-row wrap-row">
                         <button
                           className="button"
-                          disabled={loading || busy || !editingThemeText.trim() || editingThemeText.trim() === theme.text}
+                          disabled={loading || mutationDisabled || !editingThemeText.trim() || editingThemeText.trim() === theme.text}
                           onClick={() => void handleRenameTheme(theme)}
                           type="button"
                         >
@@ -534,7 +537,7 @@ export function ThemeManagementView() {
                         <span>Merge with canonical theme</span>
                         <select
                           className="input"
-                          disabled={loading || busy}
+                          disabled={loading || mutationDisabled}
                           onChange={(event) => setMergeTargetThemeId(event.target.value)}
                           value={mergeTargetThemeId}
                         >
@@ -548,7 +551,7 @@ export function ThemeManagementView() {
                       <div className="button-row wrap-row">
                         <button
                           className="button"
-                          disabled={loading || busy || !mergeTargetThemeId}
+                          disabled={loading || mutationDisabled || !mergeTargetThemeId}
                           onClick={() => void handleMergeTheme(theme)}
                           type="button"
                         >

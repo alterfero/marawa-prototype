@@ -1,4 +1,6 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+
+from app.api.deps import enforce_dataset_maintenance_lock
 
 from app.api.routes.admin_users import router as admin_users_router
 from app.api.routes.auth import router as auth_router
@@ -16,7 +18,7 @@ from app.api.routes.tropes import router as tropes_router
 from app.api.routes.visualizations import router as visualizations_router
 
 
-api_router = APIRouter()
+api_router = APIRouter(dependencies=[Depends(enforce_dataset_maintenance_lock)])
 api_router.include_router(admin_users_router)
 api_router.include_router(auth_router)
 api_router.include_router(curation_router)

@@ -328,6 +328,12 @@ Access:
 Purpose:
 - fetch the currently active dataset summary and rebuild status.
 
+Contract notes:
+- the response includes a `maintenance` object with the shared dataset-write state;
+- while `maintenance.active` is true, dataset-scoped write requests return `409 dataset_maintenance_in_progress`;
+- browsing, search, exploration, job status, and CSV export remain available;
+- a staged replacement remains in maintenance mode until its rebuild completes.
+
 ### `POST /api/dataset/upload`
 
 Access:

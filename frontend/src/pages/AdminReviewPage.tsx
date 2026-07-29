@@ -15,6 +15,7 @@ import {
 import type { ReviewItem, ReviewStatus, SearchItem, StoryDetail } from "../api/types";
 import { TermCard } from "../components/TermCard";
 import { LONG_TEXT_FIELDS } from "../constants/csv";
+import { useDatasetMaintenance } from "../maintenance";
 
 interface PageNotice {
   tone: "error" | "success";
@@ -379,6 +380,7 @@ function StoryReviewChangeCard({
   onRefresh: () => Promise<void>;
   onNotice: (notice: PageNotice | null) => void;
 }) {
+  const maintenance = useDatasetMaintenance();
   const fieldReview = parseStoryFieldReview(item);
   const tropeReview = parseStoryTropeReview(item);
   const keywordReview = parseStoryKeywordReview(item);
@@ -386,6 +388,7 @@ function StoryReviewChangeCard({
   const [decisionNote, setDecisionNote] = useState("");
   const [editableDraft, setEditableDraft] = useState("");
   const [busy, setBusy] = useState(false);
+  const mutationDisabled = busy || maintenance.active;
 
   const liveFieldValue = fieldReview && storyDetail ? storyDetail.fields[fieldReview.field_name] || "" : null;
   const liveTermValue = tropeReview
@@ -657,28 +660,28 @@ function StoryReviewChangeCard({
             <label className="field">
               <span>{editableDraftLabel(item)}</span>
               {fieldReview && LONG_TEXT_FIELDS.has(fieldReview.field_name) ? (
-                <textarea className="input input-textarea" disabled={busy || storyDetailLoading} onChange={(event) => setEditableDraft(event.target.value)} value={editableDraft} />
+                <textarea className="input input-textarea" disabled={mutationDisabled || storyDetailLoading} onChange={(event) => setEditableDraft(event.target.value)} value={editableDraft} />
               ) : (
-                <input className="input" disabled={busy || storyDetailLoading} onChange={(event) => setEditableDraft(event.target.value)} value={editableDraft} />
+                <input className="input" disabled={mutationDisabled || storyDetailLoading} onChange={(event) => setEditableDraft(event.target.value)} value={editableDraft} />
               )}
             </label>
           ) : null}
 
           <label className="field">
             <span>Resolution note</span>
-            <textarea className="input input-textarea" disabled={busy} onChange={(event) => setDecisionNote(event.target.value)} placeholder="Optional admin note" value={decisionNote} />
+            <textarea className="input input-textarea" disabled={mutationDisabled} onChange={(event) => setDecisionNote(event.target.value)} placeholder="Optional admin note" value={decisionNote} />
           </label>
 
           <div className="button-row wrap-row">
-            <button className="button" disabled={busy} onClick={() => void handleApprove()} type="button">
+            <button className="button" disabled={mutationDisabled} onClick={() => void handleApprove()} type="button">
               {busy ? "Working..." : "Approve"}
             </button>
             {canInlineEdit(item) ? (
-              <button className="button button-ghost" disabled={busy || storyDetailLoading} onClick={() => void handleEditAndApprove()} type="button">
+              <button className="button button-ghost" disabled={mutationDisabled || storyDetailLoading} onClick={() => void handleEditAndApprove()} type="button">
                 {busy ? "Working..." : "Edit and approve"}
               </button>
             ) : null}
-            <button className="button button-danger" disabled={busy} onClick={() => void handleReject()} type="button">
+            <button className="button button-danger" disabled={mutationDisabled} onClick={() => void handleReject()} type="button">
               {busy ? "Working..." : "Reject"}
             </button>
           </div>
@@ -704,6 +707,7 @@ function TermReviewPanel({
   onRefresh: () => Promise<void>;
   onNotice: (notice: PageNotice | null) => void;
 }) {
+  const maintenance = useDatasetMaintenance();
   const [decisionNote, setDecisionNote] = useState("");
   const [mergeQuery, setMergeQuery] = useState("");
   const [mergeResults, setMergeResults] = useState<SearchItem[]>([]);
@@ -711,6 +715,7 @@ function TermReviewPanel({
   const [mergeTargetId, setMergeTargetId] = useState<string | null>(null);
   const [removeFromAllStories, setRemoveFromAllStories] = useState(false);
   const [busy, setBusy] = useState(false);
+  const mutationDisabled = busy || maintenance.active;
 
   useEffect(() => {
     setDecisionNote("");
@@ -846,7 +851,7 @@ function TermReviewPanel({
         <div className="page-stack">
           <label className="field">
             <span>Resolution note</span>
-            <textarea className="input input-textarea" disabled={busy} onChange={(event) => setDecisionNote(event.target.value)} placeholder="Optional admin note" value={decisionNote} />
+            <textarea className="input input-textarea" disabled={mutationDisabled} onChange={(event) => setDecisionNote(event.target.value)} placeholder="Optional admin note" value={decisionNote} />
           </label>
 
           {isPendingTerm(item) ? (
@@ -859,7 +864,7 @@ function TermReviewPanel({
                   <span>Merge into an approved existing term</span>
                   <input
                     className="input"
-                    disabled={busy || removeFromAllStories}
+                    disabled={mutationDisabled || removeFromAllStories}
                     onChange={(event) => {
                       setMergeQuery(event.target.value);
                       if (!event.target.value.trim()) {
@@ -884,7 +889,7 @@ function TermReviewPanel({
                         actions={
                           <button
                             className="button button-ghost"
-                            disabled={busy}
+                            disabled={mutationDisabled}
                             onClick={() => {
                               setMergeTargetId(resultItem.id);
                               setMergeQuery(resultItem.text);
@@ -903,7 +908,7 @@ function TermReviewPanel({
                 <label className="checkbox-row">
                   <input
                     checked={removeFromAllStories}
-                    disabled={busy}
+                    disabled={mutationDisabled}
                     onChange={(event) => {
                       setRemoveFromAllStories(event.target.checked);
                       if (event.target.checked) {
@@ -919,10 +924,10 @@ function TermReviewPanel({
           ) : null}
 
           <div className="button-row wrap-row">
-            <button className="button" disabled={busy} onClick={() => void handleApprove()} type="button">
+            <button className="button" disabled={mutationDisabled} onClick={() => void handleApprove()} type="button">
               {busy ? "Working..." : "Approve"}
             </button>
-            <button className="button button-danger" disabled={busy || (isPendingTerm(item) && !mergeTargetId && !removeFromAllStories)} onClick={() => void handleReject()} type="button">
+            <button className="button button-danger" disabled={mutationDisabled || (isPendingTerm(item) && !mergeTargetId && !removeFromAllStories)} onClick={() => void handleReject()} type="button">
               {busy ? "Working..." : "Reject"}
             </button>
           </div>

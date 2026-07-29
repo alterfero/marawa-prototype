@@ -4,6 +4,7 @@ import { getDatasetStatus, getErrorMessage, getJob, requestDatasetRebuild } from
 import type { DatasetStatus, UserRole } from "./api/types";
 import { roleAtLeast, roleLabel, useAuth } from "./auth";
 import { TropeBrowserProvider } from "./components/TropeBrowser";
+import { DatasetMaintenanceProvider } from "./maintenance";
 import { routeHref, useHashRoute, useHashSearch, type AppRoute } from "./router";
 import { AdminReviewPage } from "./pages/AdminReviewPage";
 import { AdminUsersPage } from "./pages/AdminUsersPage";
@@ -318,6 +319,8 @@ export default function App() {
         tone: "unavailable" as SidebarStatusTone,
       }
     : sidebarEmbeddingState(datasetStatus);
+  const maintenance = datasetStatus?.maintenance ?? null;
+  const canRequestRebuild = !maintenance?.active || maintenance.state === "staged";
 
   const visibleNavItems = NAV_ITEMS.filter((item) => !item.minimumRole || roleAtLeast(authenticatedRole, item.minimumRole));
 
@@ -371,8 +374,8 @@ export default function App() {
                 </div>
                 {canManageDataset ? (
                   <>
-                    <button className="button button-ghost sidebar-rebuild-button" disabled={rebuildBusy} onClick={() => void handleRebuild()} type="button">
-                      Rebuild
+                    <button className="button button-ghost sidebar-rebuild-button" disabled={rebuildBusy || !canRequestRebuild} onClick={() => void handleRebuild()} type="button">
+                      {maintenance?.state === "staged" ? "Start rebuild" : "Rebuild"}
                     </button>
                     <p className={`sidebar-action-note ${rebuildNotice ? `sidebar-action-note-${rebuildNotice.tone}` : ""}`}>
                       {rebuildNotice?.message || ""}
@@ -432,14 +435,25 @@ export default function App() {
             <p className="muted">Loading your access level and the right workspace.</p>
           </section>
         ) : (
-          <TropeBrowserProvider>
-            <CurrentPage
-              canEditStories={canEditStories}
-              canManageDataset={canManageDataset}
-              loginAccessNotice={loginAccessNotice}
-              route={effectiveRoute}
-            />
-          </TropeBrowserProvider>
+          <DatasetMaintenanceProvider maintenance={maintenance}>
+            {maintenance?.active ? (
+              <section className="notice notice-warning" role="status">
+                <strong className="notice-title">Dataset changes temporarily paused</strong>
+                <p>
+                  {maintenance.message}
+                </p>
+                <p>You can continue browsing and searching while the maintenance work completes.</p>
+              </section>
+            ) : null}
+            <TropeBrowserProvider>
+              <CurrentPage
+                canEditStories={canEditStories}
+                canManageDataset={canManageDataset}
+                loginAccessNotice={loginAccessNotice}
+                route={effectiveRoute}
+              />
+            </TropeBrowserProvider>
+          </DatasetMaintenanceProvider>
         )}
       </main>
     </div>

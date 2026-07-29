@@ -20,6 +20,7 @@ from app.db.models import (
 from app.services.audit import record_audit_event
 from app.services.csv_io import import_csv_bytes
 from app.services.jobs import queue_job
+from app.services.maintenance import get_dataset_maintenance_status
 
 
 class DatasetRebuildTargetNotFoundError(ValueError):
@@ -169,6 +170,7 @@ def _embedding_status(
 
 
 def get_dataset_status(session: Session, *, model_name: str) -> dict:
+    maintenance = get_dataset_maintenance_status(session)
     dataset = session.scalar(select(Dataset).where(Dataset.status == DatasetStatus.ACTIVE))
     if dataset is None:
         latest_job = session.scalar(select(Job).order_by(Job.created_at.desc(), Job.id.desc()))
@@ -178,6 +180,7 @@ def get_dataset_status(session: Session, *, model_name: str) -> dict:
             "keyword_count": 0,
             "active_dataset_version": None,
             "latest_job": _job_summary(latest_job),
+            "maintenance": maintenance,
             "embedding_status": _embedding_status(
                 session,
                 dataset=None,
@@ -213,6 +216,7 @@ def get_dataset_status(session: Session, *, model_name: str) -> dict:
         "keyword_count": int(keyword_count),
         "active_dataset_version": dataset.version,
         "latest_job": _job_summary(latest_job),
+        "maintenance": maintenance,
         "embedding_status": _embedding_status(
             session,
             dataset=dataset,

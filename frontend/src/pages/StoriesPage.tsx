@@ -46,6 +46,7 @@ import type {
 } from "../api/types";
 import { LEGACY_METADATA_SECTIONS, normalizeDraftText } from "../constants/csv";
 import { routeHref, useHashSearch } from "../router";
+import { useDatasetMaintenance } from "../maintenance";
 
 interface PageNotice {
   tone: "error" | "success";
@@ -97,6 +98,10 @@ function extractConflictVersion(error: ApiError): number | null {
   return typeof currentStoryVersion === "number" ? currentStoryVersion : null;
 }
 
+function isDatasetMaintenanceError(error: ApiError): boolean {
+  return Boolean(error.detail && typeof error.detail === "object" && (error.detail as { code?: unknown }).code === "dataset_maintenance_in_progress");
+}
+
 function storyMatchesQuery(story: StorySummary, query: string): boolean {
   const marker = query.trim().toLowerCase();
   if (!marker) {
@@ -130,6 +135,7 @@ function storyFieldsChanged(current: Record<string, string>, baseline: Record<st
 
 export function StoriesPage({ canEdit }: { canEdit: boolean }) {
   const { user } = useAuth();
+  const maintenance = useDatasetMaintenance();
   const hashSearch = useHashSearch();
   const nextFilterIdRef = useRef(1);
   const [stories, setStories] = useState<StorySummary[]>([]);
@@ -168,7 +174,7 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
   const assignedKeywordIds = new Set(detail?.keywords.map((keyword) => keyword.id) ?? []);
   const editingTrope = detail?.tropes.find((trope) => trope.id === editingTropeId) ?? null;
   const editingKeyword = detail?.keywords.find((keyword) => keyword.id === editingKeywordId) ?? null;
-  const interactionDisabled = busy || storiesLoading || storyLoading;
+  const interactionDisabled = busy || storiesLoading || storyLoading || maintenance.active;
   const fieldsDirty = detail ? storyFieldsChanged(fieldDraft, detail.fields) : false;
   const draftFiltersAreComplete = storyFieldFiltersAreComplete(draftFilters);
 
@@ -569,6 +575,14 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
       setNotice(successNotice);
     } catch (error) {
       if (error instanceof ApiError && error.status === 409) {
+        if (isDatasetMaintenanceError(error)) {
+          setNotice({
+            tone: "error",
+            title: "Dataset changes are paused",
+            body: getErrorMessage(error),
+          });
+          return;
+        }
         await handleStoryConflict(error, storyId);
         return;
       }

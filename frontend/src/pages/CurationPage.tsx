@@ -21,6 +21,7 @@ import type {
   TropeSearchItem,
   TropeSummary,
 } from "../api/types";
+import { useDatasetMaintenance } from "../maintenance";
 
 const TERMINAL_JOB_STATUSES = new Set(["succeeded", "failed", "cancelled"]);
 const JOB_POLL_INTERVAL_MS = 2000;
@@ -127,6 +128,7 @@ function resolvePairSelection(
 }
 
 export function CurationPage() {
+  const maintenance = useDatasetMaintenance();
   const [pairs, setPairs] = useState<NearDuplicateTropeListResponse | null>(null);
   const [unusedQuery, setUnusedQuery] = useState("");
   const [unusedTropes, setUnusedTropes] = useState<CanonicalTropeListItem[]>([]);
@@ -144,6 +146,7 @@ export function CurationPage() {
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
   const [jobDetail, setJobDetail] = useState<JobDetail | null>(null);
   const [jobError, setJobError] = useState<string | null>(null);
+  const mutationDisabled = busy || maintenance.active;
 
   function resetTargetEditor() {
     setEditingPairId(null);
@@ -650,7 +653,7 @@ export function CurationPage() {
                     </div>
                     <button
                       className="button button-ghost"
-                      disabled={busy}
+                      disabled={mutationDisabled}
                       onClick={() => handleRemovePendingMerge(merge.pair_id)}
                       type="button"
                     >
@@ -662,10 +665,10 @@ export function CurationPage() {
             </div>
 
             <div className="button-row wrap-row">
-              <button className="button button-ghost" disabled={busy} onClick={handleClearPendingMerges} type="button">
+              <button className="button button-ghost" disabled={mutationDisabled} onClick={handleClearPendingMerges} type="button">
                 Clear batch
               </button>
-              <button className="button" disabled={busy} onClick={() => void handleValidatePendingMerges()} type="button">
+              <button className="button" disabled={mutationDisabled} onClick={() => void handleValidatePendingMerges()} type="button">
                 Validate all merges
               </button>
             </div>
@@ -699,7 +702,7 @@ export function CurationPage() {
                       <h3>Similarity {pair.similarity_score.toFixed(2)}</h3>
                       <button
                         className="button button-ghost"
-                        disabled={busy || Boolean(pendingDecision)}
+                        disabled={mutationDisabled || Boolean(pendingDecision)}
                         onClick={() =>
                           {
                             setPairDirections((current) => ({
@@ -738,7 +741,7 @@ export function CurationPage() {
                           actions={
                             <button
                               className="button button-ghost"
-                              disabled={busy}
+                              disabled={mutationDisabled}
                               onClick={() => {
                                 handleStartEditingTarget(pairId, target);
                               }}
@@ -759,7 +762,7 @@ export function CurationPage() {
                       {pendingDecision ? (
                         <button
                           className="button button-ghost"
-                          disabled={busy}
+                          disabled={mutationDisabled}
                           onClick={() => handleRemovePendingMerge(pendingDecision.pair_id)}
                           type="button"
                         >
@@ -768,7 +771,7 @@ export function CurationPage() {
                       ) : (
                         <button
                           className="button"
-                          disabled={busy || !canStagePair}
+                          disabled={mutationDisabled || !canStagePair}
                           onClick={() => handleStageMerge(pair)}
                           type="button"
                         >
@@ -777,7 +780,7 @@ export function CurationPage() {
                       )}
                       <button
                         className="button button-ghost"
-                        disabled={busy || !pairHasUsableVersions(pair)}
+                        disabled={mutationDisabled || !pairHasUsableVersions(pair)}
                         onClick={() => void handleKeepBoth(pair)}
                         type="button"
                       >
@@ -819,7 +822,7 @@ export function CurationPage() {
                   actions={
                     <button
                       className="button button-danger"
-                      disabled={busy}
+                      disabled={mutationDisabled}
                       onClick={() => void handleDeleteUnusedTrope(trope)}
                       type="button"
                     >
@@ -846,7 +849,7 @@ export function CurationPage() {
           >
             <div className="panel-header">
               <h2 id="curation-target-modal-title">Edit merge target</h2>
-              <button className="button button-ghost" disabled={busy} onClick={resetTargetEditor} type="button">
+              <button className="button button-ghost" disabled={mutationDisabled} onClick={resetTargetEditor} type="button">
                 Close
               </button>
             </div>
@@ -873,7 +876,7 @@ export function CurationPage() {
               <span>Target trope query</span>
               <input
                 className="input"
-                disabled={busy}
+                disabled={mutationDisabled}
                 onChange={(event) => setEditingTargetQuery(event.target.value)}
                 placeholder="Type a target trope to search or create"
                 value={editingTargetQuery}
@@ -885,7 +888,7 @@ export function CurationPage() {
                 <h3>Keep typed trope</h3>
                 <button
                   className="button"
-                  disabled={busy || !editingTargetQuery.trim()}
+                  disabled={mutationDisabled || !editingTargetQuery.trim()}
                   onClick={() => void handleKeepTypedTarget()}
                   type="button"
                 >
@@ -916,7 +919,7 @@ export function CurationPage() {
                       actions={
                         <button
                           className="button button-ghost"
-                          disabled={busy || isCurrentTarget || isSourceTrope}
+                          disabled={mutationDisabled || isCurrentTarget || isSourceTrope}
                           onClick={() => {
                             if (
                               applyPairTargetSelection(editingPair, {
@@ -948,7 +951,7 @@ export function CurationPage() {
               {targetOverrides[pairKey(editingPair)] ? (
                 <button
                   className="button button-ghost"
-                  disabled={busy}
+                  disabled={mutationDisabled}
                   onClick={() =>
                     {
                       handleResetPairTarget(
@@ -970,7 +973,7 @@ export function CurationPage() {
                   Reset target
                 </button>
               ) : null}
-              <button className="button button-ghost" disabled={busy} onClick={resetTargetEditor} type="button">
+              <button className="button button-ghost" disabled={mutationDisabled} onClick={resetTargetEditor} type="button">
                 Done
               </button>
             </div>

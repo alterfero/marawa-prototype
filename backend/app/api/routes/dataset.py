@@ -41,12 +41,21 @@ class EmbeddingStatusResponse(BaseModel):
     latest_rebuild_job: JobSummaryResponse | None
 
 
+class DatasetMaintenanceResponse(BaseModel):
+    active: bool
+    state: str
+    message: str | None
+    job: JobSummaryResponse | None
+    target_dataset_version: int | None
+
+
 class DatasetStatusResponse(BaseModel):
     story_count: int
     trope_count: int
     keyword_count: int
     active_dataset_version: int | None
     latest_job: JobSummaryResponse | None
+    maintenance: DatasetMaintenanceResponse
     embedding_status: EmbeddingStatusResponse
 
 

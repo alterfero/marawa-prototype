@@ -44,6 +44,14 @@ export interface EmbeddingStatus {
   latest_rebuild_job: JobSummary | null;
 }
 
+export interface DatasetMaintenance {
+  active: boolean;
+  state: "available" | "staged" | "queued" | "running";
+  message: string | null;
+  job: JobSummary | null;
+  target_dataset_version: number | null;
+}
+
 export interface JobDetail {
   id: string;
   dataset_id: string | null;
@@ -63,6 +71,7 @@ export interface DatasetStatus {
   keyword_count: number;
   active_dataset_version: number | null;
   latest_job: JobSummary | null;
+  maintenance: DatasetMaintenance;
   embedding_status: EmbeddingStatus;
 }
 

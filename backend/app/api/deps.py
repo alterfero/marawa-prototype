@@ -13,6 +13,7 @@ from app.services.auth import (
     get_auth_context_from_session_token,
     verify_csrf_token,
 )
+from app.services.maintenance import get_dataset_maintenance_status
 
 
 ROLE_LEVELS = {
@@ -96,3 +97,50 @@ def require_minimum_role_with_csrf(minimum_role: UserRole):
         return auth_context
 
     return dependency
+
+
+_DATASET_MUTATION_PREFIXES = (
+    "/dataset",
+    "/stories",
+    "/tropes",
+    "/keywords",
+    "/themes",
+    "/curation",
+    "/review",
+)
+
+
+def enforce_dataset_maintenance_lock(
+    request: Request,
+    session: Session = Depends(get_db_session),
+) -> None:
+    """Block dataset-scoped writes while replacement or rebuild work is active.
+
+    This is intentionally an API-level dependency so it covers every browser
+    client and direct API caller, rather than relying on disabled UI controls.
+    """
+
+    if request.method.upper() not in {"POST", "PUT", "PATCH", "DELETE"}:
+        return
+
+    api_prefix = get_settings().api_prefix.rstrip("/")
+    path = request.url.path
+    relative_path = path[len(api_prefix) :] if path.startswith(api_prefix) else path
+    if not relative_path.startswith(_DATASET_MUTATION_PREFIXES):
+        return
+
+    maintenance = get_dataset_maintenance_status(session)
+    if not maintenance["active"]:
+        return
+
+    # A staged replacement has to be allowed to start its first rebuild. Once
+    # a rebuild is queued or running, subsequent rebuild requests are blocked.
+    if relative_path == "/dataset/rebuild" and maintenance["state"] == "staged":
+        return
+
+    raise api_error(
+        409,
+        "dataset_maintenance_in_progress",
+        maintenance["message"],
+        {"maintenance": maintenance},
+    )

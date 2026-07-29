@@ -281,7 +281,7 @@ Product intent:
 ### Reliability
 
 - Background jobs must survive process restarts because job intent is recorded in PostgreSQL.
-- The active dataset must remain usable while a rebuild is pending for routine edits.
+- The active dataset must remain browsable while a rebuild is pending; dataset-scoped writes are paused until maintenance completes.
 - Dataset replacement imports must promote only fully validated, fully rebuilt data.
 
 ### Security

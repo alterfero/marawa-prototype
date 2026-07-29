@@ -12,6 +12,7 @@ import { TermCard } from "../components/TermCard";
 import { TropeCard } from "../components/TropeCard";
 import { buildBlankStoryFields, LEGACY_METADATA_SECTIONS, normalizeDraftText } from "../constants/csv";
 import type { DatasetStatus, SearchItem } from "../api/types";
+import { useDatasetMaintenance } from "../maintenance";
 
 interface PageNotice {
   tone: "error" | "success" | "warning";
@@ -38,6 +39,10 @@ function extractConflictVersion(error: ApiError): number | null {
   return typeof currentDatasetVersion === "number" ? currentDatasetVersion : null;
 }
 
+function isDatasetMaintenanceError(error: ApiError): boolean {
+  return Boolean(error.detail && typeof error.detail === "object" && (error.detail as { code?: unknown }).code === "dataset_maintenance_in_progress");
+}
+
 function buildErrorNotice(title: string, error: unknown): PageNotice {
   return {
     tone: "error",
@@ -47,6 +52,7 @@ function buildErrorNotice(title: string, error: unknown): PageNotice {
 }
 
 export function CreateEntryPage() {
+  const maintenance = useDatasetMaintenance();
   const [datasetStatus, setDatasetStatus] = useState<DatasetStatus | null>(null);
   const [statusLoading, setStatusLoading] = useState(true);
   const [fields, setFields] = useState<Record<string, string>>(() => buildBlankStoryFields());
@@ -340,6 +346,14 @@ export function CreateEntryPage() {
       });
     } catch (caughtError) {
       if (caughtError instanceof ApiError && caughtError.status === 409) {
+        if (isDatasetMaintenanceError(caughtError)) {
+          setNotice({
+            tone: "warning",
+            title: "Dataset changes are paused",
+            body: getErrorMessage(caughtError),
+          });
+          return;
+        }
         const currentVersion = extractConflictVersion(caughtError);
         try {
           await loadStatus();
@@ -377,7 +391,7 @@ export function CreateEntryPage() {
             <button className="button button-ghost" disabled={busy || statusLoading} onClick={() => void loadStatus()} type="button">
               {statusLoading ? "Refreshing..." : "Refresh dataset"}
             </button>
-            <button className="button" disabled={busy || datasetVersion == null} type="submit">
+            <button className="button" disabled={busy || maintenance.active || datasetVersion == null} type="submit">
               {busy ? "Saving..." : "Save new entry"}
             </button>
           </div>

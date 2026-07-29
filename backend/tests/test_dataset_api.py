@@ -120,6 +120,13 @@ def test_dataset_status_returns_empty_state_when_no_active_dataset(client: TestC
         "keyword_count": 0,
         "active_dataset_version": None,
         "latest_job": None,
+        "maintenance": {
+            "active": False,
+            "state": "available",
+            "message": None,
+            "job": None,
+            "target_dataset_version": None,
+        },
         "embedding_status": {
             "state": "missing",
             "ready": False,
@@ -170,6 +177,13 @@ def test_dataset_upload_stages_csv_without_triggering_rebuild(client: TestClient
     assert status_response.json()["embedding_status"]["ready"] is False
     assert status_response.json()["embedding_status"]["current"] is False
     assert status_response.json()["embedding_status"]["latest_rebuild_job"] is None
+    assert status_response.json()["maintenance"] == {
+        "active": True,
+        "state": "staged",
+        "message": "A replacement dataset is staged; dataset changes are paused until it is rebuilt or replaced.",
+        "job": None,
+        "target_dataset_version": 1,
+    }
 
 
 def test_dataset_rebuild_endpoint_queues_single_manual_rebuild_for_staged_dataset(client: TestClient) -> None:
@@ -185,14 +199,14 @@ def test_dataset_rebuild_endpoint_queues_single_manual_rebuild_for_staged_datase
     assert upload_response.status_code == 201
 
     first_rebuild_response = queue_rebuild(client)
-    second_rebuild_response = queue_rebuild(client)
+    second_rebuild_response = client.post("/api/dataset/rebuild")
 
     assert first_rebuild_response.json()["dataset_status"] == "staged"
     assert first_rebuild_response.json()["created"] is True
     assert first_rebuild_response.json()["queued_job"]["status"] == "queued"
     assert first_rebuild_response.json()["queued_job"]["job_type"] == "full_rebuild"
-    assert second_rebuild_response.json()["created"] is False
-    assert second_rebuild_response.json()["queued_job"]["id"] == first_rebuild_response.json()["queued_job"]["id"]
+    assert second_rebuild_response.status_code == 409
+    assert second_rebuild_response.json()["code"] == "dataset_maintenance_in_progress"
 
 
 def test_dataset_upload_accepts_current_template_and_preserves_legacy_export_fields(client: TestClient) -> None:
@@ -398,6 +412,13 @@ def test_clear_dataset_removes_current_data_and_returns_empty_state(client: Test
         "keyword_count": 0,
         "active_dataset_version": None,
         "latest_job": None,
+        "maintenance": {
+            "active": False,
+            "state": "available",
+            "message": None,
+            "job": None,
+            "target_dataset_version": None,
+        },
         "embedding_status": {
             "state": "missing",
             "ready": False,
@@ -436,3 +457,66 @@ def test_clear_dataset_removes_current_data_and_returns_empty_state(client: Test
     assert reupload_response.status_code == 201
     assert reupload_response.json()["dataset_status"] == "staged"
     assert reupload_response.json()["active_dataset_version"] is None
+
+
+def test_dataset_maintenance_lock_blocks_writes_but_allows_browsing(client: TestClient) -> None:
+    row = {column: "" for column in CSV_COLUMNS}
+    row["Story title (Eng)"] = "Maintenance Story"
+    row[TROPE_FIELD] = "§§ first trope"
+
+    upload_response = client.post(
+        "/api/dataset/upload",
+        files={"file": ("stories.csv", make_csv_bytes([row]), "text/csv")},
+    )
+    assert upload_response.status_code == 201
+
+    status_response = client.get("/api/dataset/status")
+    assert status_response.status_code == 200
+    assert status_response.json()["maintenance"]["state"] == "staged"
+
+    second_upload_response = client.post(
+        "/api/dataset/upload",
+        files={"file": ("second.csv", make_csv_bytes([row]), "text/csv")},
+    )
+    assert second_upload_response.status_code == 409
+    assert second_upload_response.json()["code"] == "dataset_maintenance_in_progress"
+
+    rebuild_response = queue_rebuild(client)
+    assert rebuild_response.json()["queued_job"]["status"] == "queued"
+
+    queued_status_response = client.get("/api/dataset/status")
+    assert queued_status_response.status_code == 200
+    assert queued_status_response.json()["maintenance"] == {
+        "active": True,
+        "state": "queued",
+        "message": "Dataset rebuild is queued; dataset changes are temporarily paused.",
+        "job": rebuild_response.json()["queued_job"],
+        "target_dataset_version": 1,
+    }
+
+    blocked_clear_response = client.delete("/api/dataset")
+    assert blocked_clear_response.status_code == 409
+    assert blocked_clear_response.json()["code"] == "dataset_maintenance_in_progress"
+
+    blocked_trope_response = client.post("/api/tropes", json={"text": "blocked trope"})
+    assert blocked_trope_response.status_code == 409
+    assert blocked_trope_response.json()["code"] == "dataset_maintenance_in_progress"
+
+    browse_response = client.get("/api/tropes")
+    assert browse_response.status_code == 200
+    assert browse_response.json() == []
+
+    assert client.app.state.job_runner.process_next_job() is True
+
+    unlocked_status_response = client.get("/api/dataset/status")
+    assert unlocked_status_response.status_code == 200
+    assert unlocked_status_response.json()["maintenance"] == {
+        "active": False,
+        "state": "available",
+        "message": None,
+        "job": None,
+        "target_dataset_version": None,
+    }
+
+    unblocked_trope_response = client.post("/api/tropes", json={"text": "available trope"})
+    assert unblocked_trope_response.status_code == 200

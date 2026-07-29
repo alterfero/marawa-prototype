@@ -10,6 +10,7 @@ import {
   uploadDataset,
 } from "../api/client";
 import type { DatasetStatus, JobDetail, JobSummary } from "../api/types";
+import { useDatasetMaintenance } from "../maintenance";
 
 const TERMINAL_JOB_STATUSES = new Set(["succeeded", "failed", "cancelled"]);
 const JOB_POLL_INTERVAL_MS = 2000;
@@ -74,6 +75,7 @@ function formatJobStatus(job: JobSummary | JobDetail | null): string {
 }
 
 export function DatasetPage({ canManageDataset }: { canManageDataset: boolean }) {
+  const maintenance = useDatasetMaintenance();
   const [status, setStatus] = useState<DatasetStatus | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [fileInputKey, setFileInputKey] = useState(0);
@@ -276,6 +278,7 @@ export function DatasetPage({ canManageDataset }: { canManageDataset: boolean })
   const effectiveJob = jobDetail ?? (status?.latest_job ?? null);
   const latestRebuildStatus = formatJobStatus(effectiveJob);
   const notice = actionNotice ?? statusNotice;
+  const mutationsLocked = maintenance.active || Boolean(status?.maintenance.active);
 
   return (
     <div className="page-stack">
@@ -335,11 +338,12 @@ export function DatasetPage({ canManageDataset }: { canManageDataset: boolean })
                     accept=".csv,text/csv"
                     className="input"
                     key={fileInputKey}
+                    disabled={mutationsLocked}
                     onChange={(event) => setFile(event.target.files?.[0] || null)}
                     type="file"
                   />
                 </label>
-                <button className="button" disabled={busy || clearing || backendUnavailable} type="submit">
+                <button className="button" disabled={busy || clearing || backendUnavailable || mutationsLocked} type="submit">
                   {busy ? "Uploading..." : "Upload dataset"}
                 </button>
               </form>
@@ -364,7 +368,7 @@ export function DatasetPage({ canManageDataset }: { canManageDataset: boolean })
             <div className="button-row wrap-row">
               <button
                 className="button button-danger"
-                disabled={busy || clearing || backendUnavailable || status?.active_dataset_version == null}
+                disabled={busy || clearing || backendUnavailable || mutationsLocked || status?.active_dataset_version == null}
                 onClick={() => void handleClearData()}
                 type="button"
               >
