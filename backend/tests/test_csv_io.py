@@ -4,12 +4,13 @@ import io
 import pytest
 from sqlalchemy import select
 
-from app.core.csv_schema import CSV_COLUMNS, KEYWORD_FIELD, TROPE_FIELD, TROPE_PROPOSAL_FIELD
+from app.core.csv_schema import CSV_COLUMNS, KEYWORD_FIELD, THEME_FIELD, TROPE_FIELD, TROPE_PROPOSAL_FIELD
 from app.db import (
     Dataset,
     DatasetStatus,
     Story,
     StoryKeyword,
+    StoryTheme,
     StoryTrope,
     StoryTropeOrigin,
     build_engine,
@@ -17,6 +18,7 @@ from app.db import (
     initialize_database,
 )
 from app.db.models import AssignmentStatus
+from app.db.models import Theme
 from app.services.csv_io import CSVImportValidationError, export_active_dataset_to_csv_bytes, import_csv_bytes
 
 
@@ -125,6 +127,38 @@ def test_import_csv_accepts_extra_columns_and_reordered_legacy_fields(tmp_path) 
     reader = csv.DictReader(io.StringIO(exported_bytes.decode("utf-8-sig")))
     assert reader.fieldnames == CSV_COLUMNS
     assert "Extra Column" not in reader.fieldnames
+
+
+def test_theme_import_is_normalized_and_exported_through_legacy_theme_column(tmp_path) -> None:
+    csv_bytes = make_csv_bytes(
+        [
+            {
+                **{column: "" for column in CSV_COLUMNS},
+                "Story title (Eng)": "First story",
+                THEME_FIELD: "§§ Creation\n§§ Ocean",
+            },
+            {
+                **{column: "" for column in CSV_COLUMNS},
+                "Story title (Eng)": "Second story",
+                THEME_FIELD: "creation",
+            },
+        ]
+    )
+
+    with make_session(tmp_path) as session:
+        dataset = import_csv_bytes(session, csv_bytes, source_filename="themes.csv")
+        activate_dataset(session, dataset)
+        themes = session.scalars(select(Theme).order_by(Theme.text)).all()
+        links = session.scalars(select(StoryTheme)).all()
+        exported = export_active_dataset_to_csv_bytes(session)
+
+    assert [(theme.text, theme.cached_story_count) for theme in themes] == [("Creation", 2), ("Ocean", 1)]
+    assert len(links) == 3
+    reader = csv.DictReader(io.StringIO(exported.decode("utf-8-sig")))
+    exported_rows = list(reader)
+    assert reader.fieldnames == CSV_COLUMNS
+    assert exported_rows[0][THEME_FIELD] == "§§ Creation\n§§ Ocean"
+    assert exported_rows[1][THEME_FIELD] == "§§ Creation"
 
 
 def test_import_csv_maps_current_template_aliases_back_to_legacy_export_fields(tmp_path) -> None:

@@ -59,3 +59,12 @@ def serialize_tropes(values: Iterable[str]) -> str:
         return ""
     return "\n".join(f"§§ {item}" for item in items)
 
+
+def split_themes(value: str) -> list[str]:
+    """Parse legacy theme cells with the same multi-value syntax as tropes."""
+    return split_tropes(value)
+
+
+def serialize_themes(values: Iterable[str]) -> str:
+    """Serialize themes using the legacy-compatible trope separator format."""
+    return serialize_tropes(values)

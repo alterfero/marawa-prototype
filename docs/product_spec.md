@@ -34,6 +34,8 @@ Stories enter the system through a legacy-compatible CSV import, are edited and 
 - The legacy CSV keyword field name remains exactly `Keywords (Eng)`.
 - Tropes are flat English strings.
 - Keywords are flat English strings.
+- Themes are flat strings from the legacy `Thème` CSV column and are displayed as `Theme` in the product.
+- Themes are marked `unconfirmed` or `canonical` and are managed by admins.
 - Similarity search applies only to tropes and keywords.
 
 ## Access Model
@@ -47,7 +49,7 @@ Stories enter the system through a legacy-compatible CSV import, are edited and 
 ### Guest
 
 - Authenticated read-only user.
-- May read dataset status, stories, tropes, keywords, jobs, search results, and exploration results.
+- May read dataset status, stories, tropes, keywords, themes, jobs, search results, and exploration results.
 - May not perform any mutation.
 
 ### Contributor
@@ -55,7 +57,7 @@ Stories enter the system through a legacy-compatible CSV import, are edited and 
 - Has all `guest` permissions.
 - May create stories.
 - May edit stories.
-- May add, replace, and remove trope and keyword assignments on stories.
+- May add, replace, and remove trope, keyword, and theme assignments on stories.
 - May create new canonical tropes and canonical keywords.
 - Contributor-created content saves immediately but also generates admin review work.
 
@@ -68,6 +70,7 @@ Stories enter the system through a legacy-compatible CSV import, are edited and 
 - May run dataset-level actions.
 - May merge and delete canonical tropes.
 - May curate canonical keywords.
+- May manage themes, including their `unconfirmed` or `canonical` status.
 - May resolve review items.
 - Uses the exploration filter-set workflow instead of the public single-trope exploration card.
 
@@ -91,7 +94,7 @@ Stories enter the system through a legacy-compatible CSV import, are edited and 
 - Stage dataset replacement and promote only after successful rebuild.
 - Create and edit stories inside the active dataset.
 - Preserve all legacy CSV fields in the product, even when the UI emphasizes only a subset.
-- Manage trope and keyword assignments on stories.
+- Manage trope, keyword, and theme assignments on stories.
 - Create canonical tropes and keywords from contributor workflows.
 - Review contributor-created content through an admin queue.
 - Search semantically over tropes and keywords using `sentence-transformers/paraphrase-multilingual-mpnet-base-v2`.
@@ -158,18 +161,18 @@ Product intent:
 
 1. A guest, contributor, or admin opens the shared dataset.
 2. The user browses stories and opens a story detail view.
-3. The product shows all legacy fields, plus parsed tropes and keywords.
+3. The product shows all legacy fields, plus parsed tropes, keywords, and themes.
 
 ### 5. Create A New Story
 
 1. A contributor or admin creates a new story record inside the active dataset.
 2. The user fills the legacy-compatible fields.
-3. The user assigns trope and keyword strings.
+3. The user assigns trope, keyword, and theme strings.
 4. The system saves the story, queues a rebuild job, and creates an admin review item.
 
 ### 6. Edit An Existing Story
 
-1. A contributor or admin opens a story and edits fields, tropes, or keywords.
+1. A contributor or admin opens a story and edits fields, tropes, keywords, or themes.
 2. The save request includes the story's current version.
 3. If the version matches, the system commits the edit, queues a rebuild job, and creates or updates an admin review item.
 4. If the version is stale, the system rejects the save and returns the latest server version so the user can reconcile.
@@ -221,13 +224,15 @@ Product intent:
 - Stories must be creatable and editable by contributors and admins.
 - Stories must not be deletable through the app.
 - Stories must retain all legacy CSV fields needed for round-trip export.
-- Story edits must update trope and keyword assignments in the same transaction.
+- Story edits must update trope, keyword, and theme assignments in the same transaction.
 - Story create and edit actions from contributors must create review work for admins.
 
-### Tropes And Keywords
+### Tropes, Keywords, And Themes
 
 - Tropes and keywords must be dataset-scoped.
 - Tropes and keywords must be stored and surfaced as flat strings.
+- Themes must be dataset-scoped and stored as flat strings.
+- Themes must retain a separate `unconfirmed` or `canonical` confirmation status and must be manageable without vectorization or similarity search.
 - The product must treat `motif` and `pattern` as legacy aliases of `trope`.
 - Similarity search must be scoped to tropes and keywords only.
 - The public exploration workflow must remain a single-trope workflow for non-admin users.
@@ -245,7 +250,7 @@ Product intent:
   - login and logout events;
   - user creation, role changes, deactivation, and password reset actions;
   - dataset import and export actions;
-  - story, trope, and keyword mutations;
+  - story, trope, keyword, and theme mutations;
   - review decisions;
   - job requests and important job state transitions.
 

@@ -4,7 +4,7 @@
 
 This document defines the CSV interface that Marawa must preserve for import and export compatibility.
 
-Product terminology uses `trope`, but CSV compatibility retains the exact legacy field names `Motifs (Eng)` and `Keywords (Eng)`.
+Product terminology uses `trope` and `theme`, but CSV compatibility retains the exact legacy field names `Motifs (Eng)`, `Keywords (Eng)`, and `Thème`.
 
 ## Canonical Encoding And Delimiter
 
@@ -108,7 +108,7 @@ The normalized comparison form must:
 
 This normalized form is used for de-duplication and matching, not for general display.
 
-## Tropes And Keywords
+## Tropes, Keywords, And Themes
 
 ### Terminology
 
@@ -153,6 +153,12 @@ Example:
 §§ younger sibling outwits elder
 ```
 
+### `Thème` Parsing And Export Serialization
+
+- The CSV header remains exactly `Thème`; the product UI displays it as `Theme`.
+- Themes use the same parsing, de-duplication, and `§§ `-prefixed multiline serialization rules as `Motifs (Eng)`.
+- Themes are stored as structured story assignments so theme management can rename or remove them consistently across stories.
+
 ## Round-Trip Guarantees
 
 ### Guaranteed
@@ -160,12 +166,12 @@ Example:
 - Exact exported legacy header names.
 - Exact exported legacy column order.
 - Preservation of all canonical field slots.
-- Stable canonical serialization of trope and keyword values.
+- Stable canonical serialization of trope, keyword, and theme values.
 
 ### Not Guaranteed
 
 - Exact preservation of non-canonical extra columns.
-- Exact preservation of user formatting inside trope and keyword cells when it differs from canonical serialization.
+- Exact preservation of user formatting inside trope, keyword, and theme cells when it differs from canonical serialization.
 - Exact preservation of quoting style, whitespace style, or line-ending style from the uploaded file.
 
 ## Internal Representation Expectations
@@ -173,7 +179,8 @@ Example:
 - Stories should store the full canonical field map internally.
 - Parsed tropes should also exist as a structured ordered list separate from the raw `Motifs (Eng)` string.
 - Parsed keywords should also exist as a structured ordered list separate from the raw `Keywords (Eng)` string.
-- Export should reconstruct `Motifs (Eng)` and `Keywords (Eng)` from the structured lists so the output stays canonical.
+- Parsed themes should also exist as a structured ordered list separate from the raw `Thème` string.
+- Export should reconstruct `Motifs (Eng)`, `Keywords (Eng)`, and `Thème` from the structured lists so the output stays canonical.
 
 ## Validation Error Categories
 

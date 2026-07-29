@@ -1,8 +1,9 @@
 from alembic import command
+import pytest
 from sqlalchemy import inspect
 from sqlalchemy.exc import IntegrityError, OperationalError
 
-from app.db import Dataset, DatasetStatus, Story, Trope, build_engine, build_session_factory, initialize_database
+from app.db import Dataset, DatasetStatus, Story, Theme, Trope, build_engine, build_session_factory, initialize_database
 from app.db.init import _build_alembic_config, _looks_like_missing_postgres_database
 
 
@@ -23,9 +24,11 @@ def test_initialize_database_creates_expected_tables(tmp_path) -> None:
         "review_items",
         "stories",
         "story_keywords",
+        "story_themes",
         "story_tropes",
         "term_embeddings",
         "term_similarity_cache",
+        "themes",
         "tropes",
         "user_sessions",
         "users",
@@ -38,13 +41,15 @@ def test_initialize_database_creates_expected_tables(tmp_path) -> None:
 
     assert busy_timeout == 5000
     assert str(journal_mode).lower() == "wal"
-    assert alembic_version == "20260727_0007"
+    assert alembic_version == "20260729_0009"
 
     story_columns = {column["name"] for column in inspector.get_columns("stories")}
     assert "completeness" in story_columns
     trope_columns = {column["name"] for column in inspector.get_columns("tropes")}
     assert "confirmation_status" in trope_columns
     assert "version" in trope_columns
+    theme_columns = {column["name"] for column in inspector.get_columns("themes")}
+    assert {"confirmation_status", "version"}.issubset(theme_columns)
 
 
 def test_initialize_database_upgrades_confirmed_trope_status_to_canonical(tmp_path) -> None:
@@ -81,7 +86,44 @@ def test_initialize_database_upgrades_confirmed_trope_status_to_canonical(tmp_pa
         alembic_version = connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one()
 
     assert status == "canonical"
-    assert alembic_version == "20260727_0007"
+    assert alembic_version == "20260729_0009"
+
+
+def test_initialize_database_backfills_themes_imported_after_initial_theme_migration(tmp_path) -> None:
+    db_path = tmp_path / "theme-backfill.db"
+    engine = build_engine(f"sqlite:///{db_path}")
+    config = _build_alembic_config(str(engine.url))
+
+    with engine.begin() as connection:
+        config.attributes["connection"] = connection
+        command.upgrade(config, "20260729_0008")
+        connection.exec_driver_sql(
+            """
+            INSERT INTO datasets (version, status, notes_json, id, created_at, updated_at)
+            VALUES (1, 'active', '{}', 'dataset-1', '2026-07-29T00:00:00+00:00', '2026-07-29T00:00:00+00:00')
+            """
+        )
+        connection.exec_driver_sql(
+            """
+            INSERT INTO stories (
+                dataset_id, source_row_number, fields_json, row_hash, completeness, version, id, created_at, updated_at
+            ) VALUES (
+                'dataset-1', 1, '{"Thème":"§§ Creation\\n§§ Ocean"}', 'row-hash-1', 'incomplete', 1,
+                'story-1', '2026-07-29T00:00:00+00:00', '2026-07-29T00:00:00+00:00'
+            )
+            """
+        )
+
+    initialize_database(engine)
+
+    with engine.connect() as connection:
+        themes = connection.exec_driver_sql(
+            "SELECT text, cached_story_count FROM themes ORDER BY text"
+        ).fetchall()
+        theme_links = connection.exec_driver_sql("SELECT COUNT(*) FROM story_themes").scalar_one()
+
+    assert themes == [("Creation", 1), ("Ocean", 1)]
+    assert theme_links == 2
 
 
 def test_initialize_database_recovers_from_interrupted_sqlite_dataset_scope_upgrade(tmp_path) -> None:
@@ -108,7 +150,7 @@ def test_initialize_database_recovers_from_interrupted_sqlite_dataset_scope_upgr
     with engine.connect() as connection:
         alembic_version = connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one()
 
-    assert alembic_version == "20260727_0007"
+    assert alembic_version == "20260729_0009"
 
 
 def test_initialize_database_upgrades_populated_sqlite_db_with_term_and_story_foreign_keys(tmp_path) -> None:
@@ -190,7 +232,7 @@ def test_initialize_database_upgrades_populated_sqlite_db_with_term_and_story_fo
         trope_count = connection.exec_driver_sql("SELECT COUNT(*) FROM story_tropes").scalar_one()
         keyword_count = connection.exec_driver_sql("SELECT COUNT(*) FROM story_keywords").scalar_one()
 
-    assert alembic_version == "20260727_0007"
+    assert alembic_version == "20260729_0009"
     assert trope_count == 1
     assert keyword_count == 1
 
@@ -259,6 +301,25 @@ def test_trope_normalized_text_is_unique_within_a_dataset(tmp_path) -> None:
             session.rollback()
         else:
             raise AssertionError("Expected a unique constraint violation for duplicate normalized trope text.")
+
+
+def test_theme_normalized_text_is_unique_within_a_dataset(tmp_path) -> None:
+    db_path = tmp_path / "themes.db"
+    engine = build_engine(f"sqlite:///{db_path}")
+    initialize_database(engine)
+    SessionLocal = build_session_factory(engine)
+
+    with SessionLocal() as session:
+        dataset = Dataset(status=DatasetStatus.ACTIVE)
+        session.add(dataset)
+        session.commit()
+
+        session.add(Theme(dataset_id=dataset.id, text="Creation"))
+        session.commit()
+
+        session.add(Theme(dataset_id=dataset.id, text="  creation  "))
+        with pytest.raises(IntegrityError):
+            session.commit()
 
 
 def test_missing_postgres_database_detection_matches_expected_error() -> None:

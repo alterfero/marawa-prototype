@@ -10,6 +10,7 @@ export type ReviewStatus = "pending" | "approved" | "rejected";
 export type ReviewType = "story_created" | "story_updated" | "trope_pending" | "keyword_pending";
 export type StoryCompleteness = "incomplete" | "pending review" | "complete";
 export type TropeConfirmationStatus = "unconfirmed" | "canonical";
+export type ThemeConfirmationStatus = "unconfirmed" | "canonical";
 
 export interface CurrentUser {
   id: string;
@@ -423,6 +424,45 @@ export interface TropeDetail {
   confirmation_status: TropeConfirmationStatus;
   story_count: number;
   stories: TropeStorySummary[];
+}
+
+export interface CanonicalThemeListItem {
+  id: string;
+  version: number;
+  text: string;
+  confirmation_status: ThemeConfirmationStatus;
+  story_count: number;
+}
+
+export interface ThemeStorySummary {
+  id: string;
+  title: string;
+  source_row_number: number | null;
+}
+
+export interface ThemeDetail extends CanonicalThemeListItem {
+  stories: ThemeStorySummary[];
+}
+
+export interface UpdateThemeResponse {
+  theme: CanonicalThemeListItem;
+}
+
+export interface UpdateThemeConfirmationResponse {
+  theme: CanonicalThemeListItem;
+}
+
+export interface DeleteThemeResponse {
+  deleted_theme_id: string;
+  affected_story_count: number;
+  dataset_version: number;
+}
+
+export interface MergeThemeResponse {
+  source_theme_id: string;
+  target_theme: CanonicalThemeListItem;
+  affected_story_count: number;
+  dataset_version: number;
 }
 
 export interface TropeReference {

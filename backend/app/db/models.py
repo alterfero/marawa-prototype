@@ -72,6 +72,11 @@ class TropeConfirmationStatus(str, Enum):
     CANONICAL = "canonical"
 
 
+class ThemeConfirmationStatus(str, Enum):
+    UNCONFIRMED = "unconfirmed"
+    CANONICAL = "canonical"
+
+
 class StoryCompleteness(str, Enum):
     INCOMPLETE = "incomplete"
     PENDING_REVIEW = "pending review"
@@ -254,6 +259,7 @@ class Dataset(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     stories: Mapped[list["Story"]] = relationship(back_populates="dataset")
     jobs: Mapped[list["Job"]] = relationship(back_populates="dataset")
     tropes: Mapped[list["Trope"]] = relationship(back_populates="dataset")
+    themes: Mapped[list["Theme"]] = relationship(back_populates="dataset")
     keywords: Mapped[list["Keyword"]] = relationship(back_populates="dataset")
     review_items: Mapped[list["ReviewItem"]] = relationship(back_populates="dataset")
     audit_events: Mapped[list["AuditEvent"]] = relationship(back_populates="dataset")
@@ -283,6 +289,7 @@ class Story(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     dataset: Mapped["Dataset"] = relationship(back_populates="stories")
     trope_links: Mapped[list["StoryTrope"]] = relationship(back_populates="story", cascade="all, delete-orphan")
+    theme_links: Mapped[list["StoryTheme"]] = relationship(back_populates="story", cascade="all, delete-orphan")
     keyword_links: Mapped[list["StoryKeyword"]] = relationship(back_populates="story", cascade="all, delete-orphan")
 
 
@@ -368,6 +375,41 @@ class Keyword(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         return cleaned
 
 
+class Theme(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "themes"
+    __table_args__ = (
+        Index("uq_themes_dataset_normalized_text", "dataset_id", "normalized_text", unique=True),
+    )
+
+    dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.id", ondelete="RESTRICT"), nullable=False, index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    normalized_text: Mapped[str] = mapped_column(String(512), nullable=False)
+    confirmation_status: Mapped[ThemeConfirmationStatus] = mapped_column(
+        SqlEnum(
+            ThemeConfirmationStatus,
+            native_enum=False,
+            validate_strings=True,
+            values_callable=enum_values,
+        ),
+        default=ThemeConfirmationStatus.UNCONFIRMED,
+        nullable=False,
+        index=True,
+    )
+    created_by_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    updated_by_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    cached_story_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    dataset: Mapped["Dataset"] = relationship(back_populates="themes")
+    story_links: Mapped[list["StoryTheme"]] = relationship(back_populates="theme")
+
+    @validates("text")
+    def _sync_text_fields(self, _: str, value: str) -> str:
+        cleaned = clean_text(value)
+        self.normalized_text = normalize_text(cleaned)
+        return cleaned
+
+
 class StoryTrope(TimestampMixin, Base):
     __tablename__ = "story_tropes"
     __table_args__ = (
@@ -414,6 +456,20 @@ class StoryKeyword(TimestampMixin, Base):
 
     story: Mapped["Story"] = relationship(back_populates="keyword_links")
     keyword: Mapped["Keyword"] = relationship(back_populates="story_links")
+
+
+class StoryTheme(TimestampMixin, Base):
+    __tablename__ = "story_themes"
+    __table_args__ = (
+        UniqueConstraint("story_id", "theme_id", name="uq_story_themes_story_id_theme_id"),
+    )
+
+    story_id: Mapped[str] = mapped_column(ForeignKey("stories.id", ondelete="CASCADE"), primary_key=True)
+    theme_id: Mapped[str] = mapped_column(ForeignKey("themes.id", ondelete="RESTRICT"), primary_key=True)
+    position: Mapped[int | None] = mapped_column(Integer)
+
+    story: Mapped["Story"] = relationship(back_populates="theme_links")
+    theme: Mapped["Theme"] = relationship(back_populates="story_links")
 
 
 class Job(UUIDPrimaryKeyMixin, TimestampMixin, Base):

@@ -1,11 +1,13 @@
-from app.core.csv_schema import CSV_COLUMNS, CSV_IMPORT_ALIASES, KEYWORD_FIELD, TROPE_FIELD, TROPE_PROPOSAL_FIELD
+from app.core.csv_schema import CSV_COLUMNS, CSV_IMPORT_ALIASES, KEYWORD_FIELD, THEME_FIELD, TROPE_FIELD, TROPE_PROPOSAL_FIELD
 from app.core.parsing import (
     clean_text,
     dedupe_preserve_order,
     normalize_text,
     serialize_keywords,
+    serialize_themes,
     serialize_tropes,
     split_keywords,
+    split_themes,
     split_tropes,
 )
 
@@ -13,6 +15,7 @@ from app.core.parsing import (
 def test_csv_schema_preserves_exact_legacy_field_names_and_order() -> None:
     assert KEYWORD_FIELD == "Keywords (Eng)"
     assert TROPE_FIELD == "Motifs (Eng)"
+    assert THEME_FIELD == "Thème"
     assert TROPE_PROPOSAL_FIELD == "proposition de nouveaux motifs"
     assert CSV_IMPORT_ALIASES == {"motifs inhabituels à une version": TROPE_PROPOSAL_FIELD}
     assert CSV_COLUMNS == [
@@ -86,6 +89,11 @@ def test_serialize_tropes_uses_legacy_section_marker_lines() -> None:
     assert serialize_tropes(["first trope", "second trope", "first trope"]) == (
         "§§ first trope\n§§ second trope"
     )
+
+
+def test_themes_use_the_legacy_trope_parser_and_serializer() -> None:
+    assert split_themes("§§ Creation\n§§ Ocean\n§§ creation") == ["Creation", "Ocean"]
+    assert serialize_themes(["Creation", "Ocean", "creation"]) == "§§ Creation\n§§ Ocean"
 
 
 def test_split_keywords_deduplicates_values() -> None:

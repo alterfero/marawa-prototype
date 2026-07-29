@@ -59,7 +59,7 @@ The backend follows the repository boundary requirements:
   - persistence mappings only.
 - `services`
   - business operations, transactions, optimistic concurrency checks;
-  - orchestration of auth, imports, story edits, trope and keyword curation, reviews, exports, and audit writes.
+  - orchestration of auth, imports, story edits, trope and keyword curation, theme management, reviews, exports, and audit writes.
 - `compute`
   - embeddings, similarity, rebuild execution, and local artifact management;
   - depends on service interfaces, not route handlers.
@@ -91,7 +91,7 @@ The backend follows the repository boundary requirements:
 ### Routine Edit Strategy
 
 - Story create and edit operations update the active dataset immediately in PostgreSQL.
-- Canonical trope and keyword creation also writes immediately to PostgreSQL.
+- Canonical trope and keyword creation, plus theme management, also write immediately to PostgreSQL.
 - After a successful write, the system enqueues a full rebuild job for derived artifacts.
 - Structured story and term data is therefore strongly consistent in PostgreSQL.
 - Similarity artifacts and exploration views are eventually consistent until the rebuild job succeeds.
@@ -400,7 +400,7 @@ Notes:
 
 - `import_dataset`
   - validate uploaded CSV;
-  - parse stories, tropes, and keywords;
+  - parse stories, tropes, keywords, and themes;
   - persist a staged dataset revision in PostgreSQL;
   - run a full rebuild;
   - promote staged dataset to active on success.

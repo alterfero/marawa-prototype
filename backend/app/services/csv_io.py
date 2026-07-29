@@ -8,9 +8,30 @@ import json
 from sqlalchemy import case, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.core.csv_schema import CSV_COLUMNS, CSV_IMPORT_ALIASES, KEYWORD_FIELD, TROPE_FIELD
-from app.core.parsing import clean_text, normalize_text, serialize_keywords, serialize_tropes, split_keywords, split_tropes
-from app.db.models import AssignmentStatus, Dataset, DatasetStatus, Keyword, Story, StoryKeyword, StoryTrope, StoryTropeOrigin, Trope
+from app.core.csv_schema import CSV_COLUMNS, CSV_IMPORT_ALIASES, KEYWORD_FIELD, THEME_FIELD, TROPE_FIELD
+from app.core.parsing import (
+    clean_text,
+    normalize_text,
+    serialize_keywords,
+    serialize_themes,
+    serialize_tropes,
+    split_keywords,
+    split_themes,
+    split_tropes,
+)
+from app.db.models import (
+    AssignmentStatus,
+    Dataset,
+    DatasetStatus,
+    Keyword,
+    Story,
+    StoryKeyword,
+    StoryTheme,
+    StoryTrope,
+    StoryTropeOrigin,
+    Theme,
+    Trope,
+)
 
 
 class CSVImportValidationError(ValueError):
@@ -130,8 +151,10 @@ def import_csv_bytes(
 
     trope_cache: dict[str, Trope] = {}
     keyword_cache: dict[str, Keyword] = {}
+    theme_cache: dict[str, Theme] = {}
     trope_counts: dict[str, int] = {}
     keyword_counts: dict[str, int] = {}
+    theme_counts: dict[str, int] = {}
 
     existing_tropes = {
         trope.normalized_text: trope
@@ -140,6 +163,10 @@ def import_csv_bytes(
     existing_keywords = {
         keyword.normalized_text: keyword
         for keyword in session.scalars(select(Keyword).where(Keyword.dataset_id == dataset.id)).all()
+    }
+    existing_themes = {
+        theme.normalized_text: theme
+        for theme in session.scalars(select(Theme).where(Theme.dataset_id == dataset.id)).all()
     }
 
     for row_number, fields in rows:
@@ -154,6 +181,7 @@ def import_csv_bytes(
 
         tropes = split_tropes(fields.get(TROPE_FIELD, ""))
         keywords = split_keywords(fields.get(KEYWORD_FIELD, ""))
+        themes = split_themes(fields.get(THEME_FIELD, ""))
 
         for position, trope_text in enumerate(tropes):
             marker = normalize_text(trope_text)
@@ -199,6 +227,27 @@ def import_csv_bytes(
             )
             keyword_counts[keyword.id] = keyword_counts.get(keyword.id, 0) + 1
 
+        for position, theme_text in enumerate(themes):
+            marker = normalize_text(theme_text)
+            theme = theme_cache.get(marker)
+            if theme is None:
+                theme = existing_themes.get(marker)
+                if theme is None:
+                    theme = Theme(dataset_id=dataset.id, text=theme_text)
+                    session.add(theme)
+                    session.flush()
+                    existing_themes[theme.normalized_text] = theme
+                theme_cache[marker] = theme
+
+            session.add(
+                StoryTheme(
+                    story_id=story.id,
+                    theme_id=theme.id,
+                    position=position,
+                )
+            )
+            theme_counts[theme.id] = theme_counts.get(theme.id, 0) + 1
+
     for trope_id, count in trope_counts.items():
         trope = session.get(Trope, trope_id)
         if trope is not None:
@@ -208,6 +257,11 @@ def import_csv_bytes(
         keyword = session.get(Keyword, keyword_id)
         if keyword is not None:
             keyword.cached_story_count = count
+
+    for theme_id, count in theme_counts.items():
+        theme = session.get(Theme, theme_id)
+        if theme is not None:
+            theme.cached_story_count = count
 
     session.commit()
     session.refresh(dataset)
@@ -225,6 +279,7 @@ def export_active_dataset_to_csv_bytes(session: Session) -> bytes:
         .options(
             selectinload(Story.trope_links).selectinload(StoryTrope.trope),
             selectinload(Story.keyword_links).selectinload(StoryKeyword.keyword),
+            selectinload(Story.theme_links).selectinload(StoryTheme.theme),
         )
         .order_by(
             case((Story.source_row_number.is_(None), 1), else_=0),
@@ -266,8 +321,22 @@ def export_active_dataset_to_csv_bytes(session: Session) -> bytes:
             )
             if link.keyword is not None
         ]
+        theme_texts = [
+            link.theme.text
+            for link in sorted(
+                story.theme_links,
+                key=lambda item: (
+                    item.position is None,
+                    item.position if item.position is not None else 0,
+                    item.created_at,
+                    item.theme.text if item.theme is not None else "",
+                ),
+            )
+            if link.theme is not None
+        ]
         row[TROPE_FIELD] = serialize_tropes(trope_texts)
         row[KEYWORD_FIELD] = serialize_keywords(keyword_texts)
+        row[THEME_FIELD] = serialize_themes(theme_texts)
         writer.writerow(row)
 
     return buffer.getvalue().encode("utf-8-sig")

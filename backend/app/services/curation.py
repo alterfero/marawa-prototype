@@ -13,6 +13,7 @@ from app.db.models import (
     DatasetStatus,
     Story,
     StoryKeyword,
+    StoryTheme,
     StoryTrope,
     StoryTropeOrigin,
     TermEmbedding,
@@ -689,6 +690,7 @@ def _touch_affected_stories(session: Session, story_ids: Iterable[str]) -> set[s
         .options(
             selectinload(Story.trope_links).selectinload(StoryTrope.trope),
             selectinload(Story.keyword_links).selectinload(StoryKeyword.keyword),
+            selectinload(Story.theme_links).selectinload(StoryTheme.theme),
         )
     ).all()
     affected_dataset_ids: set[str] = set()

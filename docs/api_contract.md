@@ -41,6 +41,7 @@ Base path:
 | Story create and edit | No | No | Yes | Yes |
 | Story trope and keyword assignment changes | No | No | Yes | Yes |
 | Canonical trope and keyword create | No | No | Yes | Yes |
+| Theme management | No | No | No | Yes |
 | CSV import and export | No | No | No | Yes |
 | Canonical trope merge and delete | No | No | No | Yes |
 | Canonical keyword curation | No | No | No | Yes |
@@ -549,6 +550,52 @@ Purpose:
 Contract notes:
 - contributor-created keywords become visible immediately and enter `pending_review`.
 
+## Theme Management
+
+### `GET /api/themes`
+
+Access:
+- guest, contributor, admin
+
+Purpose:
+- list all managed themes in the active dataset, including the number of assigned stories and their `unconfirmed` or `canonical` status.
+
+### `GET /api/themes/{theme_id}`
+
+Access:
+- guest, contributor, admin
+
+Purpose:
+- fetch one managed theme and the stories using it.
+
+### `PUT /api/themes/{theme_id}` and `PUT /api/themes/{theme_id}/confirmation`
+
+Access:
+- admin
+
+Purpose:
+- rename a theme across its assigned stories, or set it to `unconfirmed` or `canonical` using its current version.
+
+### `POST /api/themes/{theme_id}/merge`
+
+Access:
+- admin
+
+Purpose:
+- merge an unconfirmed source theme into a selected canonical theme. Story assignments are moved to the target, the source theme is removed, and no vector or similarity operation is performed.
+
+Contract notes:
+- the request includes the source theme's current version;
+- only canonical themes are valid targets.
+
+### `DELETE /api/themes/{theme_id}`
+
+Access:
+- admin
+
+Purpose:
+- delete an unused theme, or explicitly remove it from all assigned stories before deletion.
+
 ## Search
 
 ### `POST /api/search/tropes`
@@ -704,7 +751,7 @@ Contract notes:
 
 - PostgreSQL is the transactional system of record.
 - CSV import and export remain legacy compatibility surfaces, not the live working store.
-- Tropes and keywords are dataset-scoped.
+- Tropes, keywords, and themes are dataset-scoped.
 - Anonymous access is limited to exploration.
 - Guests are read-only.
 - Contributors write stories and new terms.

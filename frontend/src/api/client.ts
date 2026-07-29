@@ -1,6 +1,7 @@
 import type {
   AuthSessionResponse,
   CanonicalKeywordListItem,
+  CanonicalThemeListItem,
   CreateTropeResponse,
   CreateStoryResponse,
   CreateUserResponse,
@@ -13,6 +14,7 @@ import type {
   DeleteStoryKeywordResponse,
   DeleteStoryTropeResponse,
   DeleteTropeResponse,
+  DeleteThemeResponse,
   ExplorationNetworkResponse,
   JobDetail,
   KeywordDetail,
@@ -29,9 +31,14 @@ import type {
   StoryTropeMutationResponse,
   StoryTropesResponse,
   TropeConfirmationStatus,
+  ThemeConfirmationStatus,
+  ThemeDetail,
+  MergeThemeResponse,
   UserLifecycleResponse,
   UpdateTropeResponse,
   UpdateTropeConfirmationResponse,
+  UpdateThemeResponse,
+  UpdateThemeConfirmationResponse,
   ValidateTropesResponse,
   SearchResponse,
   TropeSequenceGraphResponse,
@@ -494,6 +501,88 @@ export function deleteTrope(tropeId: string, removeFromAllStories: boolean): Pro
   const query = removeFromAllStories ? "?remove_from_all_stories=true" : "";
   return request<DeleteTropeResponse>(`/tropes/${tropeId}${query}`, {
     method: "DELETE",
+  });
+}
+
+export function getCanonicalThemes(payload?: { q?: string; limit?: number }): Promise<CanonicalThemeListItem[]> {
+  const params = new URLSearchParams();
+  if (payload?.q?.trim()) {
+    params.set("q", payload.q.trim());
+  }
+  if (typeof payload?.limit === "number") {
+    params.set("limit", String(payload.limit));
+  }
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return request<CanonicalThemeListItem[]>(`/themes${suffix}`);
+}
+
+export function getThemeDetail(themeId: string): Promise<ThemeDetail> {
+  return request<ThemeDetail>(`/themes/${themeId}`);
+}
+
+export function updateCanonicalTheme(payload: {
+  theme_id: string;
+  expected_theme_version: number;
+  text: string;
+}): Promise<UpdateThemeResponse> {
+  return request<UpdateThemeResponse>(`/themes/${payload.theme_id}`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      expected_theme_version: payload.expected_theme_version,
+      text: payload.text,
+    }),
+  });
+}
+
+export function updateThemeConfirmationStatus(
+  themeId: string,
+  payload: {
+    expected_theme_version: number;
+    confirmation_status: ThemeConfirmationStatus;
+  },
+): Promise<UpdateThemeConfirmationResponse> {
+  return request<UpdateThemeConfirmationResponse>(`/themes/${themeId}/confirmation`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteTheme(payload: {
+  theme_id: string;
+  expected_theme_version: number;
+  remove_from_all_stories: boolean;
+}): Promise<DeleteThemeResponse> {
+  const params = new URLSearchParams({
+    expected_theme_version: String(payload.expected_theme_version),
+  });
+  if (payload.remove_from_all_stories) {
+    params.set("remove_from_all_stories", "true");
+  }
+  return request<DeleteThemeResponse>(`/themes/${payload.theme_id}?${params.toString()}`, {
+    method: "DELETE",
+  });
+}
+
+export function mergeUnconfirmedTheme(payload: {
+  source_theme_id: string;
+  expected_source_theme_version: number;
+  target_theme_id: string;
+}): Promise<MergeThemeResponse> {
+  return request<MergeThemeResponse>(`/themes/${payload.source_theme_id}/merge`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      expected_source_theme_version: payload.expected_source_theme_version,
+      target_theme_id: payload.target_theme_id,
+    }),
   });
 }
 

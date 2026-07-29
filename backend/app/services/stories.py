@@ -8,8 +8,16 @@ from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.coordinates import parse_space_coord
-from app.core.csv_schema import CSV_COLUMNS, KEYWORD_FIELD, TROPE_FIELD
-from app.core.parsing import clean_text, dedupe_preserve_order, normalize_text, serialize_keywords, serialize_tropes
+from app.core.csv_schema import CSV_COLUMNS, KEYWORD_FIELD, THEME_FIELD, TROPE_FIELD
+from app.core.parsing import (
+    clean_text,
+    dedupe_preserve_order,
+    normalize_text,
+    serialize_keywords,
+    serialize_themes,
+    serialize_tropes,
+    split_themes,
+)
 from app.db.models import (
     AssignmentStatus,
     Dataset,
@@ -19,10 +27,12 @@ from app.db.models import (
     Story,
     StoryCompleteness,
     StoryKeyword,
+    StoryTheme,
     StoryTrope,
     StoryTropeOrigin,
     TermKind,
     TermReviewStatus,
+    Theme,
     Trope,
     UserRole,
 )
@@ -97,6 +107,7 @@ def list_active_stories(session: Session) -> dict:
         .options(
             selectinload(Story.trope_links).selectinload(StoryTrope.trope),
             selectinload(Story.keyword_links).selectinload(StoryKeyword.keyword),
+            selectinload(Story.theme_links).selectinload(StoryTheme.theme),
         )
         .order_by(
             case((Story.source_row_number.is_(None), 1), else_=0),
@@ -158,6 +169,7 @@ def create_story(
 
     affected_trope_ids: set[str] = set()
     affected_keyword_ids: set[str] = set()
+    affected_theme_ids: set[str] = set()
     newly_created_tropes: list[Trope] = []
     newly_created_keywords: list[Keyword] = []
 
@@ -199,12 +211,24 @@ def create_story(
         if created:
             newly_created_keywords.append(keyword)
 
+    affected_theme_ids.update(
+        _replace_story_themes_from_text(
+            session,
+            dataset_id=active_dataset.id,
+            story=story,
+            value=story.fields_json.get(THEME_FIELD, ""),
+            actor_user_id=actor_user_id,
+        )
+    )
+
     session.flush()
 
     for trope_id in affected_trope_ids:
         _refresh_trope_cached_story_count(session, active_dataset.id, trope_id)
     for keyword_id in affected_keyword_ids:
         _refresh_keyword_cached_story_count(session, active_dataset.id, keyword_id)
+    for theme_id in affected_theme_ids:
+        _refresh_theme_cached_story_count(session, active_dataset.id, theme_id)
 
     sync_story_derived_fields(story)
     active_dataset.version += 1
@@ -216,7 +240,7 @@ def create_story(
     )
     if actor_role == UserRole.CONTRIBUTOR and actor_user_id:
         for column in CSV_COLUMNS:
-            if column in {TROPE_FIELD, KEYWORD_FIELD}:
+            if column in {TROPE_FIELD, KEYWORD_FIELD, THEME_FIELD}:
                 continue
             value = clean_text((story.fields_json or {}).get(column, ""))
             if not value:
@@ -273,6 +297,7 @@ def create_story(
             "dataset_version": active_dataset.version,
             "trope_count": len(story.trope_links),
             "keyword_count": len(story.keyword_links),
+            "theme_count": len(story.theme_links),
         },
     )
     session.commit()
@@ -302,6 +327,16 @@ def update_story(
         previous_field_values = {column: story_fields.get(column, "") for column in field_updates}
         story_fields.update(field_updates)
         story.fields_json = story_fields
+        if THEME_FIELD in field_updates:
+            affected_theme_ids = _replace_story_themes_from_text(
+                session,
+                dataset_id=active_dataset.id,
+                story=story,
+                value=field_updates[THEME_FIELD],
+                actor_user_id=actor_user_id,
+            )
+            for theme_id in affected_theme_ids:
+                _refresh_theme_cached_story_count(session, active_dataset.id, theme_id)
         sync_story_derived_fields(story)
 
     previous_completeness = story.completeness
@@ -904,6 +939,7 @@ def _get_active_story(session: Session, story_id: str) -> tuple[Dataset, Story]:
         .options(
             selectinload(Story.trope_links).selectinload(StoryTrope.trope),
             selectinload(Story.keyword_links).selectinload(StoryKeyword.keyword),
+            selectinload(Story.theme_links).selectinload(StoryTheme.theme),
         )
     )
     if story is None:
@@ -1049,6 +1085,71 @@ def _resolve_keyword(
     return keyword, True
 
 
+def _resolve_theme(
+    session: Session,
+    dataset_id: str,
+    *,
+    text: str,
+    actor_user_id: str | None = None,
+) -> tuple[Theme, bool]:
+    theme_text = clean_text(text)
+    marker = normalize_text(theme_text)
+    if not marker:
+        raise StoryMutationValidationError("Theme text cannot be empty.")
+
+    theme = session.scalar(
+        select(Theme).where(
+            Theme.dataset_id == dataset_id,
+            Theme.normalized_text == marker,
+        )
+    )
+    if theme is not None:
+        return theme, False
+
+    theme = Theme(
+        dataset_id=dataset_id,
+        text=theme_text,
+        created_by_user_id=actor_user_id,
+        updated_by_user_id=actor_user_id,
+    )
+    session.add(theme)
+    session.flush()
+    return theme, True
+
+
+def _replace_story_themes_from_text(
+    session: Session,
+    *,
+    dataset_id: str,
+    story: Story,
+    value: object,
+    actor_user_id: str | None = None,
+) -> set[str]:
+    previous_theme_ids = {link.theme_id for link in story.theme_links}
+    theme_texts = split_themes(clean_text(value))
+    resolved_themes: list[Theme] = []
+    next_theme_ids: set[str] = set()
+
+    for theme_text in theme_texts:
+        theme, _ = _resolve_theme(
+            session,
+            dataset_id,
+            text=theme_text,
+            actor_user_id=actor_user_id,
+        )
+        resolved_themes.append(theme)
+        next_theme_ids.add(theme.id)
+
+    story.theme_links[:] = []
+    session.flush()
+    for position, theme in enumerate(resolved_themes):
+        link = StoryTheme(theme=theme, position=position)
+        story.theme_links.append(link)
+        session.add(link)
+    session.flush()
+    return previous_theme_ids | next_theme_ids
+
+
 def _queue_story_rebuild(
     session: Session,
     *,
@@ -1142,6 +1243,25 @@ def _refresh_keyword_cached_story_count(session: Session, dataset_id: str, keywo
     keyword.cached_story_count = int(count)
 
 
+def _refresh_theme_cached_story_count(session: Session, dataset_id: str, theme_id: str) -> None:
+    theme = session.get(Theme, theme_id)
+    if theme is None:
+        return
+    count = (
+        session.scalar(
+            select(func.count(func.distinct(Story.id)))
+            .select_from(StoryTheme)
+            .join(Story, Story.id == StoryTheme.story_id)
+            .where(
+                Story.dataset_id == dataset_id,
+                StoryTheme.theme_id == theme_id,
+            )
+        )
+        or 0
+    )
+    theme.cached_story_count = int(count)
+
+
 def _ordered_trope_links(story: Story) -> list[StoryTrope]:
     return sorted(
         [link for link in story.trope_links if link.trope is not None],
@@ -1166,10 +1286,23 @@ def _ordered_keyword_links(story: Story) -> list[StoryKeyword]:
     )
 
 
+def _ordered_theme_links(story: Story) -> list[StoryTheme]:
+    return sorted(
+        [link for link in story.theme_links if link.theme is not None],
+        key=lambda item: (
+            item.position is None,
+            item.position if item.position is not None else 0,
+            item.created_at,
+            item.theme.text if item.theme is not None else "",
+        ),
+    )
+
+
 def _build_story_fields(story: Story) -> dict[str, str]:
     row = {column: clean_text((story.fields_json or {}).get(column, "")) for column in CSV_COLUMNS}
     row[TROPE_FIELD] = serialize_tropes([link.trope.text for link in _ordered_trope_links(story)])
     row[KEYWORD_FIELD] = serialize_keywords([link.keyword.text for link in _ordered_keyword_links(story)])
+    row[THEME_FIELD] = serialize_themes([link.theme.text for link in _ordered_theme_links(story)])
     return row
 
 

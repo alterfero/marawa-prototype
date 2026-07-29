@@ -11,6 +11,7 @@ from app.api.routes.keywords import router as keywords_router
 from app.api.routes.review import router as review_router
 from app.api.routes.search import router as search_router
 from app.api.routes.stories import router as stories_router
+from app.api.routes.themes import router as themes_router
 from app.api.routes.tropes import router as tropes_router
 from app.api.routes.visualizations import router as visualizations_router
 
@@ -27,5 +28,6 @@ api_router.include_router(keywords_router)
 api_router.include_router(review_router)
 api_router.include_router(search_router)
 api_router.include_router(stories_router)
+api_router.include_router(themes_router)
 api_router.include_router(tropes_router)
 api_router.include_router(visualizations_router)

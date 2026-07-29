@@ -2,6 +2,7 @@
 
 TROPE_FIELD = "Motifs (Eng)"
 KEYWORD_FIELD = "Keywords (Eng)"
+THEME_FIELD = "Thème"
 TROPE_PROPOSAL_FIELD = "proposition de nouveaux motifs"
 CSV_IMPORT_ALIASES = {
     "motifs inhabituels à une version": TROPE_PROPOSAL_FIELD,
@@ -42,7 +43,7 @@ CSV_COLUMNS = [
     "description of link",
     "Connection to other stories",
     "Megamotifs",
-    "Thème",
+    THEME_FIELD,
     "Conte type",
     "Autres infos données dans le texte, pour la fiche conte",
     "ATU conte-type(AI ?)",
