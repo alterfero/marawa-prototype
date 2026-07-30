@@ -1,5 +1,5 @@
 import L from "leaflet";
-import { Component, type ReactNode, FormEvent, useEffect, useId, useRef, useState } from "react";
+import { Component, type ReactNode, FormEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { buildExplorationNetwork, getErrorMessage, getStories } from "../api/client";
 import { ExplorationFilterSetTropePicker } from "../components/ExplorationFilterSetTropePicker";
@@ -27,10 +27,11 @@ import type {
   StorySummary,
 } from "../api/types";
 import { getStoryFieldLabel } from "../constants/csv";
+import { createAntimeridianAwareViewport, toViewportCoordinates, type MapViewport } from "../map/antimeridian";
 import { routeHref, useHashSearch } from "../router";
 
-const DEFAULT_CENTER: [number, number] = [0, 0];
-const DEFAULT_ZOOM = 2;
+const DEFAULT_CENTER: [number, number] = [-15, 180];
+const DEFAULT_ZOOM = 3;
 const SINGLE_POINT_ZOOM = 6;
 const FILTER_SET_PALETTE = ["#1d4ed8", "#d97706", "#15803d", "#b91c1c", "#7c3aed", "#0f766e"];
 const ORIGINAL_DENSITY_COLOR = "#d7263d";
@@ -110,20 +111,6 @@ function connectionHasRenderableCoordinates(connection: ExplorationConnection): 
   );
 }
 
-function sanitizeBounds(bounds: number[][] | null): [CoordinatePair, CoordinatePair] | null {
-  if (!bounds || bounds.length !== 2) {
-    return null;
-  }
-
-  const southWest = bounds[0];
-  const northEast = bounds[1];
-  if (!isFiniteCoordinatePair(southWest) || !isFiniteCoordinatePair(northEast)) {
-    return null;
-  }
-
-  return [southWest, northEast];
-}
-
 function colorToRgb(color: string): [number, number, number] {
   const normalized = color.trim();
   const hexMatch = normalized.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
@@ -158,21 +145,6 @@ function colorToRgb(color: string): [number, number, number] {
 function colorWithAlpha(color: string, alpha: number): string {
   const [red, green, blue] = colorToRgb(color);
   return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
-}
-
-function computeBoundsFromMarkers(
-  markers: Array<ExplorationMarker & { coordinates: CoordinatePair }>,
-): [CoordinatePair, CoordinatePair] | null {
-  if (!markers.length) {
-    return null;
-  }
-
-  const latitudes = markers.map((marker) => marker.coordinates[0]);
-  const longitudes = markers.map((marker) => marker.coordinates[1]);
-  return [
-    [Math.min(...latitudes), Math.min(...longitudes)],
-    [Math.max(...latitudes), Math.max(...longitudes)],
-  ];
 }
 
 class ExplorationResultBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
@@ -290,10 +262,8 @@ function normalizeExplorationNetworkResponse(response: ExplorationNetworkRespons
 function buildExplorationMapDataSignature(
   markers: VisibleExplorationMarker[],
   connections: RenderableConnection[],
-  bounds: [CoordinatePair, CoordinatePair] | null,
 ): string {
   return JSON.stringify({
-    bounds,
     markers: markers.map((marker) => ({
       story_id: marker.story_id,
       coordinates: marker.coordinates,
@@ -319,9 +289,10 @@ function buildExplorationMapDataSignature(
 
 function buildDensityGroups(
   markers: VisibleExplorationMarker[],
+  viewport: MapViewport | null,
   filterSetLegends?: FilterSetLegend[],
 ): DensityGroup[] {
-  if (!markers.length) {
+  if (!markers.length || !viewport) {
     return [];
   }
 
@@ -347,7 +318,7 @@ function buildDensityGroups(
         points: [],
       };
       group.points.push({
-        coordinates: marker.coordinates,
+        coordinates: toViewportCoordinates(marker.coordinates, viewport),
         weight: marker.kind === "original" ? 1 : 0.72,
       });
       groups.set(groupId, group);
@@ -372,7 +343,7 @@ function buildDensityGroups(
   markers.forEach((marker) => {
     const targetGroup = marker.kind === "original" ? originalStories : relatedStories;
     targetGroup.points.push({
-      coordinates: marker.coordinates,
+      coordinates: toViewportCoordinates(marker.coordinates, viewport),
       weight: marker.kind === "original" ? 1 : 0.78,
     });
   });
@@ -712,12 +683,10 @@ function summarizeAppliedFilter(filter: ExplorationAppliedFilter): string {
 function ExplorationMap({
   markers,
   connections,
-  bounds,
   filterSetLegends,
 }: {
   markers: VisibleExplorationMarker[];
   connections: RenderableConnection[];
-  bounds: [CoordinatePair, CoordinatePair] | null;
   filterSetLegends?: FilterSetLegend[];
 }) {
   const mapViewId = useId();
@@ -726,8 +695,16 @@ function ExplorationMap({
   const overlayLayerRef = useRef<L.LayerGroup | null>(null);
   const densityLayerRef = useRef<ExplorationDensityLayer | null>(null);
   const [renderMode, setRenderMode] = useState<MapRenderMode>("markers");
-  const dataSignature = buildExplorationMapDataSignature(markers, connections, bounds);
-  const densityGroups = buildDensityGroups(markers, filterSetLegends);
+  const dataSignature = buildExplorationMapDataSignature(markers, connections);
+  const viewport = useMemo(
+    () =>
+      createAntimeridianAwareViewport([
+        ...markers.map((marker) => marker.coordinates),
+        ...connections.flatMap((connection) => [connection.source_coordinates, connection.target_coordinates]),
+      ]),
+    [dataSignature],
+  );
+  const densityGroups = buildDensityGroups(markers, viewport, filterSetLegends);
   const densitySignature = buildDensityDataSignature(densityGroups);
 
   useEffect(() => {
@@ -739,6 +716,7 @@ function ExplorationMap({
       center: DEFAULT_CENTER,
       zoom: DEFAULT_ZOOM,
       scrollWheelZoom: true,
+      worldCopyJump: true,
     });
 
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -772,15 +750,27 @@ function ExplorationMap({
 
     if (renderMode === "markers") {
       connections.forEach((connection) => {
-        L.polyline([connection.source_coordinates, connection.target_coordinates], {
-          color: connection.color,
-          opacity: 0.62,
-          weight: 2,
-        }).addTo(overlayLayer);
+        if (!viewport) {
+          return;
+        }
+        L.polyline(
+          [
+            toViewportCoordinates(connection.source_coordinates, viewport),
+            toViewportCoordinates(connection.target_coordinates, viewport),
+          ],
+          {
+            color: connection.color,
+            opacity: 0.62,
+            weight: 2,
+          },
+        ).addTo(overlayLayer);
       });
 
       markers.forEach((marker) => {
-        L.circleMarker(marker.coordinates, {
+        if (!viewport) {
+          return;
+        }
+        L.circleMarker(toViewportCoordinates(marker.coordinates, viewport), {
           color: marker.color,
           fillColor: marker.color,
           fillOpacity: marker.kind === "original" ? 0.88 : 0.62,
@@ -802,12 +792,12 @@ function ExplorationMap({
     densityLayer.setGroups(densityGroups);
     densityLayer.setVisible(renderMode === "density");
 
-    if (bounds) {
-      const [southWest, northEast] = bounds;
+    if (viewport) {
+      const [southWest, northEast] = viewport.bounds;
       if (sameCoordinatePair(southWest, northEast)) {
         map.setView(southWest, SINGLE_POINT_ZOOM);
       } else {
-        map.fitBounds(bounds, {
+        map.fitBounds(viewport.bounds, {
           padding: [32, 32],
         });
       }
@@ -818,7 +808,7 @@ function ExplorationMap({
     window.requestAnimationFrame(() => {
       map.invalidateSize();
     });
-  }, [dataSignature, densitySignature, renderMode]);
+  }, [dataSignature, densitySignature, renderMode, viewport]);
 
   if (!markers.length && !connections.length) {
     return (
@@ -1253,7 +1243,6 @@ export function ExplorationPage() {
   const visibleConnections = isMultiSetNetwork
     ? filterSetResults.flatMap((result) => result.connections.filter(connectionHasRenderableCoordinates))
     : network?.connections.filter(connectionHasRenderableCoordinates) ?? [];
-  const mapBounds = sanitizeBounds(network?.bounds ?? null) ?? computeBoundsFromMarkers(visibleMarkers);
   const filterSetLegends = filterSetResults.map((result) => ({
     id: result.filter_set_id,
     label: result.filter_set_label,
@@ -1485,7 +1474,6 @@ export function ExplorationPage() {
               <p className="muted">No stories corresponding to the filters selected</p>
             ) : (
               <ExplorationMap
-                bounds={mapBounds}
                 connections={visibleConnections}
                 filterSetLegends={filterSetLegends}
                 markers={visibleMarkers}
@@ -1612,7 +1600,7 @@ export function ExplorationPage() {
             {showNoStoriesForSelectedFilters ? (
               <p className="muted">No stories corresponding to the filters selected</p>
             ) : (
-              <ExplorationMap bounds={mapBounds} connections={visibleConnections} markers={visibleMarkers} />
+              <ExplorationMap connections={visibleConnections} markers={visibleMarkers} />
             )}
           </section>
 
@@ -1699,7 +1687,7 @@ export function ExplorationPage() {
             {showNoStoriesForSelectedFilters ? (
               <p className="muted">No stories corresponding to the filters selected</p>
             ) : (
-              <ExplorationMap bounds={mapBounds} connections={visibleConnections} markers={visibleMarkers} />
+              <ExplorationMap connections={visibleConnections} markers={visibleMarkers} />
             )}
           </section>
 

@@ -1,0 +1,48 @@
+export type CoordinatePair = [number, number];
+
+export type MapViewport = {
+  bounds: [CoordinatePair, CoordinatePair];
+  longitudeStart: number;
+};
+
+function normalizeLongitude(longitude: number): number {
+  return ((longitude + 180) % 360 + 360) % 360 - 180;
+}
+
+export function createAntimeridianAwareViewport(points: CoordinatePair[]): MapViewport | null {
+  if (points.length === 0) {
+    return null;
+  }
+
+  const latitudes = points.map(([latitude]) => latitude);
+  const longitudes = points.map(([, longitude]) => normalizeLongitude(longitude)).sort((left, right) => left - right);
+
+  let widestGap = -1;
+  let widestGapIndex = 0;
+  longitudes.forEach((longitude, index) => {
+    const nextLongitude = index === longitudes.length - 1 ? longitudes[0] + 360 : longitudes[index + 1];
+    const gap = nextLongitude - longitude;
+    if (gap > widestGap) {
+      widestGap = gap;
+      widestGapIndex = index;
+    }
+  });
+
+  const longitudeStart = longitudes[(widestGapIndex + 1) % longitudes.length];
+  const longitudeEnd = longitudeStart + 360 - widestGap;
+  return {
+    bounds: [
+      [Math.min(...latitudes), longitudeStart],
+      [Math.max(...latitudes), longitudeEnd],
+    ],
+    longitudeStart,
+  };
+}
+
+export function toViewportCoordinates([latitude, longitude]: CoordinatePair, viewport: MapViewport): CoordinatePair {
+  const normalizedLongitude = normalizeLongitude(longitude);
+  return [
+    latitude,
+    normalizedLongitude < viewport.longitudeStart ? normalizedLongitude + 360 : normalizedLongitude,
+  ];
+}

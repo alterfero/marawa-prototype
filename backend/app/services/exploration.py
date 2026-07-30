@@ -9,7 +9,8 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.coordinates import parse_space_coord
-from app.core.parsing import clean_text
+from app.core.csv_schema import THEME_FIELD
+from app.core.parsing import clean_text, split_themes
 from app.db.models import Dataset, DatasetStatus, Story, StoryTrope, TermKind, Trope
 
 
@@ -342,14 +343,29 @@ def _normalize_story_filters(story_filters: list[dict] | None) -> list[StoryFiel
     normalized_filters: list[StoryFieldFilter] = []
     for item in story_filters or []:
         field = clean_text((item or {}).get("field", ""))
-        selected_values = [
+        raw_selected_values = [
+            clean_text(value)
+            for value in (item or {}).get("selected_values", [])
+            if clean_text(value)
+        ]
+        normalized_selected_values = [
             normalized
             for normalized in (
                 _normalize_filter_value(value)
-                for value in (item or {}).get("selected_values", [])
+                for value in raw_selected_values
             )
             if normalized
         ]
+        selected_values = (
+            [
+                _normalize_filter_value(theme)
+                for value in raw_selected_values
+                for theme in split_themes(value)
+                if _normalize_filter_value(theme)
+            ]
+            if field == THEME_FIELD
+            else normalized_selected_values
+        )
         if not field or not selected_values:
             continue
         normalized_filters.append(
@@ -410,7 +426,14 @@ def _entry_matches_story_filters(
     selected_tropes: list[SelectedTropeFilter] | None = None,
 ) -> bool:
     matches_fields = all(
-        _normalize_filter_value(_story_filter_value(entry, story_filter.field)) in story_filter.selected_values
+        (
+            any(
+                _normalize_filter_value(theme) in story_filter.selected_values
+                for theme in split_themes(_story_filter_value(entry, story_filter.field))
+            )
+            if story_filter.field == THEME_FIELD
+            else _normalize_filter_value(_story_filter_value(entry, story_filter.field)) in story_filter.selected_values
+        )
         for story_filter in story_filters
     )
     if not matches_fields:

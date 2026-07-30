@@ -3,7 +3,7 @@ import io
 
 from fastapi.testclient import TestClient
 
-from app.core.csv_schema import CSV_COLUMNS, KEYWORD_FIELD, TROPE_FIELD
+from app.core.csv_schema import CSV_COLUMNS, KEYWORD_FIELD, THEME_FIELD, TROPE_FIELD
 from app.db import build_engine, build_session_factory
 from app.main import create_app
 from tests.auth_helpers import authenticate_admin, configure_auth_env
@@ -29,6 +29,7 @@ def make_row(
     summary: str = "",
     entered_by: str = "",
     territory: str = "",
+    themes: str = "",
 ) -> dict[str, str]:
     row = {column: "" for column in CSV_COLUMNS}
     row["Story title (Eng)"] = title
@@ -39,6 +40,7 @@ def make_row(
     row["1-sentence summary"] = summary
     row["Entered by"] = entered_by
     row["territory"] = territory
+    row[THEME_FIELD] = themes
     return row
 
 
@@ -246,6 +248,53 @@ def test_exploration_network_builds_filter_only_story_map(monkeypatch, tmp_path)
     assert [item["title"] for item in body["original_markers"]] == ["Story One", "Story Three"]
     assert body["missing_original_coords"] == 1
     assert body["bounds"] == [[-20.0, 165.0], [-20.0, 165.0]]
+
+
+def test_exploration_network_filter_sets_match_individual_legacy_themes(monkeypatch, tmp_path) -> None:
+    configure_auth_env(monkeypatch)
+    with build_client(tmp_path, "exploration-theme-filter.db") as client:
+        authenticate_admin(client)
+        upload_dataset(
+            client,
+            [
+                make_row(
+                    title="Creation and Ocean",
+                    coord="-20.0, 165.0",
+                    themes="§§ Creation\n§§ Ocean",
+                ),
+                make_row(title="Ocean only", coord="-19.0, 166.0", themes="§§ Ocean"),
+                make_row(title="Origin only", coord="-18.0, 167.0", themes="§§ Origin"),
+            ],
+        )
+        request_rebuild(client)
+        process_next_job(client)
+
+        response = client.post(
+            "/api/exploration/network",
+            json={
+                "story_filter_sets": [
+                    {
+                        "id": "theme-set",
+                        "label": "Ocean themes",
+                        "color": "#1d4ed8",
+                        "filters": [
+                            {"field": THEME_FIELD, "selected_values": ["Ocean"]},
+                        ],
+                    },
+                ],
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["original_markers"] == []
+    assert body["filter_set_results"][0]["filters"] == [
+        {"field": THEME_FIELD, "selected_values": ["Ocean"]},
+    ]
+    assert [item["title"] for item in body["filter_set_results"][0]["original_markers"]] == [
+        "Creation and Ocean",
+        "Ocean only",
+    ]
 
 
 def test_exploration_network_filters_selected_trope_intersection(monkeypatch, tmp_path) -> None:

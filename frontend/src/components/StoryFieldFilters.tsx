@@ -1,7 +1,7 @@
 import { useMemo, type ReactNode } from "react";
 
 import type { StorySummary } from "../api/types";
-import { getStoryFieldLabel, KEYWORD_FIELD, LEGACY_METADATA_SECTIONS, TROPE_FIELD } from "../constants/csv";
+import { getStoryFieldLabel, KEYWORD_FIELD, LEGACY_METADATA_SECTIONS, THEME_FIELD, TROPE_FIELD } from "../constants/csv";
 
 export interface StoryFieldFilter {
   id: number;
@@ -73,6 +73,26 @@ function splitStoryTropeValues(value: string): string[] {
   return storyTropes;
 }
 
+function splitStoryThemeValues(value: string): string[] {
+  const text = value.normalize("NFC").replace(/\ufeff/g, "").replace(/\r\n/g, "\n").trim();
+  if (!text) {
+    return [];
+  }
+
+  const cleanPiece = (piece: string) => normalizeFilterValue(piece.replace(/^[\s;]+|[\s;]+$/g, ""));
+  const pieces = text.includes("§§") ? text.split("§§").map(cleanPiece) : text.split(TROPE_SPLIT_RE).map(cleanPiece);
+  const themes: string[] = [];
+  const seen = new Set<string>();
+  pieces.forEach((piece) => {
+    if (!piece || seen.has(piece)) {
+      return;
+    }
+    seen.add(piece);
+    themes.push(piece);
+  });
+  return themes;
+}
+
 export function getNormalizedStoryFilterValue(story: StorySummary, field: string): string {
   return normalizeFilterValue(getStoryFilterValue(story, field));
 }
@@ -85,12 +105,17 @@ export function collectStoryFilterValues(stories: StorySummary[], field: string)
   const seen = new Set<string>();
   const values: string[] = [];
   stories.forEach((story) => {
-    const value = getNormalizedStoryFilterValue(story, field);
-    if (!value || seen.has(value)) {
-      return;
-    }
-    seen.add(value);
-    values.push(value);
+    const storyValues =
+      field === THEME_FIELD
+        ? splitStoryThemeValues(getStoryFilterValue(story, field))
+        : [getNormalizedStoryFilterValue(story, field)];
+    storyValues.forEach((value) => {
+      if (!value || seen.has(value)) {
+        return;
+      }
+      seen.add(value);
+      values.push(value);
+    });
   });
 
   values.sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base", numeric: true }));
@@ -101,6 +126,11 @@ export function storyMatchesFieldFilters(story: StorySummary, filters: StoryFiel
   return filters.every((filter) => {
     if (!filter.field || filter.selectedValues.length === 0) {
       return true;
+    }
+    if (filter.field === THEME_FIELD) {
+      return splitStoryThemeValues(getStoryFilterValue(story, filter.field)).some((theme) =>
+        filter.selectedValues.includes(theme),
+      );
     }
     return filter.selectedValues.includes(getNormalizedStoryFilterValue(story, filter.field));
   });

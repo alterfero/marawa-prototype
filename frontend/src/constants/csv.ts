@@ -1,5 +1,6 @@
 export const TROPE_FIELD = "Motifs (Eng)";
 export const KEYWORD_FIELD = "Keywords (Eng)";
+export const THEME_FIELD = "Thème";
 
 export const LEGACY_METADATA_SECTIONS: Array<{ title: string; fields: string[] }> = [
   {
@@ -47,7 +48,7 @@ export const LEGACY_METADATA_SECTIONS: Array<{ title: string; fields: string[] }
       "description of link",
       "Connection to other stories",
       "Megamotifs",
-      "Thème",
+      THEME_FIELD,
       "Conte type",
       "Autres infos données dans le texte, pour la fiche conte",
       "ATU conte-type(AI ?)",
@@ -74,7 +75,7 @@ export function buildBlankStoryFields(): Record<string, string> {
 }
 
 export function getStoryFieldLabel(field: string): string {
-  if (field === "Thème") {
+  if (field === THEME_FIELD) {
     return "Theme";
   }
   return field;
