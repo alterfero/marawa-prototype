@@ -5,8 +5,12 @@ export type MapViewport = {
   longitudeStart: number;
 };
 
-function normalizeLongitude(longitude: number): number {
-  return ((longitude + 180) % 360 + 360) % 360 - 180;
+export function normalizeLongitude(longitude: number): number {
+  if (longitude >= -180 && longitude <= 180) {
+    return longitude;
+  }
+  const normalized = ((longitude + 180) % 360 + 360) % 360 - 180;
+  return normalized === -180 && longitude > 0 ? 180 : normalized;
 }
 
 export function createAntimeridianAwareViewport(points: CoordinatePair[]): MapViewport | null {

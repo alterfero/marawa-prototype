@@ -14,6 +14,7 @@ import type {
   DeleteStoryKeywordResponse,
   DeleteStoryTropeResponse,
   DeleteTropeResponse,
+  DeleteUnusedTropesResponse,
   DeleteThemeResponse,
   ExplorationNetworkResponse,
   JobDetail,
@@ -442,11 +443,14 @@ export function getNearDuplicateTropes(): Promise<NearDuplicateTropeListResponse
 
 export function getSimilarUnconfirmedTropes(
   tropeId: string,
-  payload?: { minimum_similarity?: number },
+  payload?: { minimum_similarity?: number; include_canonical?: boolean },
 ): Promise<SimilarUnconfirmedTropeListResponse> {
   const params = new URLSearchParams();
   if (typeof payload?.minimum_similarity === "number") {
     params.set("minimum_similarity", String(payload.minimum_similarity));
+  }
+  if (payload?.include_canonical) {
+    params.set("include_canonical", "true");
   }
   const suffix = params.toString() ? `?${params.toString()}` : "";
   return request<SimilarUnconfirmedTropeListResponse>(
@@ -500,6 +504,12 @@ export function canonicalizeTropes(payload: {
 export function deleteTrope(tropeId: string, removeFromAllStories: boolean): Promise<DeleteTropeResponse> {
   const query = removeFromAllStories ? "?remove_from_all_stories=true" : "";
   return request<DeleteTropeResponse>(`/tropes/${tropeId}${query}`, {
+    method: "DELETE",
+  });
+}
+
+export function deleteUnusedTropes(): Promise<DeleteUnusedTropesResponse> {
+  return request<DeleteUnusedTropesResponse>("/curation/unused-tropes", {
     method: "DELETE",
   });
 }

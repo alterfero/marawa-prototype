@@ -259,13 +259,38 @@ p {
   outline-offset: 2px;
 }
 
+.trope-card-active {
+  border-color: rgba(26, 103, 109, 0.42);
+  background: rgba(227, 244, 242, 0.82);
+}
+
 .trope-card-compact {
   padding: 0.8rem 0.9rem;
+}
+
+.trope-card .card-row {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.trope-card .card-row > :first-child {
+  min-width: 0;
+  flex: 1 1 12rem;
+}
+
+.trope-card h3 {
+  overflow-wrap: anywhere;
 }
 
 .trope-card-header-right {
   align-items: center;
   flex-wrap: wrap;
+  max-width: 100%;
+  margin-left: auto;
+}
+
+.trope-card-story-count {
+  margin: 0.3rem 0 0;
 }
 
 .stories-current-trope-card .card-row {
@@ -278,14 +303,8 @@ p {
   justify-items: end;
   align-content: start;
   flex: 0 0 auto;
-  min-width: fit-content;
-}
-
-.story-trope-action-row {
-  display: flex;
-  gap: 0.65rem;
-  justify-content: flex-end;
-  flex-wrap: wrap;
+  min-width: 0;
+  width: min(100%, 16rem);
 }
 
 .trope-card-grid {
@@ -545,22 +564,68 @@ p {
   text-transform: none;
 }
 
-.trope-confirmation-unconfirmed,
-.trope-confirmation-toggle-unconfirmed {
+.trope-confirmation-unconfirmed {
   background: rgba(214, 162, 104, 0.18);
   border-color: rgba(214, 162, 104, 0.32);
   color: #8a5425;
 }
 
-.trope-confirmation-canonical,
-.trope-confirmation-toggle-canonical {
+.trope-confirmation-canonical {
   background: rgba(53, 133, 118, 0.16);
   border-color: rgba(53, 133, 118, 0.28);
   color: #1d6857;
 }
 
-.trope-confirmation-toggle-active {
-  box-shadow: inset 0 0 0 1px rgba(19, 52, 59, 0.08);
+.confirmation-status-switch {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: min(100%, 16rem);
+  overflow: hidden;
+  border: 1px solid rgba(19, 52, 59, 0.16);
+  border-radius: 0.65rem;
+  background: rgba(255, 255, 255, 0.64);
+}
+
+.confirmation-status-switch-option {
+  min-width: 0;
+  padding: 0.45rem 0.7rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #53737a;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
+}
+
+.confirmation-status-switch-option + .confirmation-status-switch-option {
+  border-left: 1px solid rgba(19, 52, 59, 0.12);
+}
+
+.confirmation-status-switch-option-active.confirmation-status-switch-option-unconfirmed {
+  background: rgba(214, 162, 104, 0.2);
+  color: #8a5425;
+  box-shadow: inset 0 0 0 1px rgba(214, 162, 104, 0.16);
+}
+
+.confirmation-status-switch-option-active.confirmation-status-switch-option-canonical {
+  background: rgba(53, 133, 118, 0.18);
+  color: #1d6857;
+  box-shadow: inset 0 0 0 1px rgba(53, 133, 118, 0.16);
+}
+
+.confirmation-status-switch-option:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 2px solid rgba(46, 126, 131, 0.55);
+  outline-offset: -2px;
+}
+
+.confirmation-status-switch-option:disabled {
+  cursor: not-allowed;
 }
 
 .trope-management-browser {
@@ -598,16 +663,23 @@ p {
   justify-content: flex-end;
 }
 
-.trope-management-confirmation-card {
-  gap: 0.85rem;
+.trope-card-admin-actions {
+  display: grid;
+  gap: 0.65rem;
+  justify-items: end;
+  align-content: start;
+  flex: 0 0 auto;
+  width: min(100%, 16rem);
 }
 
-.trope-management-confirmation-controls {
-  display: flex;
-  gap: 1rem;
-  align-items: center;
-  justify-content: flex-end;
+.trope-card-admin-actions .button-row {
+  width: 100%;
   flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.trope-management-confirmation-card {
+  gap: 0.85rem;
 }
 
 .trope-management-selected-card .card-row,
@@ -625,6 +697,61 @@ p {
   gap: 0.85rem;
   padding-top: 0.25rem;
   border-top: 1px solid rgba(19, 52, 59, 0.09);
+}
+
+.trope-management-similar-filter-control {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.similarity-scope-switch {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  max-width: 100%;
+  overflow: hidden;
+  border: 1px solid rgba(19, 52, 59, 0.16);
+  border-radius: 0.65rem;
+  background: rgba(255, 255, 255, 0.64);
+}
+
+.similarity-scope-switch button {
+  min-width: 0;
+  padding: 0.45rem 0.7rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #53737a;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.similarity-scope-switch button + button {
+  border-left: 1px solid rgba(19, 52, 59, 0.12);
+}
+
+.similarity-scope-switch button:hover:not(:disabled) {
+  background: rgba(227, 244, 242, 0.56);
+}
+
+.similarity-scope-switch button.similarity-scope-switch-option-active {
+  background: rgba(46, 126, 131, 0.16);
+  color: #1d6857;
+  box-shadow: inset 0 0 0 1px rgba(46, 126, 131, 0.16);
+}
+
+.similarity-scope-switch button:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 2px solid rgba(46, 126, 131, 0.55);
+  outline-offset: -2px;
+}
+
+.similarity-scope-switch button:disabled {
+  cursor: not-allowed;
 }
 
 .trope-management-similarity-threshold {
@@ -710,6 +837,14 @@ p {
   border-color: rgba(46, 126, 131, 0.48);
 }
 
+.input[aria-invalid="true"] {
+  border-color: rgba(194, 75, 59, 0.7);
+}
+
+.form-error {
+  color: #8f3024;
+}
+
 .input-textarea {
   min-height: 7.5rem;
   resize: vertical;
@@ -719,6 +854,24 @@ p {
   display: flex;
   gap: 0.75rem;
   align-items: center;
+}
+
+.date-manual-input {
+  min-width: 0;
+}
+
+.date-actions {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.date-picker-proxy {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .input-readonly-button {

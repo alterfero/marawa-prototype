@@ -4,6 +4,7 @@ TROPE_FIELD = "Motifs (Eng)"
 KEYWORD_FIELD = "Keywords (Eng)"
 THEME_FIELD = "Thème"
 TROPE_PROPOSAL_FIELD = "proposition de nouveaux motifs"
+DATE_OF_RECORDING_FIELD = "date of recording"
 CSV_IMPORT_ALIASES = {
     "motifs inhabituels à une version": TROPE_PROPOSAL_FIELD,
 }
@@ -21,7 +22,7 @@ CSV_COLUMNS = [
     "lg of publication",
     "bilingual?",
     "storyteller",
-    "date of recording",
+    DATE_OF_RECORDING_FIELD,
     "place of recording",
     "space coord",
     "editor",

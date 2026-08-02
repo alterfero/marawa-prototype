@@ -5,7 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from app.core.csv_schema import CSV_COLUMNS, KEYWORD_FIELD, TROPE_FIELD
+from app.core.csv_schema import CSV_COLUMNS, DATE_OF_RECORDING_FIELD, KEYWORD_FIELD, TROPE_FIELD
 from app.db import Dataset, DatasetStatus, build_engine, build_session_factory
 from app.main import create_app
 from tests.auth_helpers import authenticate_admin, configure_auth_env
@@ -109,6 +109,7 @@ def test_stories_api_lists_story_detail_and_tropes(client: TestClient) -> None:
     assert detail["fields"][KEYWORD_FIELD] == "wolf ; moon"
     assert [item["text"] for item in detail["tropes"]] == ["first trope", "second trope"]
     assert detail["tropes"][0]["story_count"] == 1
+    assert detail["tropes"][0]["version"] == 1
     assert detail["tropes"][0]["confirmation_status"] == "unconfirmed"
     assert detail["tropes"][0]["origin"] == "csv_import"
     assert detail["tropes"][0]["status"] == "validated"
@@ -120,6 +121,7 @@ def test_stories_api_lists_story_detail_and_tropes(client: TestClient) -> None:
     assert tropes_payload["story_version"] == 1
     assert [item["text"] for item in tropes_payload["items"]] == ["first trope", "second trope"]
     assert tropes_payload["items"][0]["story_count"] == 1
+    assert tropes_payload["items"][0]["version"] == 1
     assert tropes_payload["items"][0]["confirmation_status"] == "unconfirmed"
 
 
@@ -220,6 +222,140 @@ def test_create_story_adds_manual_entry_with_metadata_keywords_and_tropes(client
     assert dataset_status["trope_count"] == 2
     assert dataset_status["keyword_count"] == 3
     assert dataset_status["active_dataset_version"] == 2
+
+
+def test_manual_story_can_be_saved_section_by_section_and_revised(client: TestClient) -> None:
+    upload_dataset(client, [make_row(title="Imported Story")])
+
+    source_response = client.post(
+        "/api/stories",
+        json={
+            "expected_dataset_version": 1,
+            "fields": {
+                "Entered by": "Researcher",
+                "territory": "Moorea",
+                "original language": "Reo Maohi",
+            },
+        },
+    )
+
+    assert source_response.status_code == 201
+    source_story = source_response.json()["story"]
+    assert source_story["version"] == 1
+    assert source_story["completeness"] == "incomplete"
+    assert source_story["fields"]["Entered by"] == "Researcher"
+    assert source_story["fields"]["Story title (Eng)"] == ""
+
+    text_response = client.patch(
+        f"/api/stories/{source_story['id']}",
+        json={
+            "expected_story_version": source_story["version"],
+            "fields": {
+                "Story title (Eng)": "The Moon Fisher",
+                "1-sentence summary": "A fisher follows a moonlit trail across the lagoon.",
+            },
+        },
+    )
+
+    assert text_response.status_code == 200
+    text_story = text_response.json()["story"]
+    assert text_story["version"] == 2
+    assert text_story["fields"]["territory"] == "Moorea"
+    assert text_story["fields"]["Story title (Eng)"] == "The Moon Fisher"
+
+    classification_response = client.patch(
+        f"/api/stories/{source_story['id']}",
+        json={
+            "expected_story_version": text_story["version"],
+            "fields": {
+                "species": "fish",
+                "Connection to other stories": "Related to lagoon journey stories.",
+            },
+        },
+    )
+
+    assert classification_response.status_code == 200
+    classification_story = classification_response.json()["story"]
+    assert classification_story["version"] == 3
+    assert classification_story["fields"]["Story title (Eng)"] == "The Moon Fisher"
+    assert classification_story["fields"]["species"] == "fish"
+
+    revised_source_response = client.patch(
+        f"/api/stories/{source_story['id']}",
+        json={
+            "expected_story_version": classification_story["version"],
+            "fields": {"territory": "Tahiti"},
+        },
+    )
+
+    assert revised_source_response.status_code == 200
+    revised_story = revised_source_response.json()["story"]
+    assert revised_story["version"] == 4
+    assert revised_story["fields"]["territory"] == "Tahiti"
+    assert revised_story["fields"]["1-sentence summary"] == "A fisher follows a moonlit trail across the lagoon."
+    assert revised_story["fields"]["species"] == "fish"
+
+
+@pytest.mark.parametrize("recording_date", ["2023-02-29", "2024/02/29", "2024-2-29"])
+def test_create_story_rejects_invalid_recording_date(client: TestClient, recording_date: str) -> None:
+    upload_dataset(client, [make_row(title="Imported Story")])
+
+    response = client.post(
+        "/api/stories",
+        json={
+            "expected_dataset_version": 1,
+            "fields": {
+                "Story title (Eng)": "Manual Story",
+                DATE_OF_RECORDING_FIELD: recording_date,
+            },
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "code": "story_mutation_invalid",
+        "message": "Date of recording must be a valid date in YYYY-MM-DD format.",
+    }
+
+
+def test_story_date_update_enforces_iso_dates_without_blocking_legacy_imports(client: TestClient) -> None:
+    imported_story = make_row(title="Imported Story", territory="Tahiti")
+    imported_story[DATE_OF_RECORDING_FIELD] = "4 March 1998"
+    upload_dataset(client, [imported_story])
+    story = client.get("/api/stories").json()["items"][0]
+
+    non_date_update = client.patch(
+        f"/api/stories/{story['id']}",
+        json={
+            "expected_story_version": story["version"],
+            "fields": {"territory": "Moorea"},
+        },
+    )
+    assert non_date_update.status_code == 200
+    assert non_date_update.json()["story"]["fields"][DATE_OF_RECORDING_FIELD] == "4 March 1998"
+
+    invalid_update = client.patch(
+        f"/api/stories/{story['id']}",
+        json={
+            "expected_story_version": 2,
+            "fields": {DATE_OF_RECORDING_FIELD: "2023-02-29"},
+        },
+    )
+    assert invalid_update.status_code == 400
+    assert invalid_update.json() == {
+        "code": "story_mutation_invalid",
+        "message": "Date of recording must be a valid date in YYYY-MM-DD format.",
+    }
+
+    valid_update = client.patch(
+        f"/api/stories/{story['id']}",
+        json={
+            "expected_story_version": 2,
+            "fields": {DATE_OF_RECORDING_FIELD: "2024-02-29"},
+        },
+    )
+    assert valid_update.status_code == 200
+    assert valid_update.json()["story"]["fields"][DATE_OF_RECORDING_FIELD] == "2024-02-29"
 
 
 def test_create_story_returns_409_for_stale_expected_dataset_version(client: TestClient) -> None:

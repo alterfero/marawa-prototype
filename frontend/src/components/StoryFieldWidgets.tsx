@@ -1,7 +1,8 @@
 import L from "leaflet";
-import { KeyboardEvent, useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
-import { getStoryFieldLabel, LONG_TEXT_FIELDS } from "../constants/csv";
+import { DATE_OF_RECORDING_FIELD, getStoryFieldLabel, LONG_TEXT_FIELDS } from "../constants/csv";
+import { normalizeLongitude } from "../map/antimeridian";
 
 export interface LocationDraft {
   place: string;
@@ -10,40 +11,12 @@ export interface LocationDraft {
 
 type CoordinatePair = [number, number];
 
-const DATE_OF_RECORDING_FIELD = "date of recording";
 const PLACE_OF_RECORDING_FIELD = "place of recording";
 const SPACE_COORD_FIELD = "space coord";
 const LOCATION_PICKER_DEFAULT_CENTER: CoordinatePair = [0, 0];
 const LOCATION_PICKER_DEFAULT_ZOOM = 2;
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-const DATE_NAVIGATION_KEYS = new Set([
-  "Tab",
-  "Enter",
-  "Escape",
-  "ArrowLeft",
-  "ArrowRight",
-  "ArrowUp",
-  "ArrowDown",
-  "Home",
-  "End",
-  "PageUp",
-  "PageDown",
-]);
-
-function isFiniteCoordinatePair(value: unknown): value is CoordinatePair {
-  return (
-    Array.isArray(value) &&
-    value.length === 2 &&
-    typeof value[0] === "number" &&
-    Number.isFinite(value[0]) &&
-    typeof value[1] === "number" &&
-    Number.isFinite(value[1]) &&
-    value[0] >= -90 &&
-    value[0] <= 90 &&
-    value[1] >= -180 &&
-    value[1] <= 180
-  );
-}
+const MANUAL_COORDINATE_PAIR_RE = /^\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*,\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*$/;
 
 function applyCoordinateDirection(value: number, direction: string): number {
   if (direction === "S" || direction === "W") {
@@ -76,13 +49,50 @@ function parseCoordinatePair(value: string): CoordinatePair | null {
 
   const latitude = applyCoordinateDirection(Number(matches[0][1]), (matches[0][2] ?? "").toUpperCase());
   const longitude = applyCoordinateDirection(Number(matches[1][1]), (matches[1][2] ?? "").toUpperCase());
-  if (!isFiniteCoordinatePair([latitude, longitude])) {
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || latitude < -90 || latitude > 90) {
     return null;
   }
-  if (latitude === 0 && longitude === 0) {
+  const normalizedLongitude = normalizeLongitude(longitude);
+  if (latitude === 0 && normalizedLongitude === 0) {
     return null;
   }
-  return [latitude, longitude];
+  return [latitude, normalizedLongitude];
+}
+
+function validateManualCoordinatePair(value: string): string | null {
+  if (!value.trim()) {
+    return null;
+  }
+
+  const matches = MANUAL_COORDINATE_PAIR_RE.exec(value);
+  if (!matches) {
+    return "Use decimal degrees in the format latitude, longitude (for example, -17.650000, -149.426000).";
+  }
+
+  const latitude = Number(matches[1]);
+  const longitude = Number(matches[2]);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    return "Coordinates must be finite decimal numbers.";
+  }
+  if (latitude < -90 || latitude > 90) {
+    return "Latitude must be between -90 and +90.";
+  }
+  if (longitude < -180 || longitude > 180) {
+    return "Longitude must be between -180 and +180.";
+  }
+  return null;
+}
+
+function parseManualCoordinatePair(value: string): CoordinatePair | null {
+  if (validateManualCoordinatePair(value)) {
+    return null;
+  }
+
+  const matches = MANUAL_COORDINATE_PAIR_RE.exec(value);
+  if (!matches) {
+    return null;
+  }
+  return [Number(matches[1]), Number(matches[2])];
 }
 
 function formatCoordinatePair(value: CoordinatePair): string {
@@ -97,28 +107,35 @@ function fieldInputId(prefix: string, field: string): string {
   return `${prefix}-${normalizedField}`;
 }
 
-function preventFreeTextDateEntry(event: KeyboardEvent<HTMLInputElement>) {
-  if (event.ctrlKey || event.metaKey || event.altKey) {
-    return;
-  }
-  if (DATE_NAVIGATION_KEYS.has(event.key)) {
-    return;
-  }
-  if (event.key.length === 1 || event.key === "Backspace" || event.key === "Delete") {
-    event.preventDefault();
-  }
-}
-
 function openNativeDatePicker(input: HTMLInputElement | null) {
   if (!input) {
     return;
   }
   const pickerInput = input as HTMLInputElement & { showPicker?: () => void };
-  pickerInput.showPicker?.();
+  if (pickerInput.showPicker) {
+    pickerInput.showPicker();
+    return;
+  }
+  input.focus();
+  input.click();
 }
 
-function isIsoCalendarDate(value: string): boolean {
-  return ISO_DATE_RE.test(value);
+export function isValidRecordingDate(value: string): boolean {
+  if (!ISO_DATE_RE.test(value)) {
+    return false;
+  }
+
+  const [year, month, day] = value.split("-").map(Number);
+  if (year < 1) {
+    return false;
+  }
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return (
+    !Number.isNaN(parsed.getTime()) &&
+    parsed.getUTCFullYear() === year &&
+    parsed.getUTCMonth() === month - 1 &&
+    parsed.getUTCDate() === day
+  );
 }
 
 function LocationPickerMap({
@@ -154,7 +171,7 @@ function LocationPickerMap({
 
     const overlayLayer = L.layerGroup().addTo(map);
     map.on("click", (event) => {
-      onSelectRef.current([event.latlng.lat, event.latlng.lng]);
+      onSelectRef.current([event.latlng.lat, normalizeLongitude(event.latlng.lng)]);
     });
 
     mapRef.current = map;
@@ -231,45 +248,50 @@ export function StoryFieldInput({
 }) {
   const inputId = fieldInputId(inputIdPrefix, field);
   const fieldLabel = getStoryFieldLabel(field);
+  const datePickerRef = useRef<HTMLInputElement | null>(null);
 
   if (field === DATE_OF_RECORDING_FIELD) {
-    if (value && !isIsoCalendarDate(value)) {
-      return (
-        <div className="field">
-          <label htmlFor={inputId}>{fieldLabel}</label>
-          <div className="input-with-action">
-            <input className="input" disabled={disabled} id={inputId} onChange={(event) => onChange(event.target.value)} value={value} />
-            <button className="button button-ghost" disabled={disabled} onClick={() => onChange("")} type="button">
-              Use picker
-            </button>
-          </div>
-          <p className="muted">This imported value is not an ISO date yet. Keep the raw text or switch to the date picker.</p>
-        </div>
-      );
-    }
+    const dateError = value && !isValidRecordingDate(value) ? "Enter a valid date in YYYY-MM-DD format (for example, 2026-08-01)." : null;
 
     return (
       <div className="field">
         <label htmlFor={inputId}>{fieldLabel}</label>
-        <div className="input-with-action">
+        <div className="date-actions">
           <input
-            id={inputId}
-            className="input"
+            aria-hidden="true"
+            aria-label="Choose a recording date from the calendar"
+            className="date-picker-proxy"
             disabled={disabled}
             onChange={(event) => onChange(event.target.value)}
-            onClick={(event) => openNativeDatePicker(event.currentTarget)}
-            onKeyDown={preventFreeTextDateEntry}
-            onPaste={(event) => event.preventDefault()}
-            onDrop={(event) => event.preventDefault()}
+            ref={datePickerRef}
+            tabIndex={-1}
             type="date"
-            value={value}
+            value={isValidRecordingDate(value) ? value : ""}
           />
+          <button className="button button-ghost" disabled={disabled} onClick={() => openNativeDatePicker(datePickerRef.current)} type="button">
+            Choose date
+          </button>
           {value ? (
             <button className="button button-ghost" disabled={disabled} onClick={() => onChange("")} type="button">
               Clear date
             </button>
           ) : null}
         </div>
+        <input
+          id={inputId}
+          aria-describedby={dateError ? `${inputId}-help ${inputId}-error` : `${inputId}-help`}
+          aria-invalid={Boolean(dateError)}
+          className="input date-manual-input"
+          disabled={disabled}
+          onChange={(event) => onChange(event.target.value)}
+          onBlur={(event) => onChange(event.target.value.trim())}
+          pattern={"\\d{4}-\\d{2}-\\d{2}"}
+          placeholder="YYYY-MM-DD"
+          type="text"
+          value={value}
+        />
+        <p className="muted" id={`${inputId}-help`}>Enter a date as YYYY-MM-DD, or choose it from the calendar.</p>
+        {dateError ? <p className="form-error" id={`${inputId}-error`} role="alert">{dateError}</p> : null}
       </div>
     );
   }
@@ -343,8 +365,36 @@ export function StoryLocationPickerModal({
   locationDraft: LocationDraft;
   onChange: (locationDraft: LocationDraft) => void;
   onCancel: () => void;
-  onApply: () => void;
+  onApply: (locationDraft: LocationDraft) => void;
 }) {
+  const [coordinateInput, setCoordinateInput] = useState(() =>
+    locationDraft.coordinates ? formatCoordinatePair(locationDraft.coordinates) : "",
+  );
+  const [coordinateError, setCoordinateError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setCoordinateInput(locationDraft.coordinates ? formatCoordinatePair(locationDraft.coordinates) : "");
+    setCoordinateError(null);
+  }, [locationDraft.coordinates]);
+
+  function updateCoordinateInput(value: string) {
+    setCoordinateInput(value);
+    setCoordinateError(validateManualCoordinatePair(value));
+  }
+
+  function applyLocation() {
+    const validationError = validateManualCoordinatePair(coordinateInput);
+    if (validationError) {
+      setCoordinateError(validationError);
+      return;
+    }
+
+    onApply({
+      ...locationDraft,
+      coordinates: parseManualCoordinatePair(coordinateInput),
+    });
+  }
+
   return (
     <div className="modal-backdrop" onClick={onCancel} role="presentation">
       <section
@@ -378,14 +428,34 @@ export function StoryLocationPickerModal({
               />
             </label>
 
-            <label className="field">
-              <span>{getStoryFieldLabel(SPACE_COORD_FIELD)}</span>
-              <input className="input" placeholder="Click the map to choose coordinates" readOnly value={locationDraft.coordinates ? formatCoordinatePair(locationDraft.coordinates) : ""} />
-            </label>
+            <div className="field">
+              <label htmlFor="location-coordinate-input">{getStoryFieldLabel(SPACE_COORD_FIELD)}</label>
+              <input
+                aria-describedby="location-coordinate-help"
+                aria-invalid={Boolean(coordinateError)}
+                className="input"
+                disabled={busy}
+                id="location-coordinate-input"
+                inputMode="decimal"
+                onBlur={() => {
+                  const coordinates = parseManualCoordinatePair(coordinateInput);
+                  if (coordinates) {
+                    setCoordinateInput(formatCoordinatePair(coordinates));
+                  }
+                }}
+                onChange={(event) => updateCoordinateInput(event.target.value)}
+                placeholder="-17.650000, -149.426000"
+                value={coordinateInput}
+              />
+              <p className="muted" id="location-coordinate-help">
+                Enter decimal degrees as latitude, longitude. Latitude must be −90 to +90; longitude must be −180 to +180.
+              </p>
+              {coordinateError ? <p className="form-error">{coordinateError}</p> : null}
+            </div>
 
             <div className="card subdued">
               <p className="muted">
-                Click the map to place the story location. The place label stays editable so you can keep the wording used in the
+                Click the map or enter coordinates manually. The place label stays editable so you can keep the wording used in the
                 source while still saving precise coordinates.
               </p>
             </div>
@@ -393,13 +463,15 @@ export function StoryLocationPickerModal({
             <div className="button-row wrap-row">
               <button
                 className="button button-ghost"
-                disabled={busy || (!locationDraft.place && !locationDraft.coordinates)}
-                onClick={() =>
+                disabled={busy || (!locationDraft.place && !coordinateInput.trim())}
+                onClick={() => {
+                  setCoordinateInput("");
+                  setCoordinateError(null);
                   onChange({
                     place: "",
                     coordinates: null,
-                  })
-                }
+                  });
+                }}
                 type="button"
               >
                 Clear location
@@ -407,7 +479,7 @@ export function StoryLocationPickerModal({
               <button className="button button-ghost" disabled={busy} onClick={onCancel} type="button">
                 Cancel
               </button>
-              <button className="button" disabled={busy} onClick={onApply} type="button">
+              <button className="button" disabled={busy || Boolean(coordinateError)} onClick={applyLocation} type="button">
                 Use location
               </button>
             </div>

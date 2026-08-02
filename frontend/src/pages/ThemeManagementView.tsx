@@ -11,6 +11,7 @@ import {
   updateCanonicalTheme,
   updateThemeConfirmationStatus,
 } from "../api/client";
+import { ConfirmationStatusSwitch } from "../components/ConfirmationStatusSwitch";
 import { StorySummaryCard } from "../components/StorySummaryCard";
 import { TermCard } from "../components/TermCard";
 import type { CanonicalThemeListItem, StorySummary, ThemeDetail, ThemeConfirmationStatus } from "../api/types";
@@ -349,34 +350,12 @@ export function ThemeManagementView() {
 
   function renderConfirmationActions(theme: CanonicalThemeListItem) {
     return (
-      <div className="trope-management-confirmation-controls">
-        <button
-          aria-pressed={theme.confirmation_status === "unconfirmed"}
-          className={`button ${
-            theme.confirmation_status === "unconfirmed"
-              ? "trope-confirmation-toggle-active trope-confirmation-toggle-unconfirmed"
-              : "button-ghost"
-          }`}
-          disabled={mutationDisabled || theme.confirmation_status === "unconfirmed"}
-          onClick={() => void handleUpdateConfirmationStatus(theme, "unconfirmed")}
-          type="button"
-        >
-          Unconfirmed
-        </button>
-        <button
-          aria-pressed={theme.confirmation_status === "canonical"}
-          className={`button ${
-            theme.confirmation_status === "canonical"
-              ? "trope-confirmation-toggle-active trope-confirmation-toggle-canonical"
-              : "button-ghost"
-          }`}
-          disabled={mutationDisabled || theme.confirmation_status === "canonical"}
-          onClick={() => void handleUpdateConfirmationStatus(theme, "canonical")}
-          type="button"
-        >
-          Canonical
-        </button>
-      </div>
+      <ConfirmationStatusSwitch
+        ariaLabel="Theme confirmation status"
+        disabled={mutationDisabled}
+        onChange={(nextStatus) => void handleUpdateConfirmationStatus(theme, nextStatus)}
+        value={theme.confirmation_status}
+      />
     );
   }
 

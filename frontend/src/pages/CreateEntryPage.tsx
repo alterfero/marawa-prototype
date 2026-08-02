@@ -1,18 +1,33 @@
 import { FormEvent, useEffect, useState } from "react";
 
-import { ApiError, createStory, getDatasetStatus, getErrorMessage, searchKeywords, searchTropes } from "../api/client";
+import {
+  addStoryKeyword,
+  addStoryTrope,
+  ApiError,
+  createStory,
+  deleteStoryKeyword,
+  deleteStoryTrope,
+  getDatasetStatus,
+  getErrorMessage,
+  getStory,
+  searchKeywords,
+  searchTropes,
+  updateStory,
+} from "../api/client";
 import {
   applyLocationDraftToFields,
   buildLocationDraft,
+  isValidRecordingDate,
   type LocationDraft,
   StoryFieldInput,
   StoryLocationPickerModal,
 } from "../components/StoryFieldWidgets";
 import { TermCard } from "../components/TermCard";
 import { TropeCard } from "../components/TropeCard";
-import { buildBlankStoryFields, LEGACY_METADATA_SECTIONS, normalizeDraftText } from "../constants/csv";
-import type { DatasetStatus, SearchItem } from "../api/types";
+import { buildBlankStoryFields, DATE_OF_RECORDING_FIELD, LEGACY_METADATA_SECTIONS, normalizeDraftText } from "../constants/csv";
+import type { CreateStoryResponse, DatasetStatus, SearchItem, StoryDetail } from "../api/types";
 import { useDatasetMaintenance } from "../maintenance";
+import { routeHref, useHashSearch } from "../router";
 
 interface PageNotice {
   tone: "error" | "success" | "warning";
@@ -39,6 +54,19 @@ function extractConflictVersion(error: ApiError): number | null {
   return typeof currentDatasetVersion === "number" ? currentDatasetVersion : null;
 }
 
+function extractStoryConflictVersion(error: ApiError): number | null {
+  const detail = error.detail;
+  if (!detail || typeof detail !== "object") {
+    return null;
+  }
+  const nestedDetails = (detail as { details?: unknown }).details;
+  if (!nestedDetails || typeof nestedDetails !== "object") {
+    return null;
+  }
+  const currentStoryVersion = (nestedDetails as { current_story_version?: unknown }).current_story_version;
+  return typeof currentStoryVersion === "number" ? currentStoryVersion : null;
+}
+
 function isDatasetMaintenanceError(error: ApiError): boolean {
   return Boolean(error.detail && typeof error.detail === "object" && (error.detail as { code?: unknown }).code === "dataset_maintenance_in_progress");
 }
@@ -53,6 +81,7 @@ function buildErrorNotice(title: string, error: unknown): PageNotice {
 
 export function CreateEntryPage() {
   const maintenance = useDatasetMaintenance();
+  const hashSearch = useHashSearch();
   const [datasetStatus, setDatasetStatus] = useState<DatasetStatus | null>(null);
   const [statusLoading, setStatusLoading] = useState(true);
   const [fields, setFields] = useState<Record<string, string>>(() => buildBlankStoryFields());
@@ -65,12 +94,19 @@ export function CreateEntryPage() {
   const [tropeQuery, setTropeQuery] = useState("");
   const [tropeResults, setTropeResults] = useState<SearchItem[]>([]);
   const [tropeSearchStatus, setTropeSearchStatus] = useState<"idle" | "loading" | "ready">("idle");
+  const [savedStory, setSavedStory] = useState<StoryDetail | null>(null);
+  const [entryLoading, setEntryLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<PageNotice | null>(null);
+  const storyIdParam = new URLSearchParams(hashSearch).get("story_id");
 
   const datasetVersion = datasetStatus?.active_dataset_version ?? null;
   const draftKeywordMarkers = new Set(draftKeywords.map((keyword) => normalizeDraftText(keyword.text)));
   const draftTropeMarkers = new Set(draftTropes.map((trope) => normalizeDraftText(trope.text)));
+  const recordingDate = fields[DATE_OF_RECORDING_FIELD] || "";
+  const hasInvalidRecordingDate = Boolean(recordingDate) && !isValidRecordingDate(recordingDate);
+  const cannotCreateStory = savedStory === null && (statusLoading || datasetVersion == null);
+  const interactionDisabled = busy || entryLoading;
 
   async function loadStatus() {
     try {
@@ -94,6 +130,10 @@ export function CreateEntryPage() {
     setTropeQuery("");
     setTropeResults([]);
     setTropeSearchStatus("idle");
+    setSavedStory(null);
+    if (storyIdParam) {
+      window.location.hash = routeHref("/create");
+    }
   }
 
   useEffect(() => {
@@ -101,6 +141,37 @@ export function CreateEntryPage() {
       setNotice(buildErrorNotice("Could not load dataset status", caughtError));
     });
   }, []);
+
+  useEffect(() => {
+    if (!storyIdParam) {
+      setEntryLoading(false);
+      resetDraft();
+      return;
+    }
+
+    let cancelled = false;
+    setEntryLoading(true);
+    void getStory(storyIdParam)
+      .then((story) => {
+        if (!cancelled) {
+          loadSavedStoryIntoDraft(story);
+        }
+      })
+      .catch((caughtError) => {
+        if (!cancelled) {
+          setNotice(buildErrorNotice("Could not load the new entry", caughtError));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setEntryLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [storyIdParam]);
 
   useEffect(() => {
     const trimmedQuery = keywordQuery.trim();
@@ -189,19 +260,15 @@ export function CreateEntryPage() {
     setLocationDraft(null);
   }
 
-  function applyLocationPicker() {
-    if (!locationDraft) {
-      return;
-    }
-
-    setFields((current) => applyLocationDraftToFields(current, locationDraft));
+  function applyLocationPicker(nextLocationDraft: LocationDraft) {
+    setFields((current) => applyLocationDraftToFields(current, nextLocationDraft));
     setLocationDraft(null);
   }
 
   function renderMetadataField(field: string) {
     return (
       <StoryFieldInput
-        disabled={busy}
+        disabled={interactionDisabled}
         field={field}
         inputIdPrefix="create-entry"
         key={field}
@@ -300,9 +367,118 @@ export function CreateEntryPage() {
     setDraftTropes((current) => current.filter((trope) => normalizeDraftText(trope.text) !== marker));
   }
 
-  async function handleSave(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (datasetVersion == null) {
+  function fieldsForSection(section: (typeof LEGACY_METADATA_SECTIONS)[number]): Record<string, string> {
+    return Object.fromEntries(section.fields.map((field) => [field, fields[field] || ""]));
+  }
+
+  function isSectionSaveDisabled(section: (typeof LEGACY_METADATA_SECTIONS)[number]): boolean {
+    const includesRecordingDate = section.fields.includes(DATE_OF_RECORDING_FIELD);
+    return interactionDisabled || maintenance.active || cannotCreateStory || (includesRecordingDate && hasInvalidRecordingDate);
+  }
+
+  async function syncStoryTerms(initialStory: StoryDetail): Promise<StoryDetail> {
+    let story = initialStory;
+
+    for (const trope of story.tropes) {
+      if (draftTropeMarkers.has(normalizeDraftText(trope.text))) {
+        continue;
+      }
+      const result = await deleteStoryTrope(story.id, trope.id, story.version);
+      story = {
+        ...story,
+        version: result.story_version,
+        tropes: story.tropes.filter((currentTrope) => currentTrope.id !== trope.id),
+      };
+      setSavedStory(story);
+    }
+
+    for (const draftTrope of draftTropes) {
+      if (story.tropes.some((trope) => normalizeDraftText(trope.text) === normalizeDraftText(draftTrope.text))) {
+        continue;
+      }
+      const result = await addStoryTrope(story.id, {
+        expected_story_version: story.version,
+        text: draftTrope.text,
+      });
+      story = {
+        ...story,
+        version: result.story_version,
+        tropes: [...story.tropes, result.trope],
+      };
+      setSavedStory(story);
+    }
+
+    for (const keyword of story.keywords) {
+      if (draftKeywordMarkers.has(normalizeDraftText(keyword.text))) {
+        continue;
+      }
+      const result = await deleteStoryKeyword(story.id, keyword.id, story.version);
+      story = {
+        ...story,
+        version: result.story_version,
+        keywords: story.keywords.filter((currentKeyword) => currentKeyword.id !== keyword.id),
+      };
+      setSavedStory(story);
+    }
+
+    for (const draftKeyword of draftKeywords) {
+      if (story.keywords.some((keyword) => normalizeDraftText(keyword.text) === normalizeDraftText(draftKeyword.text))) {
+        continue;
+      }
+      const result = await addStoryKeyword(story.id, {
+        expected_story_version: story.version,
+        text: draftKeyword.text,
+      });
+      story = {
+        ...story,
+        version: result.story_version,
+        keywords: [...story.keywords, result.keyword],
+      };
+      setSavedStory(story);
+    }
+
+    return story;
+  }
+
+  function loadSavedStoryIntoDraft(story: StoryDetail) {
+    setSavedStory(story);
+    setFields(story.fields);
+    setDraftTropes(
+      story.tropes.map((trope) => ({
+        id: trope.id,
+        text: trope.text,
+        story_count: trope.story_count,
+      })),
+    );
+    setDraftKeywords(
+      story.keywords.map((keyword) => ({
+        id: keyword.id,
+        text: keyword.text,
+        story_count: 0,
+      })),
+    );
+  }
+
+  async function saveFields({
+    fieldsToSave,
+    successTitle,
+    successBody,
+    includeTerms,
+  }: {
+    fieldsToSave: Record<string, string>;
+    successTitle: string;
+    successBody: string;
+    includeTerms: boolean;
+  }) {
+    if (DATE_OF_RECORDING_FIELD in fieldsToSave && hasInvalidRecordingDate) {
+      setNotice({
+        tone: "error",
+        title: "Invalid recording date",
+        body: "Enter the recording date as a valid YYYY-MM-DD value before saving.",
+      });
+      return;
+    }
+    if (savedStory === null && datasetVersion == null) {
       setNotice({
         tone: "warning",
         title: "No active dataset",
@@ -315,14 +491,29 @@ export function CreateEntryPage() {
       setBusy(true);
       setNotice(null);
 
-      const result = await createStory({
-        expected_dataset_version: datasetVersion,
-        fields,
-        tropes: draftTropes.map((trope) => trope.text),
-        keywords: draftKeywords.map((keyword) => keyword.text),
-      });
+      let result: CreateStoryResponse;
+      if (savedStory) {
+        result = await updateStory({
+          story_id: savedStory.id,
+          expected_story_version: savedStory.version,
+          fields: fieldsToSave,
+        });
+      } else {
+        if (datasetVersion === null) {
+          return;
+        }
+        result = await createStory({
+          expected_dataset_version: datasetVersion,
+          fields: fieldsToSave,
+          tropes: includeTerms ? draftTropes.map((trope) => trope.text) : [],
+          keywords: includeTerms ? draftKeywords.map((keyword) => keyword.text) : [],
+        });
+      }
 
-      resetDraft();
+      setSavedStory(result.story);
+      if (includeTerms && savedStory) {
+        await syncStoryTerms(result.story);
+      }
 
       let refreshError: string | null = null;
       try {
@@ -331,18 +522,10 @@ export function CreateEntryPage() {
         refreshError = getErrorMessage(caughtError);
       }
 
-      const storyLabel = result.story.fields["Story title (Eng)"] || result.story.id;
-      const rebuildMessage = result.queued_job
-        ? refreshError
-          ? `${storyLabel} was created and rebuild job ${result.queued_job.id} was queued. Status refresh failed: ${refreshError}`
-          : `${storyLabel} was created and rebuild job ${result.queued_job.id} is ${result.queued_job.status}.`
-        : refreshError
-          ? `${storyLabel} was created. Status refresh failed: ${refreshError}`
-          : `${storyLabel} was created. Rebuild is now manual only, so use Rebuild in the menu when you want to refresh derived artifacts.`;
       setNotice({
         tone: refreshError ? "warning" : "success",
-        title: refreshError ? "Entry saved, but status did not refresh" : "Entry saved",
-        body: rebuildMessage,
+        title: refreshError ? `${successTitle}, but status did not refresh` : successTitle,
+        body: refreshError ? `${successBody} Status refresh failed: ${refreshError}` : successBody,
       });
     } catch (caughtError) {
       if (caughtError instanceof ApiError && caughtError.status === 409) {
@@ -351,6 +534,24 @@ export function CreateEntryPage() {
             tone: "warning",
             title: "Dataset changes are paused",
             body: getErrorMessage(caughtError),
+          });
+          return;
+        }
+        if (savedStory) {
+          const currentStoryVersion = extractStoryConflictVersion(caughtError);
+          try {
+            const currentStory = await getStory(savedStory.id);
+            loadSavedStoryIntoDraft(currentStory);
+          } catch {
+            // Keep the original conflict visible even if the refresh fails.
+          }
+          setNotice({
+            tone: "error",
+            title: "Entry updated elsewhere",
+            body:
+              currentStoryVersion === null
+                ? "This entry changed in another browser session. Its latest saved values were loaded; review them and try again."
+                : `This entry changed in another browser session. Version ${currentStoryVersion} was loaded; review it and try again.`,
           });
           return;
         }
@@ -371,28 +572,49 @@ export function CreateEntryPage() {
         return;
       }
 
-      setNotice(buildErrorNotice("Could not save the new entry", caughtError));
+      setNotice(buildErrorNotice("Could not save the entry", caughtError));
     } finally {
       setBusy(false);
     }
   }
 
+  async function handleSaveSection(section: (typeof LEGACY_METADATA_SECTIONS)[number]) {
+    await saveFields({
+      fieldsToSave: fieldsForSection(section),
+      successTitle: `${section.title} saved`,
+      successBody: savedStory
+        ? "Your changes were saved. You can continue entering the rest of this story."
+        : "An incomplete entry was created and saved. You can continue entering the rest of this story.",
+      includeTerms: false,
+    });
+  }
+
+  async function handleSaveAll(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await saveFields({
+      fieldsToSave: fields,
+      successTitle: "Entry saved",
+      successBody: "All story fields, tropes, and keywords were saved. You can continue editing this entry or reset the draft to create another one.",
+      includeTerms: true,
+    });
+  }
+
   return (
-    <form className="page-stack" onSubmit={(event) => void handleSave(event)}>
+    <form className="page-stack" onSubmit={(event) => void handleSaveAll(event)}>
       <section className="panel">
         <div className="panel-header">
           <div>
             <h1>Create new entry</h1>
           </div>
           <div className="button-row wrap-row">
-            <button className="button button-ghost" disabled={busy} onClick={() => resetDraft()} type="button">
-              Reset draft
+            <button className="button button-ghost" disabled={interactionDisabled} onClick={() => resetDraft()} type="button">
+              {savedStory ? "Start another entry" : "Reset draft"}
             </button>
-            <button className="button button-ghost" disabled={busy || statusLoading} onClick={() => void loadStatus()} type="button">
+            <button className="button button-ghost" disabled={interactionDisabled || statusLoading} onClick={() => void loadStatus()} type="button">
               {statusLoading ? "Refreshing..." : "Refresh dataset"}
             </button>
-            <button className="button" disabled={busy || maintenance.active || datasetVersion == null} type="submit">
-              {busy ? "Saving..." : "Save new entry"}
+            <button className="button" disabled={interactionDisabled || maintenance.active || cannotCreateStory || hasInvalidRecordingDate} type="submit">
+              {busy ? "Saving..." : savedStory ? "Save all changes" : "Save new entry"}
             </button>
           </div>
         </div>
@@ -421,6 +643,7 @@ export function CreateEntryPage() {
           <section className="panel">
             <div className="panel-header">
               <h2>Active dataset</h2>
+              {savedStory ? <span className="pill">Entry saved · incomplete</span> : null}
             </div>
             <div className="stats-grid">
               <article className="stat-card">
@@ -450,6 +673,17 @@ export function CreateEntryPage() {
               <div className="create-field-grid">
                 {section.fields.map((field) => renderMetadataField(field))}
               </div>
+              <div className="button-row">
+                <span className="muted">Save this section before moving on.</span>
+                <button
+                  className="button"
+                  disabled={isSectionSaveDisabled(section)}
+                  onClick={() => void handleSaveSection(section)}
+                  type="button"
+                >
+                  {busy ? "Saving..." : `Save ${section.title}`}
+                </button>
+              </div>
             </section>
           ))}
         </div>
@@ -469,7 +703,7 @@ export function CreateEntryPage() {
                     actions={
                       <button
                         className="button button-danger"
-                        disabled={busy}
+                        disabled={interactionDisabled}
                         onClick={() => handleDeleteDraftKeyword(keyword.text)}
                         type="button"
                       >
@@ -493,7 +727,7 @@ export function CreateEntryPage() {
               <span>Keyword query</span>
               <input
                 className="input"
-                disabled={busy}
+                disabled={interactionDisabled}
                 onChange={(event) => setKeywordQuery(event.target.value)}
                 placeholder="Type a keyword to search for similar existing keywords"
                 value={keywordQuery}
@@ -503,7 +737,7 @@ export function CreateEntryPage() {
             <div className="card subdued">
               <div className="card-row">
                 <h3>Keep typed keyword</h3>
-                <button className="button" disabled={busy || !keywordQuery.trim()} onClick={() => handleKeepTypedKeyword()} type="button">
+                <button className="button" disabled={interactionDisabled || !keywordQuery.trim()} onClick={() => handleKeepTypedKeyword()} type="button">
                   Keep typed keyword
                 </button>
               </div>
@@ -529,7 +763,7 @@ export function CreateEntryPage() {
                     actions={
                       <button
                         className="button button-ghost"
-                        disabled={busy || alreadyAssigned}
+                        disabled={interactionDisabled || alreadyAssigned}
                         onClick={() => handleUseExistingKeyword(item)}
                         type="button"
                       >
@@ -557,7 +791,7 @@ export function CreateEntryPage() {
                     actions={
                       <button
                         className="button button-danger"
-                        disabled={busy}
+                        disabled={interactionDisabled}
                         onClick={() => handleDeleteDraftTrope(trope.text)}
                         type="button"
                       >
@@ -581,7 +815,7 @@ export function CreateEntryPage() {
               <span>Trope query</span>
               <input
                 className="input"
-                disabled={busy}
+                disabled={interactionDisabled}
                 onChange={(event) => setTropeQuery(event.target.value)}
                 placeholder="Type a trope to search for similar existing tropes"
                 value={tropeQuery}
@@ -591,7 +825,7 @@ export function CreateEntryPage() {
             <div className="card subdued">
               <div className="card-row">
                 <h3>Keep typed trope</h3>
-                <button className="button" disabled={busy || !tropeQuery.trim()} onClick={() => handleKeepTypedTrope()} type="button">
+                <button className="button" disabled={interactionDisabled || !tropeQuery.trim()} onClick={() => handleKeepTypedTrope()} type="button">
                   Keep typed trope
                 </button>
               </div>
@@ -617,7 +851,7 @@ export function CreateEntryPage() {
                     actions={
                       <button
                         className="button button-ghost"
-                        disabled={busy || alreadyAssigned}
+                        disabled={interactionDisabled || alreadyAssigned}
                         onClick={() => handleUseExistingTrope(item)}
                         type="button"
                       >
@@ -634,7 +868,7 @@ export function CreateEntryPage() {
 
       {locationDraft ? (
         <StoryLocationPickerModal
-          busy={busy}
+          busy={interactionDisabled}
           locationDraft={locationDraft}
           onApply={applyLocationPicker}
           onCancel={closeLocationPicker}

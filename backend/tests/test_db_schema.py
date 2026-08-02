@@ -41,7 +41,7 @@ def test_initialize_database_creates_expected_tables(tmp_path) -> None:
 
     assert busy_timeout == 5000
     assert str(journal_mode).lower() == "wal"
-    assert alembic_version == "20260729_0009"
+    assert alembic_version == "20260802_0011"
 
     story_columns = {column["name"] for column in inspector.get_columns("stories")}
     assert "completeness" in story_columns
@@ -86,7 +86,7 @@ def test_initialize_database_upgrades_confirmed_trope_status_to_canonical(tmp_pa
         alembic_version = connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one()
 
     assert status == "canonical"
-    assert alembic_version == "20260729_0009"
+    assert alembic_version == "20260802_0011"
 
 
 def test_initialize_database_backfills_themes_imported_after_initial_theme_migration(tmp_path) -> None:
@@ -150,7 +150,7 @@ def test_initialize_database_recovers_from_interrupted_sqlite_dataset_scope_upgr
     with engine.connect() as connection:
         alembic_version = connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one()
 
-    assert alembic_version == "20260729_0009"
+    assert alembic_version == "20260802_0011"
 
 
 def test_initialize_database_upgrades_populated_sqlite_db_with_term_and_story_foreign_keys(tmp_path) -> None:
@@ -232,7 +232,7 @@ def test_initialize_database_upgrades_populated_sqlite_db_with_term_and_story_fo
         trope_count = connection.exec_driver_sql("SELECT COUNT(*) FROM story_tropes").scalar_one()
         keyword_count = connection.exec_driver_sql("SELECT COUNT(*) FROM story_keywords").scalar_one()
 
-    assert alembic_version == "20260729_0009"
+    assert alembic_version == "20260802_0011"
     assert trope_count == 1
     assert keyword_count == 1
 

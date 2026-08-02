@@ -37,6 +37,11 @@ def test_parse_space_coord_accepts_semicolon_coordinates() -> None:
     assert parse_space_coord("22.2994° ; 166.7483°") == (22.2994, 166.7483)
 
 
+def test_parse_space_coord_wraps_longitudes_outside_standard_range() -> None:
+    assert parse_space_coord("-20.0, -190.0") == (-20.0, 170.0)
+    assert parse_space_coord("-20.0, 190.0") == (-20.0, -170.0)
+
+
 def test_parse_space_coord_accepts_decimal_commas() -> None:
     assert parse_space_coord("-4,198,\n152,163") == (-4.198, 152.163)
 

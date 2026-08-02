@@ -10,6 +10,7 @@ from app.services.curation import (
     CurationConflictError,
     CurationNotFoundError,
     CurationValidationError,
+    delete_unused_tropes,
     list_near_duplicate_tropes,
     list_similar_unconfirmed_tropes,
     merge_tropes,
@@ -108,6 +109,12 @@ class CanonicalizeTropesResponse(BaseModel):
     tropes: list[TropeSummaryResponse]
 
 
+class DeleteUnusedTropesResponse(BaseModel):
+    deleted_trope_count: int
+    dataset_version: int
+    queued_job: JobSummaryResponse | None
+
+
 router = APIRouter(prefix="/curation", tags=["curation"])
 
 
@@ -156,6 +163,7 @@ def read_near_duplicate_tropes(
 def read_similar_unconfirmed_tropes(
     trope_id: str,
     minimum_similarity: float = Query(default=0.6, ge=0.0, le=1.0),
+    include_canonical: bool = Query(default=False),
     _: object = Depends(require_minimum_role(UserRole.ADMIN)),
     session: Session = Depends(get_db_session),
     search_service=Depends(get_search_service),
@@ -167,6 +175,7 @@ def read_similar_unconfirmed_tropes(
                 source_trope_id=trope_id,
                 minimum_similarity=minimum_similarity,
                 search_service=search_service,
+                include_canonical=include_canonical,
             )
         )
     except Exception as exc:
@@ -259,4 +268,24 @@ def canonicalize_tropes(
 
     return CanonicalizeTropesResponse(
         tropes=[TropeSummaryResponse(**trope) for trope in tropes]
+    )
+
+
+@router.delete("/unused-tropes", response_model=DeleteUnusedTropesResponse)
+def remove_unused_tropes(
+    auth_context: AuthSessionContext = Depends(require_minimum_role_with_csrf(UserRole.ADMIN)),
+    session: Session = Depends(get_db_session),
+) -> DeleteUnusedTropesResponse:
+    try:
+        dataset, summary, job = delete_unused_tropes(
+            session,
+            actor_user_id=auth_context.user.id,
+        )
+    except Exception as exc:
+        _raise_curation_error(exc)
+
+    return DeleteUnusedTropesResponse(
+        deleted_trope_count=summary["deleted_trope_count"],
+        dataset_version=dataset.version,
+        queued_job=_queued_job_summary(job),
     )

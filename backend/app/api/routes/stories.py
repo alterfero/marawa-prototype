@@ -61,6 +61,7 @@ class StoryListResponse(BaseModel):
 
 class StoryTropeResponse(BaseModel):
     id: str
+    version: int
     text: str
     story_count: int
     confirmation_status: TropeConfirmationStatus
@@ -351,6 +352,7 @@ def create_story_trope(
         dataset_version=dataset.version,
         trope=StoryTropeResponse(
             id=link.trope.id,
+            version=link.trope.version,
             text=link.trope.text,
             story_count=int(link.trope.cached_story_count or 0),
             confirmation_status=link.trope.confirmation_status,
@@ -423,6 +425,7 @@ def update_story_trope(
         dataset_version=dataset.version,
         trope=StoryTropeResponse(
             id=link.trope.id,
+            version=link.trope.version,
             text=link.trope.text,
             story_count=int(link.trope.cached_story_count or 0),
             confirmation_status=link.trope.confirmation_status,
@@ -553,6 +556,7 @@ def approve_story_trope(
         dataset_version=dataset.version,
         trope=StoryTropeResponse(
             id=link.trope.id,
+            version=link.trope.version,
             text=link.trope.text,
             story_count=int(link.trope.cached_story_count or 0),
             confirmation_status=link.trope.confirmation_status,

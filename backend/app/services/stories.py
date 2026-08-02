@@ -8,7 +8,8 @@ from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.coordinates import parse_space_coord
-from app.core.csv_schema import CSV_COLUMNS, KEYWORD_FIELD, THEME_FIELD, TROPE_FIELD
+from app.core.csv_schema import CSV_COLUMNS, DATE_OF_RECORDING_FIELD, KEYWORD_FIELD, THEME_FIELD, TROPE_FIELD
+from app.core.dates import is_iso_calendar_date
 from app.core.parsing import (
     clean_text,
     dedupe_preserve_order,
@@ -158,10 +159,12 @@ def create_story(
 ) -> tuple[Story, Dataset, object]:
     active_dataset = _require_active_dataset(session)
     _assert_dataset_version(active_dataset, expected_dataset_version)
+    normalized_fields = _normalize_story_fields(fields)
+    _validate_recording_date(normalized_fields[DATE_OF_RECORDING_FIELD])
 
     story = Story(
         dataset_id=active_dataset.id,
-        fields_json=_normalize_story_fields(fields),
+        fields_json=normalized_fields,
         row_hash="",
     )
     session.add(story)
@@ -320,6 +323,8 @@ def update_story(
     field_updates = _normalize_story_field_updates(fields)
     if not field_updates and completeness is None:
         raise StoryMutationValidationError("Provide at least one editable story field or completeness update.")
+    if DATE_OF_RECORDING_FIELD in field_updates:
+        _validate_recording_date(field_updates[DATE_OF_RECORDING_FIELD])
 
     story_fields = _build_story_fields(story)
     previous_field_values: dict[str, str] = {}
@@ -977,6 +982,11 @@ def _normalize_story_field_updates(fields: Mapping[str, object] | None) -> dict[
     }
 
 
+def _validate_recording_date(value: str) -> None:
+    if value and not is_iso_calendar_date(value):
+        raise StoryMutationValidationError("Date of recording must be a valid date in YYYY-MM-DD format.")
+
+
 def _normalize_term_list(values: list[str] | None) -> list[str]:
     if not values:
         return []
@@ -1353,6 +1363,7 @@ def _serialize_story_detail(story: Story) -> dict:
 def _serialize_story_trope(link: StoryTrope) -> dict:
     return {
         "id": link.trope.id,
+        "version": link.trope.version,
         "text": link.trope.text,
         "story_count": int(link.trope.cached_story_count or 0),
         "confirmation_status": link.trope.confirmation_status.value,

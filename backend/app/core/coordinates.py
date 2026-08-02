@@ -16,6 +16,14 @@ def _apply_direction(value: float, direction: str) -> float:
     return value
 
 
+def _normalize_longitude(value: float) -> float:
+    """Wrap a longitude to the conventional -180 to 180 degree range."""
+    if -180 <= value <= 180:
+        return value
+    normalized = (value + 180) % 360 - 180
+    return 180.0 if normalized == -180.0 and value > 0 else normalized
+
+
 def parse_space_coord(value: str) -> tuple[float, float] | None:
     text = clean_text(value).replace("−", "-")
     if not text:
@@ -36,8 +44,9 @@ def parse_space_coord(value: str) -> tuple[float, float] | None:
 
     latitude = _apply_direction(float(matches[0][0]), matches[0][1].upper())
     longitude = _apply_direction(float(matches[1][0]), matches[1][1].upper())
-    if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
+    if not -90 <= latitude <= 90:
         return None
+    longitude = _normalize_longitude(longitude)
     if latitude == 0.0 and longitude == 0.0:
         # In this corpus, 0,0 is a placeholder for unknown location rather than a real point.
         return None

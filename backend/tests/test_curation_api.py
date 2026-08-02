@@ -94,7 +94,37 @@ def test_near_duplicate_tropes_route_uses_similarity_cache(monkeypatch, tmp_path
     assert body["items"][0]["similarity_score"] > 0.9
 
 
-def test_similar_unconfirmed_tropes_uses_selected_threshold_and_excludes_canonical_candidates(monkeypatch, tmp_path) -> None:
+def test_near_duplicate_tropes_places_the_unconfirmed_trope_on_the_left(monkeypatch, tmp_path) -> None:
+    configure_auth_env(monkeypatch)
+    with build_client(tmp_path, "curation-near-duplicates-orientation.db") as client:
+        authenticate_admin(client)
+        upload_dataset(
+            client,
+            [make_row(title="Story One", tropes="§§ first trope\n§§ first trope variant\n§§ second trope")],
+        )
+        request_rebuild(client)
+        process_next_job(client)
+
+        initial_pair = client.get("/api/curation/near-duplicate-tropes").json()["items"][0]
+        confirmation_response = client.put(
+            f"/api/tropes/{initial_pair['source_trope']['id']}/confirmation",
+            json={
+                "expected_trope_version": initial_pair["source_trope"]["version"],
+                "confirmation_status": "canonical",
+            },
+        )
+        response = client.get("/api/curation/near-duplicate-tropes")
+
+    assert confirmation_response.status_code == 200
+    assert response.status_code == 200
+    pair = response.json()["items"][0]
+    assert pair["source_trope"]["text"] == "first trope variant"
+    assert pair["source_trope"]["confirmation_status"] == "unconfirmed"
+    assert pair["target_trope"]["text"] == "first trope"
+    assert pair["target_trope"]["confirmation_status"] == "canonical"
+
+
+def test_similar_unconfirmed_tropes_filters_canonical_candidates_by_default_and_can_include_them(monkeypatch, tmp_path) -> None:
     configure_auth_env(monkeypatch)
     with build_client(
         tmp_path,
@@ -125,6 +155,9 @@ def test_similar_unconfirmed_tropes_uses_selected_threshold_and_excludes_canonic
             },
         )
         after_canonicalize_response = client.get(f"/api/curation/tropes/{source_trope['id']}/similar-unconfirmed")
+        include_canonical_response = client.get(
+            f"/api/curation/tropes/{source_trope['id']}/similar-unconfirmed?include_canonical=true"
+        )
 
     assert related_response.status_code == 200
     related_body = related_response.json()
@@ -141,6 +174,10 @@ def test_similar_unconfirmed_tropes_uses_selected_threshold_and_excludes_canonic
     assert canonicalize_response.status_code == 200
     assert after_canonicalize_response.status_code == 200
     assert after_canonicalize_response.json()["items"] == []
+    assert include_canonical_response.status_code == 200
+    assert include_canonical_response.json()["total"] == 1
+    assert include_canonical_response.json()["items"][0]["text"] == "moderately related trope"
+    assert include_canonical_response.json()["items"][0]["confirmation_status"] == "canonical"
 
 
 def test_canonicalize_tropes_route_marks_both_canonical_and_hides_fully_canonical_pair(monkeypatch, tmp_path) -> None:
@@ -393,6 +430,52 @@ def test_delete_unassigned_trope_succeeds_without_remove_from_all_stories(monkey
     assert delete_body["affected_story_count"] == 0
     assert delete_body["dataset_version"] == 4
     assert delete_body["queued_job"] is None
+
+
+def test_delete_all_unused_tropes_removes_every_unassigned_trope(monkeypatch, tmp_path) -> None:
+    configure_auth_env(monkeypatch)
+    with build_client(tmp_path, "curation-delete-all-unused.db") as client:
+        authenticate_admin(client)
+        upload_dataset(client, [make_row(title="Story One", tropes="§§ retained trope")])
+        request_rebuild(client)
+        process_next_job(client)
+        story = client.get("/api/stories").json()["items"][0]
+
+        first_orphan = client.post(
+            f"/api/stories/{story['id']}/tropes",
+            json={"expected_story_version": 1, "text": "first orphan"},
+        )
+        first_orphan_id = first_orphan.json()["trope"]["id"]
+        remove_first_orphan = client.request(
+            "DELETE",
+            f"/api/stories/{story['id']}/tropes/{first_orphan_id}",
+            json={"expected_story_version": 2},
+        )
+        second_orphan = client.post(
+            f"/api/stories/{story['id']}/tropes",
+            json={"expected_story_version": 3, "text": "second orphan"},
+        )
+        second_orphan_id = second_orphan.json()["trope"]["id"]
+        remove_second_orphan = client.request(
+            "DELETE",
+            f"/api/stories/{story['id']}/tropes/{second_orphan_id}",
+            json={"expected_story_version": 4},
+        )
+
+        delete_response = client.delete("/api/curation/unused-tropes")
+        remaining_tropes = client.get("/api/tropes").json()
+        repeat_delete_response = client.delete("/api/curation/unused-tropes")
+
+    assert first_orphan.status_code == 201
+    assert remove_first_orphan.status_code == 200
+    assert second_orphan.status_code == 201
+    assert remove_second_orphan.status_code == 200
+    assert delete_response.status_code == 200
+    assert delete_response.json()["deleted_trope_count"] == 2
+    assert delete_response.json()["queued_job"] is None
+    assert [trope["text"] for trope in remaining_tropes] == ["retained trope"]
+    assert repeat_delete_response.status_code == 200
+    assert repeat_delete_response.json()["deleted_trope_count"] == 0
 
 
 def test_tropes_route_lists_unused_tropes(monkeypatch, tmp_path) -> None:

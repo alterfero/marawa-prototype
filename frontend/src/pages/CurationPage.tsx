@@ -4,13 +4,17 @@ import {
   canonicalizeTropes,
   createCanonicalTrope,
   deleteTrope,
+  deleteUnusedTropes,
   getCanonicalTropes,
   getErrorMessage,
   getJob,
   getNearDuplicateTropes,
+  getTropeDetail,
   searchTropes,
+  updateTropeConfirmationStatus,
   validateTropeMerges,
 } from "../api/client";
+import { ConfirmationStatusSwitch } from "../components/ConfirmationStatusSwitch";
 import { TropeCard } from "../components/TropeCard";
 import type {
   CanonicalTropeListItem,
@@ -18,6 +22,7 @@ import type {
   JobSummary,
   NearDuplicateTropeListResponse,
   NearDuplicateTropePair,
+  TropeConfirmationStatus,
   TropeSearchItem,
   TropeSummary,
 } from "../api/types";
@@ -43,13 +48,7 @@ interface PendingMergeDecision {
   similarity_score: number;
 }
 
-interface PairTargetOverride {
-  id: string;
-  text: string;
-  story_count: number;
-}
-
-type PairDirection = "forward" | "reverse";
+type PairTargetOverride = TropeSummary;
 
 function formatJobStatus(job: JobSummary | JobDetail | null): string {
   if (!job) {
@@ -71,19 +70,6 @@ function nearDuplicateEmptyLabel(pairs: NearDuplicateTropeListResponse | null): 
     return "No near-duplicate trope pairs are available yet. Wait for a rebuild to finish, then refresh.";
   }
   return "No near-duplicate trope pairs are available for the current dataset.";
-}
-
-function directionalPair(pair: NearDuplicateTropePair, direction: PairDirection) {
-  if (direction === "reverse") {
-    return {
-      source: pair.target_trope,
-      target: pair.source_trope,
-    };
-  }
-  return {
-    source: pair.source_trope,
-    target: pair.target_trope,
-  };
 }
 
 function buildPendingMergeDecision(
@@ -110,20 +96,14 @@ function pairHasUsableVersions(pair: NearDuplicateTropePair): boolean {
 
 function resolvePairSelection(
   pair: NearDuplicateTropePair,
-  direction: PairDirection,
   targetOverride?: PairTargetOverride,
 ): { source: TropeSummary; target: TropeSummary } {
-  const { source, target } = directionalPair(pair, direction);
-  if (!targetOverride || targetOverride.id === source.id) {
-    return { source, target };
+  if (!targetOverride || targetOverride.id === pair.source_trope.id) {
+    return { source: pair.source_trope, target: pair.target_trope };
   }
   return {
-    source,
-    target: {
-      id: targetOverride.id,
-      text: targetOverride.text,
-      story_count: targetOverride.story_count,
-    },
+    source: pair.source_trope,
+    target: targetOverride,
   };
 }
 
@@ -132,7 +112,6 @@ export function CurationPage() {
   const [pairs, setPairs] = useState<NearDuplicateTropeListResponse | null>(null);
   const [unusedQuery, setUnusedQuery] = useState("");
   const [unusedTropes, setUnusedTropes] = useState<CanonicalTropeListItem[]>([]);
-  const [pairDirections, setPairDirections] = useState<Record<string, PairDirection>>({});
   const [targetOverrides, setTargetOverrides] = useState<Record<string, PairTargetOverride>>({});
   const [pendingMerges, setPendingMerges] = useState<PendingMergeDecision[]>([]);
   const [editingPairId, setEditingPairId] = useState<string | null>(null);
@@ -310,8 +289,7 @@ export function CurationPage() {
 
   function handleStageMerge(pair: NearDuplicateTropePair) {
     const pairId = pairKey(pair);
-    const direction = pairDirections[pairId] || "forward";
-    const { source, target } = resolvePairSelection(pair, direction, targetOverrides[pairId]);
+    const { source, target } = resolvePairSelection(pair, targetOverrides[pairId]);
     const nextDecision = buildPendingMergeDecision(pairId, source, target, pair.similarity_score);
 
     setPendingMerges((current) => {
@@ -337,10 +315,8 @@ export function CurationPage() {
 
   function applyPairTargetSelection(pair: NearDuplicateTropePair, nextTarget: TropeSummary): boolean {
     const pairId = pairKey(pair);
-    const direction = pairDirections[pairId] || "forward";
-    const defaultPairTerms = directionalPair(pair, direction);
-    const source = defaultPairTerms.source;
-    const defaultTarget = defaultPairTerms.target;
+    const source = pair.source_trope;
+    const defaultTarget = pair.target_trope;
 
     if (nextTarget.id === source.id) {
       setModalNotice({
@@ -368,11 +344,7 @@ export function CurationPage() {
   ) {
     setTargetOverrides((current) => ({
       ...current,
-      [pairId]: {
-        id: target.id,
-        text: target.text,
-        story_count: target.story_count,
-      },
+      [pairId]: target,
     }));
     setPendingMerges((current) =>
       current.map((merge) =>
@@ -467,6 +439,63 @@ export function CurationPage() {
     }
   }
 
+  async function handleUpdateTargetConfirmationStatus(target: TropeSummary, nextStatus: TropeConfirmationStatus) {
+    if (typeof target.version !== "number" || !target.confirmation_status) {
+      setNotice({
+        tone: "error",
+        title: "Could not update trope confirmation",
+        body: "The current target is missing confirmation data. Refresh and try again.",
+      });
+      return;
+    }
+
+    try {
+      setBusy(true);
+      setNotice(null);
+      const response = await updateTropeConfirmationStatus(target.id, {
+        expected_trope_version: target.version,
+        confirmation_status: nextStatus,
+      });
+      setTargetOverrides((current) =>
+        Object.fromEntries(
+          Object.entries(current).map(([pairId, override]) => [
+            pairId,
+            override.id === response.trope.id ? { ...override, ...response.trope } : override,
+          ]),
+        ),
+      );
+      await refresh({ clearNotice: false });
+      setNotice({
+        tone: "success",
+        title: "Trope updated",
+        body: `Confirmation status set to ${nextStatus}.`,
+      });
+    } catch (caughtError) {
+      setNotice({
+        tone: "error",
+        title: "Could not update trope confirmation",
+        body: getErrorMessage(caughtError),
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function renderTargetConfirmationStatus(target: TropeSummary) {
+    if (typeof target.version !== "number" || !target.confirmation_status) {
+      return null;
+    }
+
+    return (
+      <ConfirmationStatusSwitch
+        ariaLabel={`Confirmation status for ${target.text}`}
+        disabled={mutationDisabled}
+        onChange={(nextStatus) => void handleUpdateTargetConfirmationStatus(target, nextStatus)}
+        value={target.confirmation_status}
+      />
+    );
+  }
+
   async function handleKeepTypedTarget() {
     if (!editingPairId || !editingTargetQuery.trim() || !pairs) {
       return;
@@ -491,6 +520,30 @@ export function CurationPage() {
         body: result.created
           ? `Created ${result.trope.text} and set it as the merge target.`
           : `Set ${result.trope.text} as the merge target.`,
+      });
+    } catch (caughtError) {
+      setModalNotice({
+        tone: "error",
+        title: "Could not set merge target",
+        body: getErrorMessage(caughtError),
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleUseExistingTarget(pair: NearDuplicateTropePair, item: TropeSearchItem) {
+    try {
+      setBusy(true);
+      const target = await getTropeDetail(item.id);
+      if (!applyPairTargetSelection(pair, target)) {
+        return;
+      }
+      resetTargetEditor();
+      setNotice({
+        tone: "success",
+        title: "Merge target updated",
+        body: `Set ${target.text} as the merge target for this pair.`,
       });
     } catch (caughtError) {
       setModalNotice({
@@ -581,16 +634,50 @@ export function CurationPage() {
     }
   }
 
+  async function handleDeleteAllUnusedTropes() {
+    const shouldDelete = window.confirm(
+      "Delete all unused tropes?\n\nThis permanently removes every trope without story assignments in the active dataset. Rebuilds are manual, so use Rebuild in the menu afterward if you want fresh derived artifacts.",
+    );
+    if (!shouldDelete) {
+      return;
+    }
+
+    try {
+      setBusy(true);
+      setNotice(null);
+      const result = await deleteUnusedTropes();
+      setCurrentJobId(result.queued_job?.id ?? null);
+      setJobDetail(null);
+      setJobError(null);
+      setNotice({
+        tone: "success",
+        title: "Unused tropes deleted",
+        body:
+          result.deleted_trope_count === 0
+            ? "There were no unused tropes to delete."
+            : `Deleted ${result.deleted_trope_count} unused trope${result.deleted_trope_count === 1 ? "" : "s"}. Run Rebuild in the menu when you want fresh derived artifacts.`,
+      });
+      await refresh({ clearNotice: false });
+    } catch (caughtError) {
+      setNotice({
+        tone: "error",
+        title: "Could not delete unused tropes",
+        body: getErrorMessage(caughtError),
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const effectiveJob = jobDetail ?? null;
   const selectedPairCount = pairs?.items.length ?? 0;
   const unusedCountLabel = useMemo(() => `${unusedTropes.length} unused`, [unusedTropes.length]);
   const pendingSourceIds = useMemo(() => new Set(pendingMerges.map((merge) => merge.source_trope_id)), [pendingMerges]);
   const editingPair = editingPairId && pairs ? pairs.items.find((pair) => pairKey(pair) === editingPairId) ?? null : null;
-  const editingPairDirection = editingPair ? pairDirections[pairKey(editingPair)] || "forward" : "forward";
-  const editingDefaultSelection = editingPair ? directionalPair(editingPair, editingPairDirection) : null;
-  const editingSelection = editingPair
-    ? resolvePairSelection(editingPair, editingPairDirection, targetOverrides[pairKey(editingPair)])
+  const editingDefaultSelection = editingPair
+    ? { source: editingPair.source_trope, target: editingPair.target_trope }
     : null;
+  const editingSelection = editingPair ? resolvePairSelection(editingPair, targetOverrides[pairKey(editingPair)]) : null;
 
   return (
     <div className="page-stack">
@@ -689,8 +776,7 @@ export function CurationPage() {
             {pairs?.items.length ? (
               pairs.items.map((pair) => {
                 const pairId = pairKey(pair);
-                const direction = pairDirections[pairId] || "forward";
-                const { source, target } = resolvePairSelection(pair, direction, targetOverrides[pairId]);
+                const { source, target } = resolvePairSelection(pair, targetOverrides[pairId]);
                 const affectedStoryCount = source.story_count;
                 const pendingDecision = pendingMerges.find((merge) => merge.pair_id === pairId);
                 const sourceAlreadyPending = pendingSourceIds.has(source.id);
@@ -700,32 +786,6 @@ export function CurationPage() {
                   <article className="card" key={pairId}>
                     <div className="panel-header">
                       <h3>Similarity {pair.similarity_score.toFixed(2)}</h3>
-                      <button
-                        className="button button-ghost"
-                        disabled={mutationDisabled || Boolean(pendingDecision)}
-                        onClick={() =>
-                          {
-                            setPairDirections((current) => ({
-                              ...current,
-                              [pairId]: direction === "forward" ? "reverse" : "forward",
-                            }));
-                            setTargetOverrides((current) => {
-                              if (!(pairId in current)) {
-                                return current;
-                              }
-                              const next = { ...current };
-                              delete next[pairId];
-                              return next;
-                            });
-                            if (editingPairId === pairId) {
-                              resetTargetEditor();
-                            }
-                          }
-                        }
-                        type="button"
-                      >
-                        Swap direction
-                      </button>
                     </div>
 
                     <div className="field-grid">
@@ -739,16 +799,19 @@ export function CurationPage() {
                           className="subdued"
                           trope={target}
                           actions={
-                            <button
-                              className="button button-ghost"
-                              disabled={mutationDisabled}
-                              onClick={() => {
-                                handleStartEditingTarget(pairId, target);
-                              }}
-                              type="button"
-                            >
-                              Edit
-                            </button>
+                            <>
+                              {renderTargetConfirmationStatus(target)}
+                              <button
+                                className="button button-ghost"
+                                disabled={mutationDisabled}
+                                onClick={() => {
+                                  handleStartEditingTarget(pairId, target);
+                                }}
+                                type="button"
+                              >
+                                Edit
+                              </button>
+                            </>
                           }
                         />
                       </div>
@@ -799,7 +862,17 @@ export function CurationPage() {
         <aside className="panel">
           <div className="panel-header">
             <h2>Unused tropes</h2>
-            <span className="pill">{unusedCountLabel}</span>
+            <div className="button-row">
+              <span className="pill">{unusedCountLabel}</span>
+              <button
+                className="button button-danger"
+                disabled={mutationDisabled}
+                onClick={() => void handleDeleteAllUnusedTropes()}
+                type="button"
+              >
+                Delete all unused tropes
+              </button>
+            </div>
           </div>
 
           <label className="field">
@@ -920,22 +993,7 @@ export function CurationPage() {
                         <button
                           className="button button-ghost"
                           disabled={mutationDisabled || isCurrentTarget || isSourceTrope}
-                          onClick={() => {
-                            if (
-                              applyPairTargetSelection(editingPair, {
-                                id: item.id,
-                                text: item.text,
-                                story_count: item.story_count,
-                              })
-                            ) {
-                              resetTargetEditor();
-                              setNotice({
-                                tone: "success",
-                                title: "Merge target updated",
-                                body: `Set ${item.text} as the merge target for this pair.`,
-                              });
-                            }
-                          }}
+                          onClick={() => void handleUseExistingTarget(editingPair, item)}
                           type="button"
                         >
                           {isCurrentTarget ? "Current target" : isSourceTrope ? "Source trope" : "Use existing trope"}

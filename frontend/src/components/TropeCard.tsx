@@ -11,6 +11,7 @@ interface TropeCardProps {
   compact?: boolean;
   className?: string;
   minimumStoryCount?: number;
+  active?: boolean;
   children?: ReactNode;
   onOpen?: (trope: TropeReference) => void;
 }
@@ -23,6 +24,7 @@ export function TropeCard({
   compact = false,
   className = "",
   minimumStoryCount = 1,
+  active,
   children,
   onOpen,
 }: TropeCardProps) {
@@ -44,7 +46,8 @@ export function TropeCard({
   return (
     <article
       aria-label={`Open trope details for ${trope.text}`}
-      className={`card trope-card ${compact ? "trope-card-compact" : ""} ${className}`.trim()}
+      aria-pressed={active}
+      className={`card trope-card ${compact ? "trope-card-compact" : ""} ${active ? "trope-card-active" : ""} ${className}`.trim()}
       onClick={() => handleOpen(normalizedTrope)}
       onKeyDown={handleKeyDown}
       role="button"
@@ -53,6 +56,9 @@ export function TropeCard({
       <div className="card-row">
         <div>
           <h3>{trope.text}</h3>
+          <p className="muted trope-card-story-count">
+            {storyCount} stor{storyCount === 1 ? "y" : "ies"}
+          </p>
         </div>
         {badge || actions ? (
           <div

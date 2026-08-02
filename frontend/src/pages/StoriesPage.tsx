@@ -4,21 +4,24 @@ import {
   addStoryKeyword,
   addStoryTrope,
   ApiError,
+  createStory,
   deleteStoryKeyword,
-  deleteStoryTrope,
+  deleteTrope,
+  getDatasetStatus,
   getErrorMessage,
   getStories,
   getStory,
   replaceStoryKeyword,
-  replaceStoryTrope,
   searchKeywords,
   searchTropes,
+  updateCanonicalTrope,
   updateStory,
-  validateStoryTrope,
+  updateTropeConfirmationStatus,
 } from "../api/client";
 import {
   applyLocationDraftToFields,
   buildLocationDraft,
+  isValidRecordingDate,
   type LocationDraft,
   StoryFieldInput,
   StoryLocationPickerModal,
@@ -32,6 +35,7 @@ import {
   StoryFieldFilterBuilder,
   type StoryFieldFilter,
 } from "../components/StoryFieldFilters";
+import { ConfirmationStatusSwitch } from "../components/ConfirmationStatusSwitch";
 import { StorySummaryCard } from "../components/StorySummaryCard";
 import { TermCard } from "../components/TermCard";
 import { TropeCard } from "../components/TropeCard";
@@ -41,10 +45,11 @@ import type {
   StoryCompleteness,
   StoryDetail,
   StorySummary,
+  StoryTrope,
   TropeConfirmationStatus,
   TropeSearchItem,
 } from "../api/types";
-import { LEGACY_METADATA_SECTIONS, normalizeDraftText } from "../constants/csv";
+import { DATE_OF_RECORDING_FIELD, LEGACY_METADATA_SECTIONS, normalizeDraftText } from "../constants/csv";
 import { routeHref, useHashSearch } from "../router";
 import { useDatasetMaintenance } from "../maintenance";
 
@@ -122,16 +127,19 @@ function summarizeStory(detail: StoryDetail): string {
   );
 }
 
-function storyFieldsChanged(current: Record<string, string>, baseline: Record<string, string>): boolean {
+function changedStoryFields(current: Record<string, string>, baseline: Record<string, string>): Record<string, string> {
+  const changedFields: Record<string, string> = {};
   const allKeys = new Set([...Object.keys(current), ...Object.keys(baseline)]);
   for (const key of allKeys) {
     if ((current[key] || "") !== (baseline[key] || "")) {
-      return true;
+      changedFields[key] = current[key] || "";
     }
   }
-  return false;
+  return changedFields;
 }
 
+const SOURCE_AND_PROVENANCE_FIELDS =
+  LEGACY_METADATA_SECTIONS.find((section) => section.title === "Source and provenance")?.fields ?? [];
 
 export function StoriesPage({ canEdit }: { canEdit: boolean }) {
   const { user } = useAuth();
@@ -150,10 +158,6 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
   const [tropeQuery, setTropeQuery] = useState("");
   const [tropeResults, setTropeResults] = useState<TropeSearchItem[]>([]);
   const [tropeSearchStatus, setTropeSearchStatus] = useState<"idle" | "loading" | "ready">("idle");
-  const [editingTropeId, setEditingTropeId] = useState<string | null>(null);
-  const [editingTropeQuery, setEditingTropeQuery] = useState("");
-  const [editingTropeResults, setEditingTropeResults] = useState<TropeSearchItem[]>([]);
-  const [editingTropeSearchStatus, setEditingTropeSearchStatus] = useState<"idle" | "loading" | "ready">("idle");
   const [keywordQuery, setKeywordQuery] = useState("");
   const [keywordResults, setKeywordResults] = useState<SearchItem[]>([]);
   const [keywordSearchStatus, setKeywordSearchStatus] = useState<"idle" | "loading" | "ready">("idle");
@@ -172,18 +176,16 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
   );
   const assignedTropeIds = new Set(detail?.tropes.map((trope) => trope.id) ?? []);
   const assignedKeywordIds = new Set(detail?.keywords.map((keyword) => keyword.id) ?? []);
-  const editingTrope = detail?.tropes.find((trope) => trope.id === editingTropeId) ?? null;
   const editingKeyword = detail?.keywords.find((keyword) => keyword.id === editingKeywordId) ?? null;
   const interactionDisabled = busy || storiesLoading || storyLoading || maintenance.active;
-  const fieldsDirty = detail ? storyFieldsChanged(fieldDraft, detail.fields) : false;
+  const canManageTropes = roleAtLeast(user?.role, "admin");
+  const changedFieldDraft = detail ? changedStoryFields(fieldDraft, detail.fields) : {};
+  const fieldsDirty = Object.keys(changedFieldDraft).length > 0;
+  const hasInvalidRecordingDate =
+    DATE_OF_RECORDING_FIELD in changedFieldDraft &&
+    Boolean(changedFieldDraft[DATE_OF_RECORDING_FIELD]) &&
+    !isValidRecordingDate(changedFieldDraft[DATE_OF_RECORDING_FIELD]);
   const draftFiltersAreComplete = storyFieldFiltersAreComplete(draftFilters);
-
-  function resetTropeEditor() {
-    setEditingTropeId(null);
-    setEditingTropeQuery("");
-    setEditingTropeResults([]);
-    setEditingTropeSearchStatus("idle");
-  }
 
   function resetKeywordEditor() {
     setEditingKeywordId(null);
@@ -261,12 +263,8 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
     setLocationDraft(null);
   }
 
-  function applyLocationPicker() {
-    if (!locationDraft) {
-      return;
-    }
-
-    setFieldDraft((current) => applyLocationDraftToFields(current, locationDraft));
+  function applyLocationPicker(nextLocationDraft: LocationDraft) {
+    setFieldDraft((current) => applyLocationDraftToFields(current, nextLocationDraft));
     setLocationDraft(null);
   }
 
@@ -322,7 +320,6 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
   }, []);
 
   useEffect(() => {
-    resetTropeEditor();
     resetKeywordEditor();
     setLocationDraft(null);
   }, [selectedStoryId]);
@@ -444,52 +441,6 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
   }, [keywordQuery]);
 
   useEffect(() => {
-    if (!editingTropeId) {
-      setEditingTropeResults([]);
-      setEditingTropeSearchStatus("idle");
-      return;
-    }
-
-    const trimmedQuery = editingTropeQuery.trim();
-    if (!trimmedQuery) {
-      setEditingTropeResults([]);
-      setEditingTropeSearchStatus("idle");
-      return;
-    }
-
-    let cancelled = false;
-    const timeoutId = window.setTimeout(() => {
-      void (async () => {
-        try {
-          setEditingTropeSearchStatus("loading");
-          const result = await searchTropes({ query: trimmedQuery, limit: 8 });
-          if (cancelled) {
-            return;
-          }
-          setEditingTropeResults(result.items);
-          setEditingTropeSearchStatus("ready");
-        } catch (error) {
-          if (cancelled) {
-            return;
-          }
-          setEditingTropeResults([]);
-          setEditingTropeSearchStatus("ready");
-          setNotice({
-            tone: "error",
-            title: "Could not search replacement tropes",
-            body: getErrorMessage(error),
-          });
-        }
-      })();
-    }, 250);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timeoutId);
-    };
-  }, [editingTropeId, editingTropeQuery]);
-
-  useEffect(() => {
     if (!editingKeywordId) {
       setEditingKeywordResults([]);
       setEditingKeywordSearchStatus("idle");
@@ -534,12 +485,6 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
       window.clearTimeout(timeoutId);
     };
   }, [editingKeywordId, editingKeywordQuery]);
-
-  useEffect(() => {
-    if (editingTropeId && detail && !detail.tropes.some((trope) => trope.id === editingTropeId)) {
-      resetTropeEditor();
-    }
-  }, [detail, editingTropeId]);
 
   useEffect(() => {
     if (editingKeywordId && detail && !detail.keywords.some((keyword) => keyword.id === editingKeywordId)) {
@@ -600,13 +545,21 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
     if (!detail) {
       return;
     }
+    if (hasInvalidRecordingDate) {
+      setNotice({
+        tone: "error",
+        title: "Invalid recording date",
+        body: "Enter the recording date as a valid YYYY-MM-DD value before saving.",
+      });
+      return;
+    }
     await runStoryMutation(
       detail.id,
       () =>
         updateStory({
           story_id: detail.id,
           expected_story_version: detail.version,
-          fields: fieldDraft,
+          fields: changedFieldDraft,
         }),
       {
         tone: "success",
@@ -614,6 +567,54 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
         body: "The story fields were saved.",
       },
     );
+  }
+
+  async function handleCreateStoryWithSameSourceAndProvenance() {
+    if (!detail) {
+      return;
+    }
+
+    try {
+      setBusy(true);
+      setNotice(null);
+
+      const datasetStatus = await getDatasetStatus();
+      if (datasetStatus.active_dataset_version === null) {
+        setNotice({
+          tone: "error",
+          title: "No active dataset",
+          body: "Load a dataset before creating a new story.",
+        });
+        return;
+      }
+
+      const result = await createStory({
+        expected_dataset_version: datasetStatus.active_dataset_version,
+        fields: Object.fromEntries(
+          SOURCE_AND_PROVENANCE_FIELDS.map((field) => [field, detail.fields[field] || ""]),
+        ),
+        tropes: [],
+        keywords: [],
+      });
+
+      window.location.hash = routeHref("/create", { story_id: result.story.id });
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409 && isDatasetMaintenanceError(error)) {
+        setNotice({
+          tone: "error",
+          title: "Dataset changes are paused",
+          body: getErrorMessage(error),
+        });
+        return;
+      }
+      setNotice({
+        tone: "error",
+        title: "Could not create a new story",
+        body: getErrorMessage(error),
+      });
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function handleSetCompleteness(completeness: StoryCompleteness) {
@@ -681,73 +682,124 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
     );
   }
 
-  async function handleKeepEditedTrope(tropeId: string) {
-    if (!detail || !editingTropeQuery.trim()) {
+  async function runCanonicalTropeMutation(action: () => Promise<unknown>, successNotice: PageNotice) {
+    if (!detail) {
       return;
     }
-    await runStoryMutation(
-      detail.id,
+
+    try {
+      setBusy(true);
+      setNotice(null);
+      await action();
+      await refresh(detail.id);
+      setNotice(successNotice);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        await refresh(detail.id);
+        setNotice({
+          tone: "error",
+          title: "Trope updated elsewhere",
+          body: "This trope changed in another browser session. The story now shows the latest version.",
+        });
+        return;
+      }
+      setNotice({
+        tone: "error",
+        title: "Could not update trope",
+        body: getErrorMessage(error),
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleEditCanonicalTrope(trope: StoryTrope) {
+    const nextText = window.prompt("Edit canonical trope", trope.text)?.trim();
+    if (!nextText || nextText === trope.text) {
+      return;
+    }
+
+    await runCanonicalTropeMutation(
       () =>
-        replaceStoryTrope(detail.id, tropeId, {
-          expected_story_version: detail.version,
-          text: editingTropeQuery.trim(),
+        updateCanonicalTrope({
+          trope_id: trope.id,
+          expected_trope_version: trope.version,
+          text: nextText,
         }),
       {
         tone: "success",
         title: "Trope edited",
-        body: "The story trope was updated from the inline editor.",
+        body: "The canonical trope text was updated everywhere it is used.",
       },
-      resetTropeEditor,
     );
   }
 
-  async function handleUseExistingEditedTrope(currentTropeId: string, replacementTropeId: string) {
-    if (!detail) {
-      return;
-    }
-    await runStoryMutation(
-      detail.id,
+  async function handleUpdateTropeConfirmationStatus(trope: StoryTrope, nextStatus: TropeConfirmationStatus) {
+    await runCanonicalTropeMutation(
       () =>
-        replaceStoryTrope(detail.id, currentTropeId, {
-          expected_story_version: detail.version,
-          trope_id: replacementTropeId,
+        updateTropeConfirmationStatus(trope.id, {
+          expected_trope_version: trope.version,
+          confirmation_status: nextStatus,
         }),
       {
         tone: "success",
-        title: "Trope edited",
-        body: "The story trope was replaced with an existing canonical trope.",
-      },
-      resetTropeEditor,
-    );
-  }
-
-  async function handleValidateTrope(tropeId: string) {
-    if (!detail) {
-      return;
-    }
-    await runStoryMutation(
-      detail.id,
-      () => validateStoryTrope(detail.id, tropeId, detail.version),
-      {
-        tone: "success",
-        title: "Trope validated",
-        body: "The trope assignment is now validated.",
+        title: "Trope updated",
+        body: `Confirmation status set to ${confirmationStatusLabel(nextStatus).toLowerCase()}.`,
       },
     );
   }
 
-  async function handleDeleteTrope(tropeId: string) {
-    if (!detail) {
+  async function handleDeleteCanonicalTrope(trope: StoryTrope) {
+    const shouldDelete = window.confirm(
+      trope.story_count > 0
+        ? `Delete trope "${trope.text}" from all ${trope.story_count} stor${trope.story_count === 1 ? "y" : "ies"} and remove the canonical trope?`
+        : `Delete unused trope "${trope.text}"?`,
+    );
+    if (!shouldDelete) {
       return;
     }
-    await runStoryMutation(
-      detail.id,
-      () => deleteStoryTrope(detail.id, tropeId, detail.version),
+
+    await runCanonicalTropeMutation(
+      () => deleteTrope(trope.id, trope.story_count > 0),
       {
         tone: "success",
-        title: "Trope removed",
-        body: "The story-trope assignment was hard-deleted.",
+        title: "Trope deleted",
+        body:
+          trope.story_count > 0
+            ? `Deleted the canonical trope and removed it from ${trope.story_count} stor${trope.story_count === 1 ? "y" : "ies"}.`
+            : "Deleted the unused canonical trope.",
       },
+    );
+  }
+
+  function renderStoryTropeAdminActions(trope: StoryTrope) {
+    return (
+      <div className="trope-card-admin-actions">
+        <ConfirmationStatusSwitch
+          ariaLabel="Trope confirmation status"
+          disabled={interactionDisabled}
+          onChange={(nextStatus) => void handleUpdateTropeConfirmationStatus(trope, nextStatus)}
+          value={trope.confirmation_status}
+        />
+        <div className="button-row">
+          <button
+            className="button button-ghost"
+            disabled={interactionDisabled}
+            onClick={() => void handleEditCanonicalTrope(trope)}
+            type="button"
+          >
+            Edit
+          </button>
+          <button
+            className="button button-danger"
+            disabled={interactionDisabled}
+            onClick={() => void handleDeleteCanonicalTrope(trope)}
+            type="button"
+          >
+            Delete
+          </button>
+        </div>
+      </div>
     );
   }
 
@@ -1010,10 +1062,18 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
                   <p className="muted">Edit legacy CSV fields directly while preserving column compatibility.</p>
                 </div>
                 <div className="button-row wrap-row">
+                  <button
+                    className="button button-ghost"
+                    disabled={interactionDisabled}
+                    onClick={() => void handleCreateStoryWithSameSourceAndProvenance()}
+                    type="button"
+                  >
+                    Create new story with the same source and provenance
+                  </button>
                   <button className="button button-ghost" onClick={() => setShowFieldEditor((current) => !current)} type="button">
                     {showFieldEditor ? "Hide editor" : "Show editor"}
                   </button>
-                  <button className="button" disabled={interactionDisabled || !fieldsDirty} onClick={() => void handleSaveStoryFields()} type="button">
+                  <button className="button" disabled={interactionDisabled || !fieldsDirty || hasInvalidRecordingDate} onClick={() => void handleSaveStoryFields()} type="button">
                     Save story fields
                   </button>
                 </div>
@@ -1250,134 +1310,11 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
               {detail?.tropes.length ? (
                 detail.tropes.map((trope) => (
                   <TropeCard
-                    badge={
-                      <span
-                        className={`story-completeness-badge trope-confirmation-badge trope-confirmation-${trope.confirmation_status}`}
-                      >
-                        {confirmationStatusLabel(trope.confirmation_status)}
-                      </span>
-                    }
                     className="stories-current-trope-card"
                     key={trope.id}
-                    onOpen={() => {
-                      window.location.hash = routeHref("/trope-management", { selected_trope_id: trope.id });
-                    }}
                     trope={trope}
-                    actions={
-                      canEdit ? (
-                        <div className="story-trope-action-row">
-                          <button
-                            className="button button-ghost"
-                            disabled={interactionDisabled}
-                            onClick={() => {
-                              if (editingTropeId === trope.id) {
-                                resetTropeEditor();
-                                return;
-                              }
-                              setEditingTropeId(trope.id);
-                              setEditingTropeQuery(trope.text);
-                            }}
-                            type="button"
-                          >
-                            {editingTropeId === trope.id ? "Cancel edit" : "Edit"}
-                          </button>
-                          {trope.status !== "validated" ? (
-                            <button
-                              className="button button-ghost"
-                              disabled={interactionDisabled}
-                              onClick={() => void handleValidateTrope(trope.id)}
-                              type="button"
-                            >
-                              Validate
-                            </button>
-                          ) : null}
-                          <button
-                            className="button button-danger"
-                            disabled={interactionDisabled}
-                            onClick={() => void handleDeleteTrope(trope.id)}
-                            type="button"
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      ) : undefined
-                    }
-                  >
-                    {editingTropeId === trope.id && canEdit ? (
-                      <div
-                        className="card subdued trope-card-editor"
-                        onClick={(event) => event.stopPropagation()}
-                        onKeyDown={(event) => event.stopPropagation()}
-                      >
-                        <label className="field">
-                          <span>Edit trope</span>
-                          <input
-                            className="input"
-                            disabled={interactionDisabled}
-                            onChange={(event) => setEditingTropeQuery(event.target.value)}
-                            placeholder="Type a replacement trope or reuse a similar existing one"
-                            value={editingTropeQuery}
-                          />
-                        </label>
-
-                        <div className="button-row wrap-row">
-                          <button
-                            className="button"
-                            disabled={
-                              interactionDisabled ||
-                              !editingTropeQuery.trim() ||
-                              (editingTrope ? normalizeDraftText(editingTropeQuery) === normalizeDraftText(editingTrope.text) : true)
-                            }
-                            onClick={() => void handleKeepEditedTrope(trope.id)}
-                            type="button"
-                          >
-                            Save typed trope
-                          </button>
-                          <button className="button button-ghost" disabled={interactionDisabled} onClick={resetTropeEditor} type="button">
-                            Cancel
-                          </button>
-                        </div>
-
-                        <div className="stack">
-                          <div className="panel-header">
-                            <h3>Similar existing tropes</h3>
-                            <span className="pill">
-                              {editingTropeSearchStatus === "loading" ? "searching" : `${editingTropeResults.length} results`}
-                            </span>
-                          </div>
-                          {editingTropeQuery.trim() && editingTropeSearchStatus === "loading" ? (
-                            <p className="muted">Searching tropes...</p>
-                          ) : null}
-                          {editingTropeQuery.trim() &&
-                          editingTropeSearchStatus === "ready" &&
-                          editingTropeResults.length === 0 ? (
-                            <p className="muted">No similar tropes were returned for this query.</p>
-                          ) : null}
-                          {editingTropeResults.map((item) => {
-                            const isCurrentTrope = item.id === trope.id;
-                            const alreadyAssignedElsewhere = assignedTropeIds.has(item.id) && item.id !== trope.id;
-                            return (
-                              <TropeCard
-                                compact
-                                key={`edit-${trope.id}-${item.id}`}
-                                trope={item}
-                                actions={
-                                  <button
-                                    className="button button-ghost"
-                                    disabled={interactionDisabled || isCurrentTrope || alreadyAssignedElsewhere}
-                                    onClick={() => void handleUseExistingEditedTrope(trope.id, item.id)}
-                                    type="button"
-                                  >
-                                    {isCurrentTrope ? "Current trope" : alreadyAssignedElsewhere ? "Already assigned" : "Use existing trope"}
-                                  </button>
-                                }
-                              />
-                            );
-                          })}
-                        </div>
-                      </div>
-                    ) : null}
-                  </TropeCard>
+                    actions={canManageTropes ? renderStoryTropeAdminActions(trope) : undefined}
+                  />
                 ))
               ) : (
                 <p className="muted">No tropes on this story yet.</p>

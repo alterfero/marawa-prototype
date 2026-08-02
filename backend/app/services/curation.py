@@ -220,20 +220,26 @@ def list_near_duplicate_tropes(session: Session, *, model_name: str) -> dict:
             key=lambda trope: (trope.text.lower(), trope.id),
         )
         pair_key = (stable_tropes[0].id, stable_tropes[1].id)
+        display_tropes = stable_tropes
+        if (
+            stable_tropes[0].confirmation_status == TropeConfirmationStatus.CANONICAL
+            and stable_tropes[1].confirmation_status == TropeConfirmationStatus.UNCONFIRMED
+        ):
+            display_tropes = [stable_tropes[1], stable_tropes[0]]
         candidate = {
             "source_trope": {
-                "id": stable_tropes[0].id,
-                "version": stable_tropes[0].version,
-                "text": stable_tropes[0].text,
-                "confirmation_status": stable_tropes[0].confirmation_status.value,
-                "story_count": active_story_counts.get(stable_tropes[0].id, 0),
+                "id": display_tropes[0].id,
+                "version": display_tropes[0].version,
+                "text": display_tropes[0].text,
+                "confirmation_status": display_tropes[0].confirmation_status.value,
+                "story_count": active_story_counts.get(display_tropes[0].id, 0),
             },
             "target_trope": {
-                "id": stable_tropes[1].id,
-                "version": stable_tropes[1].version,
-                "text": stable_tropes[1].text,
-                "confirmation_status": stable_tropes[1].confirmation_status.value,
-                "story_count": active_story_counts.get(stable_tropes[1].id, 0),
+                "id": display_tropes[1].id,
+                "version": display_tropes[1].version,
+                "text": display_tropes[1].text,
+                "confirmation_status": display_tropes[1].confirmation_status.value,
+                "story_count": active_story_counts.get(display_tropes[1].id, 0),
             },
             "similarity_score": float(entry.similarity_score),
             "metadata": entry.metadata_json or {},
@@ -271,12 +277,15 @@ def list_similar_unconfirmed_tropes(
     source_trope_id: str,
     minimum_similarity: float,
     search_service: SearchService,
+    include_canonical: bool = False,
 ) -> dict:
-    """List unconfirmed canonical tropes similar to one selected trope.
+    """List tropes similar to one selected trope.
 
     This deliberately queries the current embedding vectors instead of the
     near-duplicate cache. The cache only keeps very high-scoring pairs for the
     Curation view, while trope management exposes a curator-selected threshold.
+    By default, only unconfirmed candidates are returned for compatibility with
+    the existing curation workflow. Callers can opt in to canonical candidates.
     """
     if not 0.0 <= minimum_similarity <= 1.0:
         raise CurationValidationError("Minimum similarity must be between 0 and 1.")
@@ -294,16 +303,17 @@ def list_similar_unconfirmed_tropes(
     if source_trope is None:
         raise CurationNotFoundError("Selected trope not found.")
 
+    candidate_statement = select(Trope).where(
+        Trope.dataset_id == active_dataset.id,
+        Trope.id != source_trope.id,
+    )
+    if not include_canonical:
+        candidate_statement = candidate_statement.where(
+            Trope.confirmation_status == TropeConfirmationStatus.UNCONFIRMED
+        )
+
     candidate_tropes = list(
-        session.scalars(
-            select(Trope)
-            .where(
-                Trope.dataset_id == active_dataset.id,
-                Trope.confirmation_status == TropeConfirmationStatus.UNCONFIRMED,
-                Trope.id != source_trope.id,
-            )
-            .order_by(Trope.text.asc(), Trope.id.asc())
-        ).all()
+        session.scalars(candidate_statement.order_by(Trope.text.asc(), Trope.id.asc())).all()
     )
     artifact_version, scores_by_trope_id = search_service.get_similar_trope_scores(
         session,
@@ -519,6 +529,47 @@ def delete_trope(
         "deleted_trope_id": trope_id,
         "affected_story_count": len(affected_story_ids),
     }, job
+
+
+def delete_unused_tropes(
+    session: Session,
+    *,
+    actor_user_id: str | None = None,
+) -> tuple[Dataset, dict, object | None]:
+    """Delete every unassigned trope in the active dataset in one transaction."""
+    active_dataset = _require_active_dataset(session)
+    unused_tropes = list(
+        session.scalars(
+            select(Trope).where(
+                Trope.dataset_id == active_dataset.id,
+                Trope.cached_story_count == 0,
+                ~Trope.story_links.any(),
+            )
+        ).all()
+    )
+    if not unused_tropes:
+        return active_dataset, {"deleted_trope_count": 0}, None
+
+    for trope in unused_tropes:
+        _delete_trope_artifacts(session, trope.id)
+        session.delete(trope)
+
+    _bump_dataset_versions(session, active_dataset.id, set())
+    record_audit_event(
+        session,
+        event_type="trope.unused_batch_deleted",
+        actor_user_id=actor_user_id,
+        dataset_id=active_dataset.id,
+        subject_table="tropes",
+        payload={
+            "deleted_trope_count": len(unused_tropes),
+            "rebuild_queued": False,
+        },
+    )
+    session.commit()
+
+    refreshed_active_dataset = session.get(Dataset, active_dataset.id)
+    return refreshed_active_dataset, {"deleted_trope_count": len(unused_tropes)}, None
 
 
 def _normalize_merge_requests(session: Session, merges: list[dict[str, str]]) -> list[dict[str, str]]:

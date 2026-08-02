@@ -114,6 +114,7 @@ export interface StoryListResponse {
 
 export interface StoryTrope {
   id: string;
+  version: number;
   text: string;
   story_count: number;
   confirmation_status: TropeConfirmationStatus;
@@ -255,6 +256,12 @@ export interface ValidateTropesResponse {
 export interface DeleteTropeResponse {
   deleted_trope_id: string;
   affected_story_count: number;
+  dataset_version: number;
+  queued_job: JobSummary | null;
+}
+
+export interface DeleteUnusedTropesResponse {
+  deleted_trope_count: number;
   dataset_version: number;
   queued_job: JobSummary | null;
 }

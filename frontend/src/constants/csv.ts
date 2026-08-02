@@ -1,6 +1,7 @@
 export const TROPE_FIELD = "Motifs (Eng)";
 export const KEYWORD_FIELD = "Keywords (Eng)";
 export const THEME_FIELD = "Thème";
+export const DATE_OF_RECORDING_FIELD = "date of recording";
 
 export const LEGACY_METADATA_SECTIONS: Array<{ title: string; fields: string[] }> = [
   {
@@ -18,7 +19,7 @@ export const LEGACY_METADATA_SECTIONS: Array<{ title: string; fields: string[] }
       "lg of publication",
       "bilingual?",
       "storyteller",
-      "date of recording",
+      DATE_OF_RECORDING_FIELD,
       "place of recording",
       "space coord",
       "editor",
