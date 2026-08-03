@@ -1,15 +1,19 @@
 from __future__ import annotations
 
-from sqlalchemy import case, delete, or_, select
+from sqlalchemy import case, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.parsing import clean_text, normalize_text
 from app.db.models import (
+    AssignmentStatus,
     Dataset,
     DatasetStatus,
     Story,
+    StoryKeyword,
+    StoryTheme,
     StoryTrope,
+    StoryTropeOrigin,
     TermEmbedding,
     TermSimilarityCache,
     TermKind,
@@ -246,6 +250,115 @@ def set_trope_confirmation_status(
     session.flush()
     session.commit()
     return _serialize_trope_summary(trope)
+
+
+def merge_unconfirmed_trope(
+    session: Session,
+    source_trope_id: str,
+    *,
+    target_trope_id: str,
+    expected_source_version: int,
+    actor_user_id: str,
+) -> tuple[Dataset, dict]:
+    """Merge one unconfirmed trope into another active trope with version protection."""
+    active_dataset = _get_active_dataset(session)
+    tropes_by_id = _get_active_tropes_by_id(
+        session,
+        active_dataset.id,
+        [source_trope_id, target_trope_id],
+    )
+    source_trope = tropes_by_id[source_trope_id]
+    target_trope = tropes_by_id[target_trope_id]
+    if source_trope.id == target_trope.id:
+        raise TropeMutationValidationError("A trope cannot be merged with itself.")
+    if expected_source_version < 1:
+        raise TropeMutationValidationError("Expected trope version must be at least 1.")
+    if source_trope.version != expected_source_version:
+        raise TropeVersionConflictError(
+            f"Trope version conflict: expected version {expected_source_version}, current version is {source_trope.version}."
+        )
+    if source_trope.confirmation_status != TropeConfirmationStatus.UNCONFIRMED:
+        raise TropeMutationValidationError("Only unconfirmed tropes can be merged.")
+    source_links = list(
+        session.scalars(
+            select(StoryTrope).where(StoryTrope.trope_id == source_trope.id)
+        ).all()
+    )
+    affected_story_ids = {link.story_id for link in source_links}
+    target_links_by_story_id = {
+        link.story_id: link
+        for link in session.scalars(
+            select(StoryTrope).where(
+                StoryTrope.trope_id == target_trope.id,
+                StoryTrope.story_id.in_(affected_story_ids),
+            )
+        ).all()
+    }
+    for source_link in source_links:
+        target_link = target_links_by_story_id.get(source_link.story_id)
+        if target_link is None:
+            session.add(
+                StoryTrope(
+                    story_id=source_link.story_id,
+                    trope_id=target_trope.id,
+                    origin=StoryTropeOrigin.MERGE,
+                    status=source_link.status,
+                    position=source_link.position,
+                )
+            )
+        else:
+            if source_link.position is not None and (
+                target_link.position is None or source_link.position < target_link.position
+            ):
+                target_link.position = source_link.position
+            if source_link.status == AssignmentStatus.VALIDATED:
+                target_link.status = AssignmentStatus.VALIDATED
+        session.delete(source_link)
+    session.flush()
+
+    affected_stories = session.scalars(
+        select(Story)
+        .where(Story.id.in_(affected_story_ids))
+        .options(
+            selectinload(Story.trope_links).selectinload(StoryTrope.trope),
+            selectinload(Story.keyword_links).selectinload(StoryKeyword.keyword),
+            selectinload(Story.theme_links).selectinload(StoryTheme.theme),
+        )
+    ).all()
+    for story in affected_stories:
+        sync_story_derived_fields(story)
+        story.version += 1
+
+    target_trope.cached_story_count = int(
+        session.scalar(
+            select(func.count()).select_from(StoryTrope).where(StoryTrope.trope_id == target_trope.id)
+        )
+        or 0
+    )
+    target_trope.version += 1
+    target_trope.updated_by_user_id = actor_user_id
+    _delete_trope_artifacts(session, source_trope.id)
+    session.delete(source_trope)
+    active_dataset.version += 1
+    record_audit_event(
+        session,
+        event_type="trope.merged",
+        actor_user_id=actor_user_id,
+        dataset_id=active_dataset.id,
+        subject_table="tropes",
+        subject_id=source_trope.id,
+        payload={
+            "target_trope_id": target_trope.id,
+            "affected_story_count": len(affected_story_ids),
+            "rebuild_queued": False,
+        },
+    )
+    session.commit()
+    return active_dataset, {
+        "source_trope_id": source_trope_id,
+        "target_trope": _serialize_trope_summary(target_trope),
+        "affected_story_count": len(affected_story_ids),
+    }
 
 
 def update_trope_text(

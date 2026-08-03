@@ -364,7 +364,7 @@ def merge_unconfirmed_keyword(
     expected_source_version: int,
     actor_user_id: str,
 ) -> tuple[Dataset, dict]:
-    """Merge an unconfirmed keyword into a canonical keyword in the active dataset."""
+    """Merge an unconfirmed keyword into another active keyword in the active dataset."""
     active_dataset = _require_active_dataset(session)
     source_keyword = _get_active_keyword(session, active_dataset.id, source_keyword_id)
     target_keyword = _get_active_keyword(session, active_dataset.id, target_keyword_id)
@@ -374,9 +374,6 @@ def merge_unconfirmed_keyword(
         raise KeywordMutationValidationError("A keyword cannot be merged with itself.")
     if source_keyword.confirmation_status != KeywordConfirmationStatus.UNCONFIRMED:
         raise KeywordMutationValidationError("Only unconfirmed keywords can be merged.")
-    if target_keyword.confirmation_status != KeywordConfirmationStatus.CANONICAL:
-        raise KeywordMutationValidationError("A keyword can only be merged into a canonical keyword.")
-
     source_links = list(session.scalars(select(StoryKeyword).where(StoryKeyword.keyword_id == source_keyword.id)).all())
     affected_story_ids = {link.story_id for link in source_links}
     target_story_ids = set(

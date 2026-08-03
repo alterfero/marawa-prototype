@@ -240,54 +240,86 @@ class SearchService:
         *,
         minimum_score: float = 0.0,
     ) -> dict[tuple[str, str], float]:
-        ordered_trope_ids = list(dict.fromkeys(trope_id for trope_id in trope_ids if trope_id))
-        if len(ordered_trope_ids) < 2:
-            return {}
+        _, similarities, _ = self.get_term_pairwise_similarities(
+            session,
+            TermKind.TROPE,
+            trope_ids,
+            minimum_score=minimum_score,
+        )
+        return similarities
+
+    def get_term_pairwise_similarities(
+        self,
+        session: Session,
+        term_kind: TermKind,
+        term_ids: list[str],
+        *,
+        minimum_score: float = 0.0,
+    ) -> tuple[int | None, dict[tuple[str, str], float], set[str]]:
+        """Return current pairwise similarities for one term kind.
+
+        The visualization layer deliberately asks the search service for vectors
+        rather than reading embedding storage directly.  The returned IDs make it
+        possible for callers to distinguish a graph with no similar pairs from a
+        graph whose embeddings need rebuilding.
+        """
+        ordered_term_ids = list(dict.fromkeys(term_id for term_id in term_ids if term_id))
+        if not ordered_term_ids:
+            return None, {}, set()
+
+        if term_kind == TermKind.TROPE:
+            term_id_column = TermEmbedding.trope_id
+        elif term_kind == TermKind.THEME:
+            term_id_column = TermEmbedding.theme_id
+        else:
+            term_id_column = TermEmbedding.keyword_id
 
         embeddings = list(
             session.scalars(
                 select(TermEmbedding).where(
-                TermEmbedding.term_kind == TermKind.TROPE,
-                TermEmbedding.model_name == self.model_name,
-                    TermEmbedding.trope_id.in_(ordered_trope_ids),
+                    TermEmbedding.term_kind == term_kind,
+                    TermEmbedding.model_name == self.model_name,
+                    term_id_column.in_(ordered_term_ids),
+                    TermEmbedding.vector_blob.is_not(None),
+                    TermEmbedding.vector_dimensions.is_not(None),
                 )
             ).all()
         )
         if not embeddings:
-            return {}
+            return None, {}, set()
 
         artifact_version = max(embedding.artifact_version for embedding in embeddings)
-        embeddings = [embedding for embedding in embeddings if embedding.artifact_version == artifact_version]
-        embedding_by_trope_id = {
-            embedding.trope_id: embedding
-            for embedding in embeddings
-            if embedding.trope_id is not None
+        latest_embeddings = [embedding for embedding in embeddings if embedding.artifact_version == artifact_version]
+        embedding_by_term_id = {
+            term_id: embedding
+            for embedding in latest_embeddings
+            if (term_id := self._embedding_term_id(embedding, term_kind)) is not None
         }
-        available_trope_ids = [trope_id for trope_id in ordered_trope_ids if trope_id in embedding_by_trope_id]
-        if len(available_trope_ids) < 2:
-            return {}
+        available_term_ids = [term_id for term_id in ordered_term_ids if term_id in embedding_by_term_id]
+        if len(available_term_ids) < 2:
+            return artifact_version, {}, set(available_term_ids)
 
         matrix = np.vstack(
             [
                 blob_to_vector(
-                    embedding_by_trope_id[trope_id].vector_blob,
-                    embedding_by_trope_id[trope_id].vector_dimensions,
+                    embedding_by_term_id[term_id].vector_blob,
+                    embedding_by_term_id[term_id].vector_dimensions,
                 )
-                for trope_id in available_trope_ids
+                for term_id in available_term_ids
             ]
         ).astype(np.float32)
 
         similarities: dict[tuple[str, str], float] = {}
-        for index, source_trope_id in enumerate(available_trope_ids):
+        for index, source_term_id in enumerate(available_term_ids):
             scores = cosine_similarity(matrix[index], matrix)
-            for target_index in range(index + 1, len(available_trope_ids)):
+            for target_index in range(index + 1, len(available_term_ids)):
                 score = float(scores[target_index])
                 if score < minimum_score:
                     continue
-                target_trope_id = available_trope_ids[target_index]
-                similarities[(source_trope_id, target_trope_id)] = score
+                target_term_id = available_term_ids[target_index]
+                similarities[(source_term_id, target_term_id)] = score
 
-        return similarities
+        return artifact_version, similarities, set(available_term_ids)
 
     def get_similar_trope_scores(
         self,

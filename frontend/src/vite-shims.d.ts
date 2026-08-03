@@ -1,5 +1,6 @@
 declare module "d3-force-3d" {
   type NumericAccessor<Node> = number | ((node: Node) => number);
+  type LinkEndpoint<Node> = string | number | Node;
 
   export interface ForceWithStrength<Node> {
     (alpha: number): void;
@@ -7,9 +8,34 @@ declare module "d3-force-3d" {
     strength(value: NumericAccessor<Node>): ForceWithStrength<Node>;
   }
 
-  export type CollisionForce<Node> = ForceWithStrength<Node>;
+  export interface Simulation<Node> {
+    stop(): this;
+    restart(): this;
+    nodes(): Node[];
+    alpha(value: number): this;
+    alphaTarget(value: number): this;
+    alphaDecay(value: number): this;
+    force(name: string, force: unknown): this;
+    on(type: string, listener: (() => void) | null): this;
+  }
+
+  export interface LinkForce<Node, Link extends { source: LinkEndpoint<Node>; target: LinkEndpoint<Node> }> {
+    id(accessor: (node: Node) => string | number): this;
+    distance(value: NumericAccessor<Link>): this;
+    strength(value: NumericAccessor<Link>): this;
+  }
+
+  export type CollisionForce<Node> = ForceWithStrength<Node> & {
+    radius(value: NumericAccessor<Node>): CollisionForce<Node>;
+  };
   export type AxisForce<Node> = ForceWithStrength<Node>;
 
+  export function forceSimulation<Node>(nodes?: Node[], numDimensions?: number): Simulation<Node>;
+  export function forceLink<Node, Link extends { source: LinkEndpoint<Node>; target: LinkEndpoint<Node> }>(
+    links?: Link[],
+  ): LinkForce<Node, Link>;
+  export function forceManyBody<Node = unknown>(): ForceWithStrength<Node>;
+  export function forceCenter(x?: number, y?: number, z?: number): unknown;
   export function forceCollide<Node = unknown>(radius?: NumericAccessor<Node>): CollisionForce<Node>;
   export function forceX<Node = unknown>(x?: NumericAccessor<Node>): AxisForce<Node>;
   export function forceY<Node = unknown>(y?: NumericAccessor<Node>): AxisForce<Node>;

@@ -20,6 +20,7 @@ import { ThemeManagementView } from "./pages/ThemeManagementView";
 import { ThemeCurationPage } from "./pages/ThemeCurationPage";
 import { KeywordCurationPage } from "./pages/KeywordCurationPage";
 import { KeywordManagementView } from "./pages/KeywordManagementView";
+import { SemanticGraphsPage } from "./pages/SemanticGraphsPage";
 
 const SIDEBAR_STATUS_POLL_INTERVAL_MS = 5000;
 const REBUILD_JOB_POLL_INTERVAL_MS = 2000;
@@ -45,6 +46,7 @@ const NAV_ITEMS: NavItem[] = [
   { route: "/theme-curation", label: "Theme curation", minimumRole: "admin" },
   { route: "/keyword-management", label: "Keyword management", minimumRole: "admin" },
   { route: "/keyword-curation", label: "Keyword curation", minimumRole: "admin" },
+  { route: "/semantic-graphs", label: "Semantic graphs", minimumRole: "admin" },
   { route: "/users", label: "Users", minimumRole: "admin" },
 ];
 
@@ -62,6 +64,7 @@ function minimumRoleForRoute(route: AppRoute): UserRole | null {
     case "/theme-curation":
     case "/keyword-management":
     case "/keyword-curation":
+    case "/semantic-graphs":
     case "/users":
       return "admin";
     default:
@@ -157,6 +160,8 @@ function CurrentPage({
       return <KeywordManagementView />;
     case "/keyword-curation":
       return <KeywordCurationPage />;
+    case "/semantic-graphs":
+      return <SemanticGraphsPage />;
     case "/users":
       return <AdminUsersPage />;
     case "/exploration":

@@ -8,7 +8,21 @@ from sqlalchemy.orm import Session, selectinload
 from app.core.coordinates import parse_space_coord
 from app.core.parsing import clean_text
 from app.core.projection import project_lon_lat_equirectangular
-from app.db.models import Dataset, DatasetStatus, Story, StoryTrope, TermKind, Trope
+from app.db.models import (
+    Dataset,
+    DatasetStatus,
+    Keyword,
+    KeywordConfirmationStatus,
+    Story,
+    StoryKeyword,
+    StoryTheme,
+    StoryTrope,
+    TermKind,
+    Theme,
+    ThemeConfirmationStatus,
+    Trope,
+    TropeConfirmationStatus,
+)
 
 
 TITLE_FIELDS = [
@@ -49,6 +63,137 @@ class StorySelection:
     @property
     def has_location(self) -> bool:
         return self.lat is not None and self.lon is not None
+
+
+def build_semantic_graph(
+    session: Session,
+    search_service,
+    *,
+    item_kind: TermKind,
+    scope: str = "all",
+    similarity_threshold: float = 0.65,
+    max_links_per_node: int = 5,
+) -> dict:
+    """Build a term-level semantic graph for the active dataset.
+
+    Nodes are source-of-truth terms and assignments; the search service supplies
+    similarity so the visualization is independent from embedding storage.
+    """
+    active_dataset = _get_active_dataset(session)
+    if active_dataset is None:
+        raise VisualizationNotFoundError("No active dataset is available for visualization.")
+    if scope not in {"all", "canonical"}:
+        raise VisualizationValidationError("Scope must be either 'all' or 'canonical'.")
+
+    term_model, link_model, link_term_id, canonical_status = _semantic_graph_models(item_kind)
+    statement = select(
+        term_model.id,
+        term_model.version,
+        term_model.text,
+        term_model.confirmation_status,
+    ).where(term_model.dataset_id == active_dataset.id)
+    if scope == "canonical":
+        statement = statement.where(term_model.confirmation_status == canonical_status)
+    term_rows = session.execute(statement.order_by(term_model.text.asc(), term_model.id.asc())).all()
+    term_ids = [row.id for row in term_rows]
+
+    stories_by_term_id: dict[str, list[dict]] = {term_id: [] for term_id in term_ids}
+    if term_ids:
+        story_rows = session.execute(
+            select(
+                link_term_id.label("term_id"),
+                Story.id.label("story_id"),
+                Story.source_row_number.label("source_row_number"),
+                Story.fields_json.label("fields_json"),
+            )
+            .select_from(link_model)
+            .join(Story, Story.id == link_model.story_id)
+            .where(
+                Story.dataset_id == active_dataset.id,
+                link_term_id.in_(term_ids),
+            )
+            .order_by(
+                link_term_id.asc(),
+                case((Story.source_row_number.is_(None), 1), else_=0),
+                Story.source_row_number.asc(),
+                Story.created_at.asc(),
+                Story.id.asc(),
+            )
+        ).all()
+        for story_row in story_rows:
+            fields = story_row.fields_json or {}
+            stories_by_term_id.setdefault(story_row.term_id, []).append(
+                {
+                    "id": story_row.story_id,
+                    "title": _story_title_from_fields(fields, story_row.story_id),
+                    "territory": clean_text(fields.get("territory", "")),
+                }
+            )
+
+    artifact_version, pairwise_similarity, embedded_term_ids = search_service.get_term_pairwise_similarities(
+        session,
+        item_kind,
+        term_ids,
+        minimum_score=similarity_threshold,
+    )
+    warnings: list[str] = []
+    if term_ids and not embedded_term_ids:
+        warnings.append(
+            f"No current {item_kind.value} embeddings are available. Run Rebuild, then refresh this graph."
+        )
+    elif missing_embedding_count := len(set(term_ids) - embedded_term_ids):
+        warnings.append(
+            f"{missing_embedding_count} {item_kind.value} item{'s' if missing_embedding_count != 1 else ''} "
+            "are missing current embeddings. Run Rebuild, then refresh this graph."
+        )
+
+    nodes = [
+        {
+            "id": row.id,
+            "version": int(row.version),
+            "text": row.text,
+            "confirmation_status": row.confirmation_status.value,
+            "story_count": len(stories_by_term_id.get(row.id, [])),
+            "stories": stories_by_term_id.get(row.id, []),
+        }
+        for row in term_rows
+    ]
+
+    candidates = sorted(
+        (
+            (float(similarity), min(source_id, target_id), max(source_id, target_id))
+            for (source_id, target_id), similarity in pairwise_similarity.items()
+        ),
+        key=lambda item: (-item[0], item[1], item[2]),
+    )
+    links: list[dict] = []
+    degree_by_term_id = {term_id: 0 for term_id in term_ids}
+    for similarity, source_id, target_id in candidates:
+        if max_links_per_node <= 0:
+            break
+        if degree_by_term_id[source_id] >= max_links_per_node or degree_by_term_id[target_id] >= max_links_per_node:
+            continue
+        degree_by_term_id[source_id] += 1
+        degree_by_term_id[target_id] += 1
+        links.append(
+            {
+                "source": source_id,
+                "target": target_id,
+                "similarity": round(similarity, 6),
+            }
+        )
+
+    return {
+        "item_kind": item_kind.value,
+        "scope": scope,
+        "similarity_threshold": similarity_threshold,
+        "max_links_per_node": max_links_per_node,
+        "model_name": search_service.model_name,
+        "artifact_version": artifact_version,
+        "nodes": nodes,
+        "links": links,
+        "warnings": warnings,
+    }
 
 
 def build_trope_sequence_graph(
@@ -374,10 +519,23 @@ def _pair_key(left_trope_id: str, right_trope_id: str) -> tuple[str, str]:
     return (left_trope_id, right_trope_id) if left_trope_id < right_trope_id else (right_trope_id, left_trope_id)
 
 
-def _story_title(story: Story) -> str:
-    fields = story.fields_json or {}
+def _semantic_graph_models(item_kind: TermKind):
+    if item_kind == TermKind.TROPE:
+        return Trope, StoryTrope, StoryTrope.trope_id, TropeConfirmationStatus.CANONICAL
+    if item_kind == TermKind.THEME:
+        return Theme, StoryTheme, StoryTheme.theme_id, ThemeConfirmationStatus.CANONICAL
+    if item_kind == TermKind.KEYWORD:
+        return Keyword, StoryKeyword, StoryKeyword.keyword_id, KeywordConfirmationStatus.CANONICAL
+    raise VisualizationValidationError("Unsupported semantic graph item kind.")
+
+
+def _story_title_from_fields(fields: dict, fallback: str) -> str:
     for field_name in TITLE_FIELDS:
         title = clean_text(fields.get(field_name, ""))
         if title:
             return title
-    return story.id
+    return fallback
+
+
+def _story_title(story: Story) -> str:
+    return _story_title_from_fields(story.fields_json or {}, story.id)

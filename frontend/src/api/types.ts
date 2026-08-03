@@ -311,6 +311,13 @@ export interface UpdateTropeConfirmationResponse {
   trope: CanonicalTropeListItem;
 }
 
+export interface MergeUnconfirmedTropeResponse {
+  source_trope_id: string;
+  target_trope: CanonicalTropeListItem;
+  affected_story_count: number;
+  dataset_version: number;
+}
+
 export interface CanonicalKeywordListItem {
   id: string;
   version: number;
@@ -784,5 +791,41 @@ export interface TropeSequenceGraphResponse {
   layout_basis: TropeSequenceGraphLayoutBasis;
   nodes: TropeSequenceGraphNode[];
   links: TropeSequenceGraphLink[];
+  warnings: string[];
+}
+
+export type SemanticGraphItemKind = "theme" | "trope" | "keyword";
+export type SemanticGraphScope = "all" | "canonical";
+
+export interface SemanticGraphStory {
+  id: string;
+  title: string;
+  territory: string;
+}
+
+export interface SemanticGraphNode {
+  id: string;
+  version: number;
+  text: string;
+  confirmation_status: TropeConfirmationStatus | ThemeConfirmationStatus | KeywordConfirmationStatus;
+  story_count: number;
+  stories: SemanticGraphStory[];
+}
+
+export interface SemanticGraphLink {
+  source: string;
+  target: string;
+  similarity: number;
+}
+
+export interface SemanticGraphResponse {
+  item_kind: SemanticGraphItemKind;
+  scope: SemanticGraphScope;
+  similarity_threshold: number;
+  max_links_per_node: number;
+  model_name: string;
+  artifact_version: number | null;
+  nodes: SemanticGraphNode[];
+  links: SemanticGraphLink[];
   warnings: string[];
 }

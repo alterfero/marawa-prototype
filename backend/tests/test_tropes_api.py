@@ -172,6 +172,97 @@ def test_admin_can_update_trope_confirmation_status_with_version_check(monkeypat
     assert stale_body["code"] == "trope_version_conflict"
 
 
+def test_unconfirmed_trope_merges_into_canonical_trope_with_version_check(monkeypatch, tmp_path) -> None:
+    configure_auth_env(monkeypatch)
+    db_path = tmp_path / "tropes-merge-api.db"
+    engine = build_engine(f"sqlite:///{db_path}")
+    session_factory = build_session_factory(engine)
+    app = create_app(db_engine=engine, session_factory=session_factory, job_runner_enabled=False)
+
+    with TestClient(app) as client:
+        authenticate_admin(client)
+        upload_dataset(
+            client,
+            [
+                make_row(title="Source only", tropes="§§ first trope variant"),
+                make_row(title="Both tropes", tropes="§§ first trope\n§§ first trope variant"),
+            ],
+        )
+        tropes = client.get("/api/tropes").json()
+        target = next(item for item in tropes if item["text"] == "first trope")
+        source = next(item for item in tropes if item["text"] == "first trope variant")
+        canonicalized = client.put(
+            f"/api/tropes/{target['id']}/confirmation",
+            json={
+                "expected_trope_version": target["version"],
+                "confirmation_status": "canonical",
+            },
+        )
+        merged = client.post(
+            f"/api/tropes/{source['id']}/merge",
+            json={
+                "expected_source_trope_version": source["version"],
+                "target_trope_id": target["id"],
+            },
+        )
+        stale_merge = client.post(
+            f"/api/tropes/{source['id']}/merge",
+            json={
+                "expected_source_trope_version": source["version"],
+                "target_trope_id": target["id"],
+            },
+        )
+        tropes_after_merge = client.get("/api/tropes").json()
+        stories_after_merge = client.get("/api/stories").json()["items"]
+
+    assert canonicalized.status_code == 200
+    assert merged.status_code == 200
+    assert merged.json()["source_trope_id"] == source["id"]
+    assert merged.json()["target_trope"]["id"] == target["id"]
+    assert merged.json()["target_trope"]["version"] == 3
+    assert merged.json()["affected_story_count"] == 2
+    assert stale_merge.status_code == 404
+    assert stale_merge.json()["code"] == "trope_not_found"
+    assert [(trope["text"], trope["confirmation_status"], trope["story_count"]) for trope in tropes_after_merge] == [
+        ("first trope", "canonical", 2)
+    ]
+    assert {story["fields"][TROPE_FIELD] for story in stories_after_merge} == {"§§ first trope"}
+
+
+def test_unconfirmed_trope_merges_into_unconfirmed_trope(monkeypatch, tmp_path) -> None:
+    configure_auth_env(monkeypatch)
+    engine = build_engine(f"sqlite:///{tmp_path / 'tropes-unconfirmed-merge-api.db'}")
+    session_factory = build_session_factory(engine)
+    app = create_app(db_engine=engine, session_factory=session_factory, job_runner_enabled=False)
+
+    with TestClient(app) as client:
+        authenticate_admin(client)
+        upload_dataset(
+            client,
+            [
+                make_row(title="Source only", tropes="§§ first trope variant"),
+                make_row(title="Both tropes", tropes="§§ first trope\n§§ first trope variant"),
+            ],
+        )
+        tropes = client.get("/api/tropes").json()
+        target = next(item for item in tropes if item["text"] == "first trope")
+        source = next(item for item in tropes if item["text"] == "first trope variant")
+        merged = client.post(
+            f"/api/tropes/{source['id']}/merge",
+            json={
+                "expected_source_trope_version": source["version"],
+                "target_trope_id": target["id"],
+            },
+        )
+        tropes_after_merge = client.get("/api/tropes").json()
+
+    assert merged.status_code == 200
+    assert merged.json()["target_trope"]["id"] == target["id"]
+    assert [(trope["text"], trope["confirmation_status"], trope["story_count"]) for trope in tropes_after_merge] == [
+        ("first trope", "unconfirmed", 2)
+    ]
+
+
 def test_admin_can_rename_canonical_trope_and_story_detail_updates(monkeypatch, tmp_path) -> None:
     configure_auth_env(monkeypatch)
     db_path = tmp_path / "tropes-rename-api.db"

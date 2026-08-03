@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db_session, require_minimum_role
 from app.api.errors import api_error
-from app.db.models import UserRole
+from app.db.models import TermKind, UserRole
 from app.services.visualizations import (
     VisualizationNotFoundError,
     VisualizationValidationError,
+    build_semantic_graph,
     build_trope_sequence_graph,
 )
 
@@ -82,6 +85,46 @@ class TropeSequenceGraphResponse(BaseModel):
     warnings: list[str]
 
 
+class SemanticGraphRequest(BaseModel):
+    item_kind: TermKind
+    scope: Literal["all", "canonical"] = "all"
+    similarity_threshold: float = Field(default=0.65, ge=0.0, le=1.0)
+    max_links_per_node: int = Field(default=5, ge=0, le=12)
+
+
+class SemanticGraphStoryResponse(BaseModel):
+    id: str
+    title: str
+    territory: str
+
+
+class SemanticGraphNodeResponse(BaseModel):
+    id: str
+    version: int
+    text: str
+    confirmation_status: str
+    story_count: int
+    stories: list[SemanticGraphStoryResponse]
+
+
+class SemanticGraphLinkResponse(BaseModel):
+    source: str
+    target: str
+    similarity: float
+
+
+class SemanticGraphResponse(BaseModel):
+    item_kind: TermKind
+    scope: Literal["all", "canonical"]
+    similarity_threshold: float
+    max_links_per_node: int
+    model_name: str
+    artifact_version: int | None
+    nodes: list[SemanticGraphNodeResponse]
+    links: list[SemanticGraphLinkResponse]
+    warnings: list[str]
+
+
 router = APIRouter(prefix="/visualizations", tags=["visualizations"])
 
 
@@ -107,6 +150,30 @@ def build_trope_sequence_graph_endpoint(
                 max_stories=payload.max_stories,
                 max_links_per_node=payload.max_links_per_node,
                 vertical_spacing=payload.vertical_spacing,
+            )
+        )
+    except VisualizationValidationError as exc:
+        raise api_error(400, "visualization_invalid", str(exc)) from exc
+    except VisualizationNotFoundError as exc:
+        raise api_error(404, "visualization_not_found", str(exc)) from exc
+
+
+@router.post("/semantic-graph", response_model=SemanticGraphResponse)
+def build_semantic_graph_endpoint(
+    payload: SemanticGraphRequest,
+    _: object = Depends(require_minimum_role(UserRole.ADMIN)),
+    session: Session = Depends(get_db_session),
+    search_service=Depends(get_search_service),
+) -> SemanticGraphResponse:
+    try:
+        return SemanticGraphResponse(
+            **build_semantic_graph(
+                session,
+                search_service,
+                item_kind=payload.item_kind,
+                scope=payload.scope,
+                similarity_threshold=payload.similarity_threshold,
+                max_links_per_node=payload.max_links_per_node,
             )
         )
     except VisualizationValidationError as exc:

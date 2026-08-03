@@ -191,6 +191,40 @@ def test_unconfirmed_theme_merges_into_canonical_theme(monkeypatch, tmp_path) ->
     assert {story["fields"][THEME_FIELD] for story in stories_after_merge} == {"§§ Creation"}
 
 
+def test_unconfirmed_theme_merges_into_unconfirmed_theme(monkeypatch, tmp_path) -> None:
+    configure_auth_env(monkeypatch)
+    engine = build_engine(f"sqlite:///{tmp_path / 'theme-unconfirmed-merge-api.db'}")
+    session_factory = build_session_factory(engine)
+    app = create_app(db_engine=engine, session_factory=session_factory, job_runner_enabled=False)
+
+    with TestClient(app) as client:
+        authenticate_admin(client)
+        upload_dataset(
+            client,
+            [
+                make_row(title="Origin only", themes="§§ Origin"),
+                make_row(title="Both themes", themes="§§ Creation\n§§ Origin"),
+            ],
+        )
+        themes = client.get("/api/themes").json()
+        target = next(theme for theme in themes if theme["text"] == "Creation")
+        source = next(theme for theme in themes if theme["text"] == "Origin")
+        merged = client.post(
+            f"/api/themes/{source['id']}/merge",
+            json={
+                "expected_source_theme_version": source["version"],
+                "target_theme_id": target["id"],
+            },
+        )
+        themes_after_merge = client.get("/api/themes").json()
+
+    assert merged.status_code == 200
+    assert merged.json()["target_theme"]["id"] == target["id"]
+    assert [(theme["text"], theme["confirmation_status"], theme["story_count"]) for theme in themes_after_merge] == [
+        ("Creation", "unconfirmed", 2)
+    ]
+
+
 def test_story_theme_assignments_are_independent_and_removable(monkeypatch, tmp_path) -> None:
     configure_auth_env(monkeypatch)
     engine = build_engine(f"sqlite:///{tmp_path / 'story-theme-assignment-api.db'}")

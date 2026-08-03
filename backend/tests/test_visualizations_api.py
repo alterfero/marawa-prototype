@@ -4,7 +4,7 @@ from collections import Counter
 
 from fastapi.testclient import TestClient
 
-from app.core.csv_schema import CSV_COLUMNS, KEYWORD_FIELD, TROPE_FIELD
+from app.core.csv_schema import CSV_COLUMNS, KEYWORD_FIELD, THEME_FIELD, TROPE_FIELD
 from app.core.projection import project_lon_lat_equirectangular
 from app.db import StoryTrope, build_engine, build_session_factory
 from app.main import create_app
@@ -26,15 +26,19 @@ def make_row(
     title: str,
     tropes: str = "",
     keywords: str = "",
+    themes: str = "",
     coord: str = "",
     abstract: str = "",
+    territory: str = "",
 ) -> dict[str, str]:
     row = {column: "" for column in CSV_COLUMNS}
     row["Story title (Eng)"] = title
     row[TROPE_FIELD] = tropes
     row[KEYWORD_FIELD] = keywords
+    row[THEME_FIELD] = themes
     row["space coord"] = coord
     row["Abstract (Eng)"] = abstract
+    row["territory"] = territory
     return row
 
 
@@ -275,3 +279,103 @@ def test_trope_sequence_graph_labels_sequence_axis_as_assignment_order_when_posi
     assert body["layout_basis"]["sequence_axis_label"] == "assignment order"
     occurrence_nodes = [node for node in body["nodes"] if node["kind"] == "trope_occurrence"]
     assert [node["sequence_index"] for node in occurrence_nodes] == [0, 1]
+
+
+def test_semantic_graph_returns_term_stories_status_and_similarity_links(monkeypatch, tmp_path) -> None:
+    configure_auth_env(monkeypatch)
+    with build_client(tmp_path, "semantic-graph.db") as client:
+        authenticate_admin(client)
+        upload_dataset(
+            client,
+            [
+                make_row(
+                    title="First story",
+                    tropes="§§ first trope",
+                    themes="§§ Origin",
+                    keywords="moon",
+                    territory="Tahiti",
+                ),
+                make_row(
+                    title="Second story",
+                    tropes="§§ first trope variant",
+                    themes="§§ Origins",
+                    keywords="wolf",
+                    territory="Moorea",
+                ),
+            ],
+        )
+        request_rebuild(client)
+        process_next_job(client)
+
+        tropes = client.get("/api/tropes").json()
+        first_trope = next(item for item in tropes if item["text"] == "first trope")
+        confirmation = client.put(
+            f"/api/tropes/{first_trope['id']}/confirmation",
+            json={
+                "expected_trope_version": first_trope["version"],
+                "confirmation_status": "canonical",
+            },
+        )
+        assert confirmation.status_code == 200
+
+        response = client.post(
+            "/api/visualizations/semantic-graph",
+            json={
+                "item_kind": "trope",
+                "scope": "all",
+                "similarity_threshold": 0.95,
+                "max_links_per_node": 4,
+            },
+        )
+        canonical_only = client.post(
+            "/api/visualizations/semantic-graph",
+            json={
+                "item_kind": "trope",
+                "scope": "canonical",
+            },
+        )
+        theme_graph = client.post(
+            "/api/visualizations/semantic-graph",
+            json={"item_kind": "theme", "scope": "all"},
+        )
+        keyword_graph = client.post(
+            "/api/visualizations/semantic-graph",
+            json={"item_kind": "keyword", "scope": "all"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["item_kind"] == "trope"
+    assert body["scope"] == "all"
+    assert body["artifact_version"] == 1
+    assert {(node["text"], node["confirmation_status"], node["story_count"]) for node in body["nodes"]} == {
+        ("first trope", "canonical", 1),
+        ("first trope variant", "unconfirmed", 1),
+    }
+    first_node = next(node for node in body["nodes"] if node["text"] == "first trope")
+    assert first_node["stories"] == [{"id": first_node["stories"][0]["id"], "title": "First story", "territory": "Tahiti"}]
+    assert len(body["links"]) == 1
+    assert {body["links"][0]["source"], body["links"][0]["target"]} == {
+        first_trope["id"],
+        next(node["id"] for node in body["nodes"] if node["text"] == "first trope variant"),
+    }
+    assert body["links"][0]["similarity"] >= 0.95
+
+    assert canonical_only.status_code == 200
+    canonical_body = canonical_only.json()
+    assert [node["id"] for node in canonical_body["nodes"]] == [first_trope["id"]]
+    assert canonical_body["links"] == []
+
+    assert theme_graph.status_code == 200
+    assert {node["text"] for node in theme_graph.json()["nodes"]} == {"Origin", "Origins"}
+    assert keyword_graph.status_code == 200
+    assert {node["text"] for node in keyword_graph.json()["nodes"]} == {"moon", "wolf"}
+
+
+def test_semantic_graph_is_admin_only(monkeypatch, tmp_path) -> None:
+    configure_auth_env(monkeypatch)
+    with build_client(tmp_path, "semantic-graph-rbac.db") as client:
+        response = client.post("/api/visualizations/semantic-graph", json={"item_kind": "theme"})
+
+    assert response.status_code == 401
+    assert response.json()["code"] == "authentication_required"

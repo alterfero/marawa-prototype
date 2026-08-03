@@ -13,6 +13,7 @@ from app.services.tropes import (
     TropeMutationValidationError,
     ensure_canonical_trope,
     get_trope_detail,
+    merge_unconfirmed_trope,
     set_trope_confirmation_status,
     update_trope_text,
 )
@@ -80,6 +81,18 @@ class UpdateTropeResponse(BaseModel):
 
 class UpdateTropeConfirmationResponse(BaseModel):
     trope: TropeListItemResponse
+
+
+class MergeTropeRequest(BaseModel):
+    expected_source_trope_version: int = Field(ge=1)
+    target_trope_id: str
+
+
+class MergeTropeResponse(BaseModel):
+    source_trope_id: str
+    target_trope: TropeListItemResponse
+    affected_story_count: int
+    dataset_version: int
 
 
 router = APIRouter(prefix="/tropes", tags=["tropes"])
@@ -201,6 +214,36 @@ def update_trope_confirmation(
 
     return UpdateTropeConfirmationResponse(
         trope=TropeListItemResponse(**trope),
+    )
+
+
+@router.post("/{trope_id}/merge", response_model=MergeTropeResponse)
+def merge_unconfirmed_trope_endpoint(
+    trope_id: str,
+    payload: MergeTropeRequest,
+    auth_context: AuthSessionContext = Depends(require_minimum_role_with_csrf(UserRole.ADMIN)),
+    session: Session = Depends(get_db_session),
+) -> MergeTropeResponse:
+    try:
+        dataset, summary = merge_unconfirmed_trope(
+            session,
+            trope_id,
+            target_trope_id=payload.target_trope_id,
+            expected_source_version=payload.expected_source_trope_version,
+            actor_user_id=auth_context.user.id,
+        )
+    except TropeLookupNotFoundError as exc:
+        raise api_error(404, "trope_not_found", str(exc)) from exc
+    except TropeVersionConflictError as exc:
+        raise api_error(409, "trope_version_conflict", str(exc)) from exc
+    except TropeMutationValidationError as exc:
+        raise api_error(400, "trope_merge_invalid", str(exc)) from exc
+
+    return MergeTropeResponse(
+        source_trope_id=summary["source_trope_id"],
+        target_trope=TropeListItemResponse(**summary["target_trope"]),
+        affected_story_count=summary["affected_story_count"],
+        dataset_version=dataset.version,
     )
 
 

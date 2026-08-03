@@ -368,7 +368,7 @@ def merge_unconfirmed_theme(
     expected_source_version: int,
     actor_user_id: str,
 ) -> tuple[Dataset, dict]:
-    """Merge an unconfirmed theme into a canonical theme in the active dataset."""
+    """Merge an unconfirmed theme into another active theme in the active dataset."""
     active_dataset = _require_active_dataset(session)
     source_theme = _get_active_theme(session, active_dataset.id, source_theme_id)
     target_theme = _get_active_theme(session, active_dataset.id, target_theme_id)
@@ -378,9 +378,6 @@ def merge_unconfirmed_theme(
         raise ThemeMutationValidationError("A theme cannot be merged with itself.")
     if source_theme.confirmation_status != ThemeConfirmationStatus.UNCONFIRMED:
         raise ThemeMutationValidationError("Only unconfirmed themes can be merged.")
-    if target_theme.confirmation_status != ThemeConfirmationStatus.CANONICAL:
-        raise ThemeMutationValidationError("A theme can only be merged into a canonical theme.")
-
     source_links = list(
         session.scalars(select(StoryTheme).where(StoryTheme.theme_id == source_theme.id)).all()
     )

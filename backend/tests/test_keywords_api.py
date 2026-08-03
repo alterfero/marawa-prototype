@@ -207,3 +207,30 @@ def test_unconfirmed_keyword_merges_into_canonical_keyword(client: TestClient) -
         ("moon", "canonical", 2)
     ]
     assert {story["fields"][KEYWORD_FIELD] for story in stories_after_merge} == {"moon"}
+
+
+def test_unconfirmed_keyword_merges_into_unconfirmed_keyword(client: TestClient) -> None:
+    upload_dataset(
+        client,
+        [
+            make_row(title="Moon only", keywords="moon"),
+            make_row(title="Both keywords", keywords="lunar ; moon"),
+        ],
+    )
+    keywords = client.get("/api/keywords").json()
+    target = next(keyword for keyword in keywords if keyword["text"] == "moon")
+    source = next(keyword for keyword in keywords if keyword["text"] == "lunar")
+    merged = client.post(
+        f"/api/keywords/{source['id']}/merge",
+        json={
+            "expected_source_keyword_version": source["version"],
+            "target_keyword_id": target["id"],
+        },
+    )
+    keywords_after_merge = client.get("/api/keywords").json()
+
+    assert merged.status_code == 200
+    assert merged.json()["target_keyword"]["id"] == target["id"]
+    assert [(keyword["text"], keyword["confirmation_status"], keyword["story_count"]) for keyword in keywords_after_merge] == [
+        ("moon", "unconfirmed", 2)
+    ]

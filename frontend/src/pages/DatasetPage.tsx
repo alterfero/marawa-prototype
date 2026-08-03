@@ -2,7 +2,6 @@ import { FormEvent, useEffect, useState } from "react";
 
 import {
   ApiError,
-  clearDatasetData,
   getDatasetExportUrl,
   getDatasetStatus,
   getErrorMessage,
@@ -80,7 +79,6 @@ export function DatasetPage({ canManageDataset }: { canManageDataset: boolean })
   const [file, setFile] = useState<File | null>(null);
   const [fileInputKey, setFileInputKey] = useState(0);
   const [busy, setBusy] = useState(false);
-  const [clearing, setClearing] = useState(false);
   const [backendUnavailable, setBackendUnavailable] = useState(false);
   const [statusNotice, setStatusNotice] = useState<PageNotice | null>(null);
   const [actionNotice, setActionNotice] = useState<PageNotice | null>(null);
@@ -237,44 +235,6 @@ export function DatasetPage({ canManageDataset }: { canManageDataset: boolean })
     }
   }
 
-  async function handleClearData() {
-    if (status?.active_dataset_version == null) {
-      return;
-    }
-
-    if (
-      !window.confirm(
-        "This will permanently remove the current dataset, stories, trope assignments, jobs, and computed artifacts. Continue?",
-      )
-    ) {
-      return;
-    }
-
-    try {
-      setClearing(true);
-      setActionNotice(null);
-
-      const emptyStatus = await clearDatasetData();
-      setStatus(emptyStatus);
-      setBackendUnavailable(false);
-      setStatusNotice(null);
-      setCurrentJobId(emptyStatus.latest_job?.id ?? null);
-      setJobDetail(null);
-      setJobError(null);
-      setFile(null);
-      setFileInputKey((value) => value + 1);
-      setActionNotice({
-        tone: "success",
-        title: "Data cleared",
-        body: "The dataset and all derived data were removed. The app is back in its empty initial state.",
-      });
-    } catch (caughtError) {
-      setActionNotice(buildRequestNotice("DELETE /api/dataset", caughtError));
-    } finally {
-      setClearing(false);
-    }
-  }
-
   const effectiveJob = jobDetail ?? (status?.latest_job ?? null);
   const latestRebuildStatus = formatJobStatus(effectiveJob);
   const notice = actionNotice ?? statusNotice;
@@ -343,7 +303,7 @@ export function DatasetPage({ canManageDataset }: { canManageDataset: boolean })
                     type="file"
                   />
                 </label>
-                <button className="button" disabled={busy || clearing || backendUnavailable || mutationsLocked} type="submit">
+                <button className="button" disabled={busy || backendUnavailable || mutationsLocked} type="submit">
                   {busy ? "Uploading..." : "Upload dataset"}
                 </button>
               </form>
@@ -376,20 +336,7 @@ export function DatasetPage({ canManageDataset }: { canManageDataset: boolean })
             </div>
           </section>
 
-          <section className="panel stack">
-            <h2>Clear data</h2>
-            <div className="button-row wrap-row">
-              <button
-                className="button button-danger"
-                disabled={busy || clearing || backendUnavailable || mutationsLocked || status?.active_dataset_version == null}
-                onClick={() => void handleClearData()}
-                type="button"
-              >
-                {clearing ? "Clearing..." : "Clear data"}
-              </button>
-            </div>
-            {jobError ? <p className="notice-inline">Could not refresh rebuild status: {jobError}</p> : null}
-          </section>
+          {jobError ? <p className="notice-inline">Could not refresh rebuild status: {jobError}</p> : null}
         </>
       ) : (
         <section className="panel">

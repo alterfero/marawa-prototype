@@ -28,6 +28,7 @@ import type {
   JobDetail,
   KeywordDetail,
   KeywordConfirmationStatus,
+  MergeUnconfirmedTropeResponse,
   MergeKeywordResponse,
   MergeKeywordsResponse,
   MergeTropesResponse,
@@ -63,6 +64,7 @@ import type {
   ValidateTropesResponse,
   ValidateThemesResponse,
   SearchResponse,
+  SemanticGraphResponse,
   TropeSequenceGraphResponse,
   TropeDetail,
   TropeSearchResponse,
@@ -298,6 +300,23 @@ export function updateTropeConfirmationStatus(
       "Content-Type": "application/json",
     },
     body: JSON.stringify(payload),
+  });
+}
+
+export function mergeUnconfirmedTrope(payload: {
+  source_trope_id: string;
+  expected_source_trope_version: number;
+  target_trope_id: string;
+}): Promise<MergeUnconfirmedTropeResponse> {
+  return request<MergeUnconfirmedTropeResponse>(`/tropes/${payload.source_trope_id}/merge`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      expected_source_trope_version: payload.expected_source_trope_version,
+      target_trope_id: payload.target_trope_id,
+    }),
   });
 }
 
@@ -934,6 +953,21 @@ export function buildTropeSequenceGraph(payload: {
   vertical_spacing?: number;
 }): Promise<TropeSequenceGraphResponse> {
   return request<TropeSequenceGraphResponse>("/visualizations/trope-sequence-graph", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function buildSemanticGraph(payload: {
+  item_kind: "theme" | "trope" | "keyword";
+  scope?: "all" | "canonical";
+  similarity_threshold?: number;
+  max_links_per_node?: number;
+}): Promise<SemanticGraphResponse> {
+  return request<SemanticGraphResponse>("/visualizations/semantic-graph", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
