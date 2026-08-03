@@ -1346,6 +1346,9 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
                 detail.keywords.map((keyword) => (
                   <TermCard
                     key={keyword.id}
+                    onOpen={() => {
+                      window.location.hash = routeHref("/keyword-management", { selected_keyword_id: keyword.id });
+                    }}
                     term={{
                       id: keyword.id,
                       text: keyword.text,
@@ -1538,6 +1541,9 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
                   <TropeCard
                     className="stories-current-trope-card"
                     key={trope.id}
+                    onOpen={() => {
+                      window.location.hash = routeHref("/trope-management", { selected_trope_id: trope.id });
+                    }}
                     trope={trope}
                     actions={canManageTropes ? renderStoryTropeAdminActions(trope) : undefined}
                   />
@@ -1560,6 +1566,9 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
                     className="stories-current-theme-card"
                     key={theme.id}
                     meta={`${theme.story_count} stor${theme.story_count === 1 ? "y" : "ies"}`}
+                    onOpen={() => {
+                      window.location.hash = routeHref("/theme-management", { selected_theme_id: theme.id });
+                    }}
                     term={theme}
                     actions={renderStoryThemeActions(theme)}
                   />

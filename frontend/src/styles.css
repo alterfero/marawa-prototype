@@ -242,19 +242,23 @@ p {
   background: rgba(255, 255, 255, 0.72);
 }
 
-.trope-card {
+.trope-card,
+.term-card-clickable {
   cursor: pointer;
   transition: transform 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
 }
 
 .trope-card:hover,
-.trope-card:focus-visible {
+.trope-card:focus-visible,
+.term-card-clickable:hover,
+.term-card-clickable:focus-visible {
   transform: translateY(-1px);
   border-color: rgba(26, 103, 109, 0.42);
   box-shadow: 0 8px 18px rgba(34, 67, 74, 0.08);
 }
 
-.trope-card:focus-visible {
+.trope-card:focus-visible,
+.term-card-clickable:focus-visible {
   outline: 2px solid rgba(46, 126, 131, 0.26);
   outline-offset: 2px;
 }
@@ -660,6 +664,17 @@ p {
 
 .theme-curation-target-actions {
   justify-content: flex-start;
+}
+
+.theme-management-confirmation-control,
+.theme-management-similar-actions {
+  display: grid;
+  gap: 0.65rem;
+  margin-top: 0.75rem;
+}
+
+.theme-management-similar-actions .button {
+  justify-self: start;
 }
 
 .keyword-curation-target-actions {

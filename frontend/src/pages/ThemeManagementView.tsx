@@ -747,17 +747,18 @@ export function ThemeManagementView() {
             <section className="panel">
               <TermCard
                 actions={
-                  <>
-                    <span className={`story-completeness-badge trope-confirmation-badge trope-confirmation-${selectedTheme.confirmation_status}`}>
-                      {confirmationStatusLabel(selectedTheme.confirmation_status)}
-                    </span>
-                    {renderConfirmationActions(selectedTheme)}
-                  </>
+                  <span className={`story-completeness-badge trope-confirmation-badge trope-confirmation-${selectedTheme.confirmation_status}`}>
+                    {confirmationStatusLabel(selectedTheme.confirmation_status)}
+                  </span>
                 }
                 className="subdued trope-management-selected-card"
                 meta={`${selectedTheme.story_count} stor${selectedTheme.story_count === 1 ? "y" : "ies"} total`}
                 term={selectedTheme}
-              />
+              >
+                <div className="theme-management-confirmation-control">
+                  {renderConfirmationActions(selectedTheme)}
+                </div>
+              </TermCard>
 
               <div className="panel-header">
                 <h3>Stories</h3>
@@ -837,17 +838,16 @@ export function ThemeManagementView() {
                       key={theme.id}
                       meta={`Similarity ${theme.similarity_score.toFixed(2)}`}
                       term={theme}
-                      actions={
-                        <div className="button-row wrap-row">
+                    >
+                      <div className="theme-management-similar-actions">
                           {renderConfirmationActions(theme)}
                           {selectedTheme.confirmation_status === "canonical" && theme.confirmation_status === "unconfirmed" ? (
                             <button className="button" disabled={mutationDisabled} onClick={() => void handleMergeSimilarTheme(theme)} type="button">
                               Replace with selected theme
                             </button>
                           ) : null}
-                        </div>
-                      }
-                    />
+                      </div>
+                    </TermCard>
                   ))}
                 </div>
               </div>
