@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.core.coordinates import parse_space_coord
 from app.core.csv_schema import CSV_COLUMNS, DATE_OF_RECORDING_FIELD, KEYWORD_FIELD, THEME_FIELD, TROPE_FIELD
-from app.core.dates import is_iso_calendar_date
+from app.core.dates import YearInterval, format_year_interval, parse_year_interval
 from app.core.parsing import (
     clean_text,
     dedupe_preserve_order,
@@ -177,11 +177,14 @@ def create_story(
     active_dataset = _require_active_dataset(session)
     _assert_dataset_version(active_dataset, expected_dataset_version)
     normalized_fields = _normalize_story_fields(fields)
-    _validate_recording_date(normalized_fields[DATE_OF_RECORDING_FIELD])
+    recording_interval = _validate_recording_year_interval(normalized_fields[DATE_OF_RECORDING_FIELD])
+    normalized_fields[DATE_OF_RECORDING_FIELD] = _format_recording_year_interval(recording_interval)
 
     story = Story(
         dataset_id=active_dataset.id,
         fields_json=normalized_fields,
+        recording_year_start=None if recording_interval is None else recording_interval.year1,
+        recording_year_end=None if recording_interval is None else recording_interval.year2,
         row_hash="",
     )
     session.add(story)
@@ -341,7 +344,10 @@ def update_story(
     if not field_updates and completeness is None:
         raise StoryMutationValidationError("Provide at least one editable story field or completeness update.")
     if DATE_OF_RECORDING_FIELD in field_updates:
-        _validate_recording_date(field_updates[DATE_OF_RECORDING_FIELD])
+        recording_interval = _validate_recording_year_interval(field_updates[DATE_OF_RECORDING_FIELD])
+        field_updates[DATE_OF_RECORDING_FIELD] = _format_recording_year_interval(recording_interval)
+    else:
+        recording_interval = None
 
     story_fields = _build_story_fields(story)
     previous_field_values: dict[str, str] = {}
@@ -349,6 +355,9 @@ def update_story(
         previous_field_values = {column: story_fields.get(column, "") for column in field_updates}
         story_fields.update(field_updates)
         story.fields_json = story_fields
+        if DATE_OF_RECORDING_FIELD in field_updates:
+            story.recording_year_start = None if recording_interval is None else recording_interval.year1
+            story.recording_year_end = None if recording_interval is None else recording_interval.year2
         if THEME_FIELD in field_updates:
             affected_theme_ids = _replace_story_themes_from_text(
                 session,
@@ -1096,9 +1105,21 @@ def _normalize_story_field_updates(fields: Mapping[str, object] | None) -> dict[
     }
 
 
-def _validate_recording_date(value: str) -> None:
-    if value and not is_iso_calendar_date(value):
-        raise StoryMutationValidationError("Date of recording must be a valid date in YYYY-MM-DD format.")
+def _validate_recording_year_interval(value: str) -> YearInterval | None:
+    if not value:
+        return None
+    interval = parse_year_interval(value, require_increasing=True)
+    if interval is None:
+        raise StoryMutationValidationError(
+            "Date of recording must be a year interval in [year1, year2] format, with years between 1800 and 2050 and year2 greater than year1."
+        )
+    return interval
+
+
+def _format_recording_year_interval(interval: YearInterval | None) -> str:
+    if interval is None:
+        return ""
+    return format_year_interval(interval.year1, interval.year2)
 
 
 def _normalize_term_list(values: list[str] | None) -> list[str]:
@@ -1446,6 +1467,10 @@ def _ordered_theme_links(story: Story) -> list[StoryTheme]:
 
 def _build_story_fields(story: Story) -> dict[str, str]:
     row = {column: clean_text((story.fields_json or {}).get(column, "")) for column in CSV_COLUMNS}
+    if story.recording_year_start is not None and story.recording_year_end is not None:
+        row[DATE_OF_RECORDING_FIELD] = format_year_interval(story.recording_year_start, story.recording_year_end)
+    else:
+        row[DATE_OF_RECORDING_FIELD] = ""
     row[TROPE_FIELD] = serialize_tropes([link.trope.text for link in _ordered_trope_links(story)])
     row[KEYWORD_FIELD] = serialize_keywords([link.keyword.text for link in _ordered_keyword_links(story)])
     row[THEME_FIELD] = serialize_themes([link.theme.text for link in _ordered_theme_links(story)])

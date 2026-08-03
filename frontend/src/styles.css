@@ -928,22 +928,15 @@ p {
   align-items: center;
 }
 
-.date-manual-input {
-  min-width: 0;
-}
-
-.date-actions {
+.year-interval-inputs {
   display: flex;
   gap: 0.75rem;
   align-items: center;
 }
 
-.date-picker-proxy {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  opacity: 0;
-  pointer-events: none;
+.year-interval-inputs .input {
+  min-width: 0;
+  width: 9rem;
 }
 
 .input-readonly-button {

@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.core.csv_schema import (
     CSV_COLUMNS,
     CSV_IMPORT_ALIASES,
+    DATE_OF_RECORDING_FIELD,
     FULL_EXPORT_COLUMNS,
     KEYWORD_FIELD,
     MARAWA_STORY_METADATA_FIELD,
@@ -22,6 +23,7 @@ from app.core.csv_schema import (
     THEME_FIELD,
     TROPE_FIELD,
 )
+from app.core.dates import format_year_interval, normalize_imported_year_interval
 from app.core.parsing import (
     clean_text,
     normalize_text,
@@ -431,7 +433,11 @@ def import_csv_bytes(
 
     used_source_row_numbers: set[int] = set()
     for row in rows:
-        fields = row.fields
+        fields = dict(row.fields)
+        recording_interval = normalize_imported_year_interval(fields.get(DATE_OF_RECORDING_FIELD, ""))
+        fields[DATE_OF_RECORDING_FIELD] = (
+            "" if recording_interval is None else format_year_interval(recording_interval.year1, recording_interval.year2)
+        )
         tropes = split_tropes(fields.get(TROPE_FIELD, ""))
         keywords = split_keywords(fields.get(KEYWORD_FIELD, ""))
         themes = split_themes(fields.get(THEME_FIELD, ""))
@@ -454,6 +460,8 @@ def import_csv_bytes(
             dataset_id=dataset.id,
             source_row_number=source_row_number,
             fields_json=dict(fields),
+            recording_year_start=None if recording_interval is None else recording_interval.year1,
+            recording_year_end=None if recording_interval is None else recording_interval.year2,
             row_hash=_row_hash(fields),
             completeness=completeness,
         )
@@ -680,6 +688,10 @@ def export_active_dataset_to_csv_bytes(session: Session, *, include_marawa_metad
 
     for story_index, story in enumerate(stories):
         row = {column: clean_text(story.fields_json.get(column, "")) for column in CSV_COLUMNS}
+        if story.recording_year_start is not None and story.recording_year_end is not None:
+            row[DATE_OF_RECORDING_FIELD] = format_year_interval(story.recording_year_start, story.recording_year_end)
+        else:
+            row[DATE_OF_RECORDING_FIELD] = ""
         trope_links = _ordered_trope_links(story)
         keyword_links = _ordered_keyword_links(story)
         theme_links = _ordered_theme_links(story)

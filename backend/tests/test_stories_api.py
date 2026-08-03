@@ -296,8 +296,8 @@ def test_manual_story_can_be_saved_section_by_section_and_revised(client: TestCl
     assert revised_story["fields"]["species"] == "fish"
 
 
-@pytest.mark.parametrize("recording_date", ["2023-02-29", "2024/02/29", "2024-2-29"])
-def test_create_story_rejects_invalid_recording_date(client: TestClient, recording_date: str) -> None:
+@pytest.mark.parametrize("recording_date", ["[1799, 1801]", "[1971, 1971]", "[1980, 1971]", "1971-1980"])
+def test_create_story_rejects_invalid_recording_year_interval(client: TestClient, recording_date: str) -> None:
     upload_dataset(client, [make_row(title="Imported Story")])
 
     response = client.post(
@@ -314,15 +314,16 @@ def test_create_story_rejects_invalid_recording_date(client: TestClient, recordi
     assert response.status_code == 400
     assert response.json() == {
         "code": "story_mutation_invalid",
-        "message": "Date of recording must be a valid date in YYYY-MM-DD format.",
+        "message": "Date of recording must be a year interval in [year1, year2] format, with years between 1800 and 2050 and year2 greater than year1.",
     }
 
 
-def test_story_date_update_enforces_iso_dates_without_blocking_legacy_imports(client: TestClient) -> None:
+def test_story_date_update_enforces_year_intervals_without_blocking_legacy_imports(client: TestClient) -> None:
     imported_story = make_row(title="Imported Story", territory="Tahiti")
     imported_story[DATE_OF_RECORDING_FIELD] = "4 March 1998"
     upload_dataset(client, [imported_story])
     story = client.get("/api/stories").json()["items"][0]
+    assert story["fields"][DATE_OF_RECORDING_FIELD] == "[1998, 1998]"
 
     non_date_update = client.patch(
         f"/api/stories/{story['id']}",
@@ -332,30 +333,30 @@ def test_story_date_update_enforces_iso_dates_without_blocking_legacy_imports(cl
         },
     )
     assert non_date_update.status_code == 200
-    assert non_date_update.json()["story"]["fields"][DATE_OF_RECORDING_FIELD] == "4 March 1998"
+    assert non_date_update.json()["story"]["fields"][DATE_OF_RECORDING_FIELD] == "[1998, 1998]"
 
     invalid_update = client.patch(
         f"/api/stories/{story['id']}",
         json={
             "expected_story_version": 2,
-            "fields": {DATE_OF_RECORDING_FIELD: "2023-02-29"},
+            "fields": {DATE_OF_RECORDING_FIELD: "[2024, 2024]"},
         },
     )
     assert invalid_update.status_code == 400
     assert invalid_update.json() == {
         "code": "story_mutation_invalid",
-        "message": "Date of recording must be a valid date in YYYY-MM-DD format.",
+        "message": "Date of recording must be a year interval in [year1, year2] format, with years between 1800 and 2050 and year2 greater than year1.",
     }
 
     valid_update = client.patch(
         f"/api/stories/{story['id']}",
         json={
             "expected_story_version": 2,
-            "fields": {DATE_OF_RECORDING_FIELD: "2024-02-29"},
+            "fields": {DATE_OF_RECORDING_FIELD: "[1971, 1980]"},
         },
     )
     assert valid_update.status_code == 200
-    assert valid_update.json()["story"]["fields"][DATE_OF_RECORDING_FIELD] == "2024-02-29"
+    assert valid_update.json()["story"]["fields"][DATE_OF_RECORDING_FIELD] == "[1971, 1980]"
 
 
 def test_create_story_returns_409_for_stale_expected_dataset_version(client: TestClient) -> None:

@@ -26,7 +26,7 @@ import {
 import {
   applyLocationDraftToFields,
   buildLocationDraft,
-  isValidRecordingDate,
+  isValidRecordingYearInterval,
   type LocationDraft,
   StoryFieldInput,
   StoryLocationPickerModal,
@@ -194,10 +194,10 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
   const canManageThemes = roleAtLeast(user?.role, "admin");
   const changedFieldDraft = detail ? changedStoryFields(fieldDraft, detail.fields) : {};
   const fieldsDirty = Object.keys(changedFieldDraft).length > 0;
-  const hasInvalidRecordingDate =
+  const hasInvalidRecordingYearInterval =
     DATE_OF_RECORDING_FIELD in changedFieldDraft &&
     Boolean(changedFieldDraft[DATE_OF_RECORDING_FIELD]) &&
-    !isValidRecordingDate(changedFieldDraft[DATE_OF_RECORDING_FIELD]);
+    !isValidRecordingYearInterval(changedFieldDraft[DATE_OF_RECORDING_FIELD]);
   const draftFiltersAreComplete = storyFieldFiltersAreComplete(draftFilters);
 
   function resetKeywordEditor() {
@@ -601,11 +601,11 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
     if (!detail) {
       return;
     }
-    if (hasInvalidRecordingDate) {
+    if (hasInvalidRecordingYearInterval) {
       setNotice({
         tone: "error",
-        title: "Invalid recording date",
-        body: "Enter the recording date as a valid YYYY-MM-DD value before saving.",
+        title: "Invalid recording-year interval",
+        body: "Enter two years from 1800 to 2050, with year 2 greater than year 1, before saving.",
       });
       return;
     }
@@ -647,7 +647,10 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
       const result = await createStory({
         expected_dataset_version: datasetStatus.active_dataset_version,
         fields: Object.fromEntries(
-          SOURCE_AND_PROVENANCE_FIELDS.map((field) => [field, detail.fields[field] || ""]),
+          SOURCE_AND_PROVENANCE_FIELDS.filter((field) => field !== DATE_OF_RECORDING_FIELD).map((field) => [
+            field,
+            detail.fields[field] || "",
+          ]),
         ),
         tropes: [],
         keywords: [],
@@ -1299,7 +1302,7 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
                   <button className="button button-ghost" onClick={() => setShowFieldEditor((current) => !current)} type="button">
                     {showFieldEditor ? "Hide editor" : "Show editor"}
                   </button>
-                  <button className="button" disabled={interactionDisabled || !fieldsDirty || hasInvalidRecordingDate} onClick={() => void handleSaveStoryFields()} type="button">
+                  <button className="button" disabled={interactionDisabled || !fieldsDirty || hasInvalidRecordingYearInterval} onClick={() => void handleSaveStoryFields()} type="button">
                     Save story fields
                   </button>
                 </div>

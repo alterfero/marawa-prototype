@@ -15,7 +15,10 @@ const PLACE_OF_RECORDING_FIELD = "place of recording";
 const SPACE_COORD_FIELD = "space coord";
 const LOCATION_PICKER_DEFAULT_CENTER: CoordinatePair = [0, 0];
 const LOCATION_PICKER_DEFAULT_ZOOM = 2;
-const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const YEAR_INTERVAL_RE = /^\[\s*(\d{4})\s*,\s*(\d{4})\s*\]$/;
+const YEAR_INTERVAL_INPUT_RE = /^\[\s*([^,]*)\s*,\s*([^\]]*)\s*\]$/;
+const MIN_RECORDING_YEAR = 1800;
+const MAX_RECORDING_YEAR = 2050;
 const MANUAL_COORDINATE_PAIR_RE = /^\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*,\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*$/;
 
 function applyCoordinateDirection(value: number, direction: string): number {
@@ -107,35 +110,36 @@ function fieldInputId(prefix: string, field: string): string {
   return `${prefix}-${normalizedField}`;
 }
 
-function openNativeDatePicker(input: HTMLInputElement | null) {
-  if (!input) {
-    return;
+export function isValidRecordingYearInterval(value: string): boolean {
+  const match = YEAR_INTERVAL_RE.exec(value.trim());
+  if (!match) {
+    return false;
   }
-  const pickerInput = input as HTMLInputElement & { showPicker?: () => void };
-  if (pickerInput.showPicker) {
-    pickerInput.showPicker();
-    return;
+  const year1 = Number(match[1]);
+  const year2 = Number(match[2]);
+  if (
+    !Number.isInteger(year1) ||
+    !Number.isInteger(year2) ||
+    year1 < MIN_RECORDING_YEAR ||
+    year1 > MAX_RECORDING_YEAR ||
+    year2 < MIN_RECORDING_YEAR ||
+    year2 > MAX_RECORDING_YEAR
+  ) {
+    return false;
   }
-  input.focus();
-  input.click();
+  return year2 > year1;
 }
 
-export function isValidRecordingDate(value: string): boolean {
-  if (!ISO_DATE_RE.test(value)) {
-    return false;
-  }
+function recordingYearInputs(value: string): [string, string] {
+  const match = YEAR_INTERVAL_INPUT_RE.exec(value);
+  return match ? [match[1].trim(), match[2].trim()] : ["", ""];
+}
 
-  const [year, month, day] = value.split("-").map(Number);
-  if (year < 1) {
-    return false;
+function formatRecordingYearInputs(year1: string, year2: string): string {
+  if (!year1 && !year2) {
+    return "";
   }
-  const parsed = new Date(`${value}T00:00:00Z`);
-  return (
-    !Number.isNaN(parsed.getTime()) &&
-    parsed.getUTCFullYear() === year &&
-    parsed.getUTCMonth() === month - 1 &&
-    parsed.getUTCDate() === day
-  );
+  return `[${year1}, ${year2}]`;
 }
 
 function LocationPickerMap({
@@ -248,57 +252,64 @@ export function StoryFieldInput({
 }) {
   const inputId = fieldInputId(inputIdPrefix, field);
   const fieldLabel = getStoryFieldLabel(field);
-  const datePickerRef = useRef<HTMLInputElement | null>(null);
 
   if (field === DATE_OF_RECORDING_FIELD) {
-    const dateError = value && !isValidRecordingDate(value) ? "Enter a valid date in YYYY-MM-DD format (for example, 2026-08-01)." : null;
+    const [year1, year2] = recordingYearInputs(value);
+    const intervalError =
+      value && !isValidRecordingYearInterval(value)
+        ? "Correct the highlighted years before saving."
+        : null;
 
     return (
-      <div className="field">
-        <label htmlFor={inputId}>{fieldLabel}</label>
-        <div className="date-actions">
+      <div className="field field-span-full">
+        <label htmlFor={`${inputId}-year1`}>{fieldLabel}</label>
+        <div className="year-interval-inputs">
           <input
-            aria-hidden="true"
-            aria-label="Choose a recording date from the calendar"
-            className="date-picker-proxy"
+            aria-describedby={intervalError ? `${inputId}-help ${inputId}-error` : `${inputId}-help`}
+            aria-invalid={Boolean(intervalError)}
+            className="input"
             disabled={disabled}
-            onChange={(event) => onChange(event.target.value)}
-            ref={datePickerRef}
-            tabIndex={-1}
-            type="date"
-            value={isValidRecordingDate(value) ? value : ""}
+            id={`${inputId}-year1`}
+            inputMode="numeric"
+            max={MAX_RECORDING_YEAR}
+            min={MIN_RECORDING_YEAR}
+            onChange={(event) => onChange(formatRecordingYearInputs(event.target.value, year2))}
+            placeholder="Year 1"
+            step="1"
+            type="number"
+            value={year1}
           />
-          <button className="button button-ghost" disabled={disabled} onClick={() => openNativeDatePicker(datePickerRef.current)} type="button">
-            Choose date
-          </button>
+          <span aria-hidden="true">to</span>
+          <input
+            aria-describedby={intervalError ? `${inputId}-help ${inputId}-error` : `${inputId}-help`}
+            aria-invalid={Boolean(intervalError)}
+            className="input"
+            disabled={disabled}
+            id={`${inputId}-year2`}
+            inputMode="numeric"
+            max={MAX_RECORDING_YEAR}
+            min={MIN_RECORDING_YEAR}
+            onChange={(event) => onChange(formatRecordingYearInputs(year1, event.target.value))}
+            placeholder="Year 2"
+            step="1"
+            type="number"
+            value={year2}
+          />
           {value ? (
             <button className="button button-ghost" disabled={disabled} onClick={() => onChange("")} type="button">
-              Clear date
+              Clear years
             </button>
           ) : null}
         </div>
-        <input
-          id={inputId}
-          aria-describedby={dateError ? `${inputId}-help ${inputId}-error` : `${inputId}-help`}
-          aria-invalid={Boolean(dateError)}
-          className="input date-manual-input"
-          disabled={disabled}
-          onChange={(event) => onChange(event.target.value)}
-          onBlur={(event) => onChange(event.target.value.trim())}
-          pattern={"\\d{4}-\\d{2}-\\d{2}"}
-          placeholder="YYYY-MM-DD"
-          type="text"
-          value={value}
-        />
-        <p className="muted" id={`${inputId}-help`}>Enter a date as YYYY-MM-DD, or choose it from the calendar.</p>
-        {dateError ? <p className="form-error" id={`${inputId}-error`} role="alert">{dateError}</p> : null}
+        <p className="muted" id={`${inputId}-help`}>Enter whole years from 1800 to 2050, with year 2 greater than year 1.</p>
+        {intervalError ? <p className="form-error" id={`${inputId}-error`} role="alert">{intervalError}</p> : null}
       </div>
     );
   }
 
   if (field === PLACE_OF_RECORDING_FIELD) {
     return (
-      <div className="field">
+      <div className="field field-span-full">
         <label htmlFor={inputId}>{fieldLabel}</label>
         <div className="input-with-action">
           <input className="input" disabled={disabled} id={inputId} onChange={(event) => onChange(event.target.value)} value={value} />

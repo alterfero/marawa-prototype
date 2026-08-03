@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 from app.core.csv_schema import (
     CSV_COLUMNS,
+    DATE_OF_RECORDING_FIELD,
     FULL_EXPORT_COLUMNS,
     KEYWORD_FIELD,
     MARAWA_STORY_METADATA_FIELD,
@@ -141,6 +142,33 @@ def test_import_csv_accepts_extra_columns_and_reordered_legacy_fields(tmp_path) 
     reader = csv.DictReader(io.StringIO(exported_bytes.decode("utf-8-sig")))
     assert reader.fieldnames == CSV_COLUMNS
     assert "Extra Column" not in reader.fieldnames
+
+
+def test_import_and_export_use_recording_year_intervals(tmp_path) -> None:
+    csv_bytes = make_csv_bytes(
+        [
+            {
+                **{column: "" for column in CSV_COLUMNS},
+                "Story title (Eng)": "Legacy date story",
+                DATE_OF_RECORDING_FIELD: "4 March 1998",
+            },
+            {
+                **{column: "" for column in CSV_COLUMNS},
+                "Story title (Eng)": "Interval story",
+                DATE_OF_RECORDING_FIELD: "[1971, 1980]",
+            },
+        ]
+    )
+
+    with make_session(tmp_path) as session:
+        dataset = import_csv_bytes(session, csv_bytes, source_filename="dates.csv")
+        activate_dataset(session, dataset)
+        stories = session.scalars(select(Story).where(Story.dataset_id == dataset.id).order_by(Story.source_row_number)).all()
+        exported = export_active_dataset_to_csv_bytes(session)
+
+    assert [(story.recording_year_start, story.recording_year_end) for story in stories] == [(1998, 1998), (1971, 1980)]
+    reader = csv.DictReader(io.StringIO(exported.decode("utf-8-sig")))
+    assert [row[DATE_OF_RECORDING_FIELD] for row in reader] == ["[1998, 1998]", "[1971, 1980]"]
 
 
 def test_theme_import_is_normalized_and_exported_through_legacy_theme_column(tmp_path) -> None:
@@ -370,6 +398,7 @@ def test_export_csv_uses_exact_legacy_header_and_reconstructs_terms_from_links(t
 def test_full_export_round_trips_story_and_term_metadata(tmp_path) -> None:
     row = {column: "" for column in CSV_COLUMNS}
     row["Story title (Eng)"] = "Lossless Story"
+    row[DATE_OF_RECORDING_FIELD] = "[1971, 1980]"
     row[KEYWORD_FIELD] = "wolf ; moon"
     row[TROPE_FIELD] = "§§ first trope\n§§ second trope"
     row[THEME_FIELD] = "§§ Creation\n§§ Ocean"
@@ -420,6 +449,7 @@ def test_full_export_round_trips_story_and_term_metadata(tmp_path) -> None:
     term_catalog = json.loads(exported_rows[0][MARAWA_TERM_CATALOG_FIELD])
 
     assert reader.fieldnames == FULL_EXPORT_COLUMNS
+    assert exported_rows[0][DATE_OF_RECORDING_FIELD] == "[1971, 1980]"
     assert story_metadata == {
         "schema_version": 1,
         "completeness": "complete",
@@ -468,6 +498,11 @@ def test_full_export_round_trips_story_and_term_metadata(tmp_path) -> None:
     assert imported_story is not None
     assert imported_story.completeness == StoryCompleteness.COMPLETE
     assert imported_story.source_row_number == 1
+    assert (
+        imported_story.recording_year_start,
+        imported_story.recording_year_end,
+        imported_story.fields_json[DATE_OF_RECORDING_FIELD],
+    ) == (1971, 1980, "[1971, 1980]")
     assert imported_trope_assignments == [
         ("first trope", StoryTropeOrigin.CSV_IMPORT, AssignmentStatus.VALIDATED),
         ("second trope", StoryTropeOrigin.SEMANTIC_SUGGESTION, AssignmentStatus.PENDING),

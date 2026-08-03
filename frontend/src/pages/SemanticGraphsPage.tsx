@@ -639,27 +639,57 @@ export function SemanticGraphsPage() {
     try {
       setMutating(true);
       setNotice(null);
+      let updatedNode: Pick<SemanticGraphNode, "id" | "version" | "confirmation_status" | "story_count">;
       if (itemKind === "trope") {
-        await updateTropeConfirmationStatus(node.id, {
+        const response = await updateTropeConfirmationStatus(node.id, {
           expected_trope_version: node.version,
           confirmation_status: nextStatus,
         });
+        updatedNode = response.trope;
       } else if (itemKind === "theme") {
-        await updateThemeConfirmationStatus(node.id, {
+        const response = await updateThemeConfirmationStatus(node.id, {
           expected_theme_version: node.version,
           confirmation_status: nextStatus,
         });
+        updatedNode = response.theme;
       } else {
-        await updateKeywordConfirmationStatus(node.id, {
+        const response = await updateKeywordConfirmationStatus(node.id, {
           expected_keyword_version: node.version,
           confirmation_status: nextStatus,
         });
+        updatedNode = response.keyword;
       }
+      setGraph((currentGraph) => {
+        if (!currentGraph) {
+          return currentGraph;
+        }
+        if (currentGraph.scope === "canonical" && updatedNode.confirmation_status === "unconfirmed") {
+          return {
+            ...currentGraph,
+            nodes: currentGraph.nodes.filter((graphNode) => graphNode.id !== updatedNode.id),
+            links: currentGraph.links.filter(
+              (link) => link.source !== updatedNode.id && link.target !== updatedNode.id,
+            ),
+          };
+        }
+        return {
+          ...currentGraph,
+          nodes: currentGraph.nodes.map((graphNode) =>
+            graphNode.id === updatedNode.id
+              ? {
+                  ...graphNode,
+                  confirmation_status: updatedNode.confirmation_status,
+                  story_count: updatedNode.story_count,
+                  version: updatedNode.version,
+                }
+              : graphNode,
+          ),
+        };
+      });
       setNotice({
         tone: "success",
         title: `${node.text} is now ${nextStatus}.`,
       });
-      await refreshGraph();
     } catch (error) {
       setNotice({
         tone: "error",

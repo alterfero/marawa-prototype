@@ -17,7 +17,7 @@ import {
 import {
   applyLocationDraftToFields,
   buildLocationDraft,
-  isValidRecordingDate,
+  isValidRecordingYearInterval,
   type LocationDraft,
   StoryFieldInput,
   StoryLocationPickerModal,
@@ -103,8 +103,9 @@ export function CreateEntryPage() {
   const datasetVersion = datasetStatus?.active_dataset_version ?? null;
   const draftKeywordMarkers = new Set(draftKeywords.map((keyword) => normalizeDraftText(keyword.text)));
   const draftTropeMarkers = new Set(draftTropes.map((trope) => normalizeDraftText(trope.text)));
-  const recordingDate = fields[DATE_OF_RECORDING_FIELD] || "";
-  const hasInvalidRecordingDate = Boolean(recordingDate) && !isValidRecordingDate(recordingDate);
+  const recordingYearInterval = fields[DATE_OF_RECORDING_FIELD] || "";
+  const hasInvalidRecordingYearInterval =
+    Boolean(recordingYearInterval) && !isValidRecordingYearInterval(recordingYearInterval);
   const cannotCreateStory = savedStory === null && (statusLoading || datasetVersion == null);
   const interactionDisabled = busy || entryLoading;
 
@@ -372,8 +373,13 @@ export function CreateEntryPage() {
   }
 
   function isSectionSaveDisabled(section: (typeof LEGACY_METADATA_SECTIONS)[number]): boolean {
-    const includesRecordingDate = section.fields.includes(DATE_OF_RECORDING_FIELD);
-    return interactionDisabled || maintenance.active || cannotCreateStory || (includesRecordingDate && hasInvalidRecordingDate);
+    const includesRecordingYearInterval = section.fields.includes(DATE_OF_RECORDING_FIELD);
+    return (
+      interactionDisabled ||
+      maintenance.active ||
+      cannotCreateStory ||
+      (includesRecordingYearInterval && hasInvalidRecordingYearInterval)
+    );
   }
 
   async function syncStoryTerms(initialStory: StoryDetail): Promise<StoryDetail> {
@@ -470,11 +476,11 @@ export function CreateEntryPage() {
     successBody: string;
     includeTerms: boolean;
   }) {
-    if (DATE_OF_RECORDING_FIELD in fieldsToSave && hasInvalidRecordingDate) {
+    if (DATE_OF_RECORDING_FIELD in fieldsToSave && hasInvalidRecordingYearInterval) {
       setNotice({
         tone: "error",
-        title: "Invalid recording date",
-        body: "Enter the recording date as a valid YYYY-MM-DD value before saving.",
+        title: "Invalid recording-year interval",
+        body: "Enter two years from 1800 to 2050, with year 2 greater than year 1, before saving.",
       });
       return;
     }
@@ -613,7 +619,7 @@ export function CreateEntryPage() {
             <button className="button button-ghost" disabled={interactionDisabled || statusLoading} onClick={() => void loadStatus()} type="button">
               {statusLoading ? "Refreshing..." : "Refresh dataset"}
             </button>
-            <button className="button" disabled={interactionDisabled || maintenance.active || cannotCreateStory || hasInvalidRecordingDate} type="submit">
+            <button className="button" disabled={interactionDisabled || maintenance.active || cannotCreateStory || hasInvalidRecordingYearInterval} type="submit">
               {busy ? "Saving..." : savedStory ? "Save all changes" : "Save new entry"}
             </button>
           </div>

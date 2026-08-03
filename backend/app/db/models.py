@@ -275,11 +275,19 @@ class Story(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "stories"
     __table_args__ = (
         Index("uq_stories_dataset_source_row_number", "dataset_id", "source_row_number", unique=True),
+        CheckConstraint(
+            "(recording_year_start IS NULL AND recording_year_end IS NULL) "
+            "OR (recording_year_start IS NOT NULL AND recording_year_end IS NOT NULL "
+            "AND recording_year_end >= recording_year_start)",
+            name="ck_stories_recording_year_interval",
+        ),
     )
 
     dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.id", ondelete="RESTRICT"), nullable=False, index=True)
     source_row_number: Mapped[int | None] = mapped_column(Integer)
     fields_json: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    recording_year_start: Mapped[int | None] = mapped_column(Integer, index=True)
+    recording_year_end: Mapped[int | None] = mapped_column(Integer, index=True)
     row_hash: Mapped[str] = mapped_column(String(64), default="", nullable=False)
     completeness: Mapped[StoryCompleteness] = mapped_column(
         SqlEnum(
