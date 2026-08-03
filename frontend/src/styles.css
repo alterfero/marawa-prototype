@@ -652,6 +652,10 @@ p {
   padding-inline: 0.5rem;
 }
 
+.theme-curation-target-confirmation {
+  margin-top: 0.75rem;
+}
+
 .keyword-curation-target-actions {
   justify-content: flex-start;
 }
