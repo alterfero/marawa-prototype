@@ -718,6 +718,7 @@ export function SemanticGraphsPage() {
       setMutating(true);
       setNotice(null);
       let affectedStoryCount: number;
+      let updatedTarget: Pick<SemanticGraphNode, "id" | "version" | "text" | "confirmation_status" | "story_count">;
       if (itemKind === "trope") {
         const result = await mergeUnconfirmedTrope({
           source_trope_id: source.id,
@@ -725,6 +726,7 @@ export function SemanticGraphsPage() {
           target_trope_id: target.id,
         });
         affectedStoryCount = result.affected_story_count;
+        updatedTarget = result.target_trope;
       } else if (itemKind === "theme") {
         const result = await mergeUnconfirmedTheme({
           source_theme_id: source.id,
@@ -732,6 +734,7 @@ export function SemanticGraphsPage() {
           target_theme_id: target.id,
         });
         affectedStoryCount = result.affected_story_count;
+        updatedTarget = result.target_theme;
       } else {
         const result = await mergeUnconfirmedKeyword({
           source_keyword_id: source.id,
@@ -739,8 +742,33 @@ export function SemanticGraphsPage() {
           target_keyword_id: target.id,
         });
         affectedStoryCount = result.affected_story_count;
+        updatedTarget = result.target_keyword;
       }
       setRebuildNeeded(true);
+      setGraph((currentGraph) => {
+        if (!currentGraph) {
+          return currentGraph;
+        }
+        return {
+          ...currentGraph,
+          nodes: currentGraph.nodes
+            .filter((graphNode) => graphNode.id !== source.id)
+            .map((graphNode) =>
+              graphNode.id === updatedTarget.id
+                ? {
+                    ...graphNode,
+                    confirmation_status: updatedTarget.confirmation_status,
+                    story_count: updatedTarget.story_count,
+                    text: updatedTarget.text,
+                    version: updatedTarget.version,
+                  }
+                : graphNode,
+            ),
+          links: currentGraph.links.filter(
+            (link) => link.source !== source.id && link.target !== source.id,
+          ),
+        };
+      });
       setFocusedNodeId((currentFocusedNodeId) =>
         currentFocusedNodeId === source.id ? target.id : currentFocusedNodeId,
       );
@@ -749,7 +777,6 @@ export function SemanticGraphsPage() {
         title: `Merged ${source.text} into ${target.text}.`,
         body: `${affectedStoryCount} stor${affectedStoryCount === 1 ? "y was" : "ies were"} reassigned.`,
       });
-      await refreshGraph();
     } catch (error) {
       setNotice({
         tone: "error",
@@ -845,6 +872,17 @@ export function SemanticGraphsPage() {
             <span className="muted semantic-graph-threshold-help" id="semantic-graph-similarity-threshold-help">
               Hide edges below this similarity.
             </span>
+          </div>
+          <div className="field semantic-graph-refresh-control">
+            <span className="map-view-label">Graph data</span>
+            <button
+              className="button button-ghost"
+              disabled={interactionDisabled}
+              onClick={() => void refreshGraph()}
+              type="button"
+            >
+              Refresh graph
+            </button>
           </div>
         </div>
       </section>
