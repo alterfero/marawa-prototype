@@ -49,6 +49,7 @@ type ConfirmationStatusTrope = Pick<
 >;
 
 type SimilarTropeFilter = "unconfirmed" | "all";
+type TropeListScope = "all" | "canonical";
 
 function serializeSelectedTropes(tropes: ExplorationAppliedTropeFilter[]): string {
   return JSON.stringify(
@@ -91,6 +92,7 @@ export function TropeManagementView() {
   const [appliedSelectedTropes, setAppliedSelectedTropes] = useState<ExplorationAppliedTropeFilter[]>([]);
   const [similarityThreshold, setSimilarityThreshold] = useState(0.6);
   const [similarTropeFilter, setSimilarTropeFilter] = useState<SimilarTropeFilter>("unconfirmed");
+  const [tropeListScope, setTropeListScope] = useState<TropeListScope>("all");
   const [similarUnconfirmedTropes, setSimilarUnconfirmedTropes] = useState<SimilarUnconfirmedTropeListResponse | null>(null);
   const [similarUnconfirmedTropesLoading, setSimilarUnconfirmedTropesLoading] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -221,9 +223,14 @@ export function TropeManagementView() {
   const hasAppliedSelectedTropes = appliedSelectedTropes.length > 0;
   const hasAppliedHardFilters = appliedFilters.length > 0;
 
+  const scopedTropes = useMemo(
+    () => tropes.filter((trope) => tropeListScope === "all" || trope.confirmation_status === "canonical"),
+    [tropeListScope, tropes],
+  );
+
   const visibleTropes = useMemo(
     () =>
-      tropes.filter((trope) => {
+      scopedTropes.filter((trope) => {
         if (hasAppliedSelectedTropes && !appliedSelectedTropeIds.has(trope.id)) {
           return false;
         }
@@ -232,7 +239,7 @@ export function TropeManagementView() {
         }
         return (trope.story_ids ?? []).some((storyId) => hardFilteredStoryIds.has(storyId));
       }),
-    [appliedSelectedTropeIds, hardFilteredStoryIds, hasAppliedHardFilters, hasAppliedSelectedTropes, tropes],
+    [appliedSelectedTropeIds, hardFilteredStoryIds, hasAppliedHardFilters, hasAppliedSelectedTropes, scopedTropes],
   );
 
   useEffect(() => {
@@ -708,12 +715,33 @@ export function TropeManagementView() {
             <h2>Tropes</h2>
             <div className="button-row">
               <span className="pill">
-                {visibleTropes.length}/{tropes.length}
+                {visibleTropes.length}/{scopedTropes.length}
               </span>
               <button className="button button-ghost" disabled={loading || busy} onClick={() => void refresh()} type="button">
                 Refresh
               </button>
             </div>
+          </div>
+
+          <div aria-label="Trope list scope" className="similarity-scope-switch" role="group">
+            <button
+              aria-pressed={tropeListScope === "all"}
+              className={tropeListScope === "all" ? "similarity-scope-switch-option-active" : undefined}
+              disabled={loading || busy}
+              onClick={() => setTropeListScope("all")}
+              type="button"
+            >
+              all
+            </button>
+            <button
+              aria-pressed={tropeListScope === "canonical"}
+              className={tropeListScope === "canonical" ? "similarity-scope-switch-option-active" : undefined}
+              disabled={loading || busy}
+              onClick={() => setTropeListScope("canonical")}
+              type="button"
+            >
+              canonical
+            </button>
           </div>
 
           <StoryFieldFilterBuilder
