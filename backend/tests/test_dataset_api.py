@@ -117,6 +117,7 @@ def test_dataset_status_returns_empty_state_when_no_active_dataset(client: TestC
     assert response.json() == {
         "story_count": 0,
         "trope_count": 0,
+        "theme_count": 0,
         "keyword_count": 0,
         "active_dataset_version": None,
         "latest_job": None,
@@ -135,6 +136,7 @@ def test_dataset_status_returns_empty_state_when_no_active_dataset(client: TestC
             "artifact_version": None,
             "rebuilt_dataset_version": None,
             "indexed_trope_count": 0,
+            "indexed_theme_count": 0,
             "indexed_keyword_count": 0,
             "last_built_at": None,
             "last_error_message": None,
@@ -268,6 +270,7 @@ def test_dataset_status_reports_embeddings_ready_and_current_after_rebuild(clien
     assert body["embedding_status"]["artifact_version"] == 1
     assert body["embedding_status"]["rebuilt_dataset_version"] == 1
     assert body["embedding_status"]["indexed_trope_count"] == 2
+    assert body["embedding_status"]["indexed_theme_count"] == 0
     assert body["embedding_status"]["indexed_keyword_count"] == 2
     assert body["embedding_status"]["latest_rebuild_job"]["status"] == "succeeded"
 
@@ -409,6 +412,7 @@ def test_clear_dataset_removes_current_data_and_returns_empty_state(client: Test
     assert clear_response.json() == {
         "story_count": 0,
         "trope_count": 0,
+        "theme_count": 0,
         "keyword_count": 0,
         "active_dataset_version": None,
         "latest_job": None,
@@ -427,6 +431,7 @@ def test_clear_dataset_removes_current_data_and_returns_empty_state(client: Test
             "artifact_version": None,
             "rebuilt_dataset_version": None,
             "indexed_trope_count": 0,
+            "indexed_theme_count": 0,
             "indexed_keyword_count": 0,
             "last_built_at": None,
             "last_error_message": None,

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from sqlalchemy import case, func, select
+from collections.abc import Iterable
+from typing import TYPE_CHECKING
+
+from sqlalchemy import case, delete, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.parsing import clean_text, normalize_text
@@ -11,11 +14,17 @@ from app.db.models import (
     StoryKeyword,
     StoryTheme,
     StoryTrope,
+    TermEmbedding,
+    TermKind,
+    TermSimilarityCache,
     Theme,
     ThemeConfirmationStatus,
 )
 from app.services.audit import record_audit_event
 from app.services.stories import sync_story_derived_fields
+
+if TYPE_CHECKING:
+    from app.services.search_service import SearchService
 
 
 TITLE_FIELDS = [
@@ -45,11 +54,21 @@ class ThemeDeletionConflictError(ThemeLookupError):
     """Raised when a theme cannot safely be deleted."""
 
 
+class ThemeCurationConflictError(ThemeLookupError):
+    """Raised when a theme curation action is blocked by current data state."""
+
+
+class ThemeCurationValidationError(ThemeLookupError):
+    """Raised when a theme curation request is invalid."""
+
+
 def list_canonical_themes(
     session: Session,
     *,
+    unused_only: bool = False,
     query: str | None = None,
     limit: int = 100,
+    include_story_ids: bool = False,
 ) -> list[dict]:
     active_dataset = _get_active_dataset(session)
     if active_dataset is None:
@@ -65,6 +84,32 @@ def list_canonical_themes(
     ).where(Theme.dataset_id == active_dataset.id)
     if query_text:
         statement = statement.where(func.lower(Theme.text).contains(query_text.lower()))
+    if unused_only:
+        statement = statement.where(Theme.cached_story_count == 0)
+
+    rows = session.execute(statement.order_by(Theme.text.asc(), Theme.id.asc()).limit(limit)).all()
+    story_ids_by_theme_id: dict[str, list[str]] = {}
+    if include_story_ids and rows:
+        theme_ids = [row.id for row in rows]
+        story_ids_by_theme_id = {theme_id: [] for theme_id in theme_ids}
+        story_rows = session.execute(
+            select(StoryTheme.theme_id.label("theme_id"), Story.id.label("story_id"))
+            .select_from(StoryTheme)
+            .join(Story, Story.id == StoryTheme.story_id)
+            .where(
+                Story.dataset_id == active_dataset.id,
+                StoryTheme.theme_id.in_(theme_ids),
+            )
+            .order_by(
+                StoryTheme.theme_id.asc(),
+                case((Story.source_row_number.is_(None), 1), else_=0),
+                Story.source_row_number.asc(),
+                Story.created_at.asc(),
+                Story.id.asc(),
+            )
+        ).all()
+        for story_row in story_rows:
+            story_ids_by_theme_id.setdefault(story_row.theme_id, []).append(story_row.story_id)
 
     return [
         {
@@ -73,9 +118,52 @@ def list_canonical_themes(
             "text": row.text,
             "confirmation_status": row.confirmation_status.value,
             "story_count": int(row.story_count or 0),
+            "story_ids": story_ids_by_theme_id.get(row.id, []),
         }
-        for row in session.execute(statement.order_by(Theme.text.asc(), Theme.id.asc()).limit(limit)).all()
+        for row in rows
     ]
+
+
+def ensure_canonical_theme(
+    session: Session,
+    text: str,
+    *,
+    actor_user_id: str | None = None,
+) -> tuple[dict, bool]:
+    active_dataset = _require_active_dataset(session)
+    theme_text = clean_text(text)
+    marker = normalize_text(theme_text)
+    if not marker:
+        raise ThemeMutationValidationError("Theme text cannot be empty.")
+
+    theme = session.scalar(
+        select(Theme).where(
+            Theme.dataset_id == active_dataset.id,
+            Theme.normalized_text == marker,
+        )
+    )
+    if theme is not None:
+        return _serialize_theme_summary(theme), False
+
+    theme = Theme(
+        dataset_id=active_dataset.id,
+        text=theme_text,
+        created_by_user_id=actor_user_id,
+        updated_by_user_id=actor_user_id,
+    )
+    session.add(theme)
+    session.flush()
+    record_audit_event(
+        session,
+        event_type="theme.created",
+        actor_user_id=actor_user_id,
+        dataset_id=active_dataset.id,
+        subject_table="themes",
+        subject_id=theme.id,
+        payload={"created": True},
+    )
+    session.commit()
+    return _serialize_theme_summary(theme), True
 
 
 def get_theme_detail(session: Session, theme_id: str) -> dict:
@@ -193,6 +281,7 @@ def update_theme_text(
         sync_story_derived_fields(story)
         story.version += 1
 
+    _delete_theme_artifacts(session, theme.id)
     active_dataset.version += 1
     record_audit_event(
         session,
@@ -210,6 +299,65 @@ def update_theme_text(
     )
     session.commit()
     return _serialize_theme_summary(theme)
+
+
+def set_theme_confirmation_statuses(
+    session: Session,
+    *,
+    updates: list[dict[str, object]],
+    actor_user_id: str,
+) -> list[dict]:
+    if not updates:
+        raise ThemeMutationValidationError("Provide at least one theme confirmation update.")
+
+    active_dataset = _require_active_dataset(session)
+    theme_ids = [clean_text(str(update.get("theme_id", ""))) for update in updates]
+    if any(not theme_id for theme_id in theme_ids):
+        raise ThemeMutationValidationError("Every theme confirmation update must include a theme_id.")
+    if len(set(theme_ids)) != len(theme_ids):
+        raise ThemeMutationValidationError("Duplicate theme confirmation updates are not allowed.")
+
+    themes_by_id = {
+        theme.id: theme
+        for theme in session.scalars(
+            select(Theme).where(
+                Theme.dataset_id == active_dataset.id,
+                Theme.id.in_(theme_ids),
+            )
+        ).all()
+    }
+    if len(themes_by_id) != len(theme_ids):
+        raise ThemeLookupNotFoundError("Canonical theme not found.")
+
+    for update, theme_id in zip(updates, theme_ids, strict=True):
+        confirmation_status = update.get("confirmation_status")
+        if not isinstance(confirmation_status, ThemeConfirmationStatus):
+            raise ThemeMutationValidationError("Invalid theme confirmation status.")
+        theme = themes_by_id[theme_id]
+        _assert_theme_version(theme, int(update.get("expected_version", 0)))
+        if theme.confirmation_status == confirmation_status:
+            continue
+        previous_status = theme.confirmation_status.value
+        theme.confirmation_status = confirmation_status
+        theme.version += 1
+        theme.updated_by_user_id = actor_user_id
+        record_audit_event(
+            session,
+            event_type="theme.confirmation_status_updated",
+            actor_user_id=actor_user_id,
+            dataset_id=active_dataset.id,
+            subject_table="themes",
+            subject_id=theme.id,
+            payload={
+                "previous_confirmation_status": previous_status,
+                "confirmation_status": theme.confirmation_status.value,
+                "version": theme.version,
+            },
+        )
+
+    session.flush()
+    session.commit()
+    return [_serialize_theme_summary(themes_by_id[theme_id]) for theme_id in theme_ids]
 
 
 def merge_unconfirmed_theme(
@@ -271,6 +419,7 @@ def merge_unconfirmed_theme(
     )
     target_theme.version += 1
     target_theme.updated_by_user_id = actor_user_id
+    _delete_theme_artifacts(session, source_theme.id)
     session.delete(source_theme)
     active_dataset.version += 1
     record_audit_event(
@@ -335,6 +484,7 @@ def delete_theme(
         sync_story_derived_fields(story)
         story.version += 1
 
+    _delete_theme_artifacts(session, theme.id)
     session.delete(theme)
     active_dataset.version += 1
     record_audit_event(
@@ -354,6 +504,258 @@ def delete_theme(
         "deleted_theme_id": theme_id,
         "affected_story_count": len(affected_stories),
     }
+
+
+def list_near_duplicate_themes(session: Session, *, model_name: str) -> dict:
+    active_dataset = _get_active_dataset(session)
+    if active_dataset is None:
+        return _empty_near_duplicate_result(model_name)
+
+    active_theme_ids = set(
+        session.scalars(
+            select(StoryTheme.theme_id).join(Story).where(Story.dataset_id == active_dataset.id)
+        ).all()
+    )
+    if len(active_theme_ids) < 2:
+        return _empty_near_duplicate_result(model_name)
+
+    artifact_version = session.scalar(
+        select(func.max(TermSimilarityCache.artifact_version)).where(
+            TermSimilarityCache.term_kind == TermKind.THEME,
+            TermSimilarityCache.model_name == model_name,
+            or_(
+                TermSimilarityCache.source_term_id.in_(active_theme_ids),
+                TermSimilarityCache.target_term_id.in_(active_theme_ids),
+            ),
+        )
+    )
+    if artifact_version is None:
+        return _empty_near_duplicate_result(model_name)
+
+    entries = list(
+        session.scalars(
+            select(TermSimilarityCache).where(
+                TermSimilarityCache.term_kind == TermKind.THEME,
+                TermSimilarityCache.model_name == model_name,
+                TermSimilarityCache.artifact_version == artifact_version,
+            )
+        ).all()
+    )
+    if not entries:
+        return {
+            **_empty_near_duplicate_result(model_name),
+            "artifact_version": int(artifact_version),
+        }
+
+    theme_ids = {
+        term_id
+        for entry in entries
+        for term_id in (entry.source_term_id, entry.target_term_id)
+        if term_id in active_theme_ids
+    }
+    themes_by_id = {
+        theme.id: theme
+        for theme in session.scalars(
+            select(Theme).where(Theme.dataset_id == active_dataset.id, Theme.id.in_(theme_ids))
+        ).all()
+    }
+
+    pair_map: dict[tuple[str, str], dict] = {}
+    for entry in entries:
+        source_theme = themes_by_id.get(entry.source_term_id)
+        target_theme = themes_by_id.get(entry.target_term_id)
+        if source_theme is None or target_theme is None:
+            continue
+        stable_themes = sorted([source_theme, target_theme], key=lambda theme: (theme.text.lower(), theme.id))
+        display_themes = stable_themes
+        if (
+            stable_themes[0].confirmation_status == ThemeConfirmationStatus.CANONICAL
+            and stable_themes[1].confirmation_status == ThemeConfirmationStatus.UNCONFIRMED
+        ):
+            display_themes = [stable_themes[1], stable_themes[0]]
+        pair_key = (stable_themes[0].id, stable_themes[1].id)
+        candidate = {
+            "source_theme": _serialize_theme_summary(display_themes[0]),
+            "target_theme": _serialize_theme_summary(display_themes[1]),
+            "similarity_score": float(entry.similarity_score),
+            "metadata": entry.metadata_json or {},
+        }
+        existing = pair_map.get(pair_key)
+        if existing is None or candidate["similarity_score"] > existing["similarity_score"]:
+            pair_map[pair_key] = candidate
+
+    items = sorted(
+        [
+            item
+            for item in pair_map.values()
+            if not (
+                item["source_theme"]["confirmation_status"] == ThemeConfirmationStatus.CANONICAL.value
+                and item["target_theme"]["confirmation_status"] == ThemeConfirmationStatus.CANONICAL.value
+            )
+        ],
+        key=lambda item: (
+            -item["similarity_score"],
+            item["source_theme"]["text"].lower(),
+            item["target_theme"]["text"].lower(),
+        ),
+    )
+    return {
+        "items": items,
+        "artifact_version": int(artifact_version),
+        "model_name": model_name,
+        "total": len(items),
+    }
+
+
+def list_similar_unconfirmed_themes(
+    session: Session,
+    *,
+    source_theme_id: str,
+    minimum_similarity: float,
+    search_service: SearchService,
+    include_canonical: bool = False,
+) -> dict:
+    if not 0.0 <= minimum_similarity <= 1.0:
+        raise ThemeCurationValidationError("Minimum similarity must be between 0 and 1.")
+
+    active_dataset = _require_active_dataset(session)
+    source_theme = _get_active_theme(session, active_dataset.id, source_theme_id)
+    candidates = select(Theme).where(
+        Theme.dataset_id == active_dataset.id,
+        Theme.id != source_theme.id,
+    )
+    if not include_canonical:
+        candidates = candidates.where(Theme.confirmation_status == ThemeConfirmationStatus.UNCONFIRMED)
+    candidate_themes = list(session.scalars(candidates.order_by(Theme.text.asc(), Theme.id.asc())).all())
+    artifact_version, scores_by_theme_id = search_service.get_similar_theme_scores(
+        session,
+        source_theme.id,
+        [theme.id for theme in candidate_themes],
+        minimum_score=minimum_similarity,
+    )
+    items = sorted(
+        [
+            {
+                **_serialize_theme_summary(theme),
+                "similarity_score": scores_by_theme_id[theme.id],
+            }
+            for theme in candidate_themes
+            if theme.id in scores_by_theme_id
+        ],
+        key=lambda item: (-item["similarity_score"], item["text"].lower(), item["id"]),
+    )
+    return {
+        "source_theme_id": source_theme.id,
+        "items": items,
+        "artifact_version": artifact_version,
+        "model_name": search_service.model_name,
+        "minimum_similarity": minimum_similarity,
+        "total": len(items),
+    }
+
+
+def merge_themes(
+    session: Session,
+    *,
+    source_theme_id: str,
+    target_theme_id: str,
+    actor_user_id: str | None = None,
+) -> tuple[Dataset, dict]:
+    dataset, summary = validate_theme_merges(
+        session,
+        merges=[{"source_theme_id": source_theme_id, "target_theme_id": target_theme_id}],
+        actor_user_id=actor_user_id,
+    )
+    return dataset, summary["applied_merges"][0]
+
+
+def validate_theme_merges(
+    session: Session,
+    *,
+    merges: list[dict[str, str]],
+    actor_user_id: str | None = None,
+) -> tuple[Dataset, dict]:
+    active_dataset = _require_active_dataset(session)
+    normalized_merges = _normalize_theme_merges(session, active_dataset.id, merges)
+    affected_story_ids: set[str] = set()
+    target_theme_ids: set[str] = set()
+    summaries: list[dict[str, int | str]] = []
+
+    for merge in normalized_merges:
+        affected_ids = _apply_theme_merge(
+            session,
+            dataset_id=active_dataset.id,
+            source_theme_id=merge["source_theme_id"],
+            target_theme_id=merge["target_theme_id"],
+        )
+        affected_story_ids.update(affected_ids)
+        target_theme_ids.add(merge["target_theme_id"])
+        summaries.append(
+            {
+                "source_theme_id": merge["source_theme_id"],
+                "target_theme_id": merge["target_theme_id"],
+                "affected_story_count": len(affected_ids),
+            }
+        )
+
+    session.flush()
+    _touch_theme_stories(session, affected_story_ids)
+    for target_theme_id in target_theme_ids:
+        _refresh_theme_cached_story_count(session, target_theme_id)
+    active_dataset.version += 1
+    record_audit_event(
+        session,
+        event_type="theme.merged" if len(summaries) == 1 else "theme.batch_merged",
+        actor_user_id=actor_user_id,
+        dataset_id=active_dataset.id,
+        subject_table="themes",
+        subject_id=summaries[0]["source_theme_id"] if len(summaries) == 1 else None,
+        payload={
+            "merge_count": len(summaries),
+            "affected_story_count": len(affected_story_ids),
+            "merges": summaries,
+            "rebuild_queued": False,
+        },
+    )
+    session.commit()
+    return session.get(Dataset, active_dataset.id), {
+        "applied_merges": summaries,
+        "merge_count": len(summaries),
+        "affected_story_count": len(affected_story_ids),
+    }
+
+
+def delete_unused_themes(
+    session: Session,
+    *,
+    actor_user_id: str | None = None,
+) -> tuple[Dataset, dict]:
+    active_dataset = _require_active_dataset(session)
+    unused_themes = list(
+        session.scalars(
+            select(Theme).where(
+                Theme.dataset_id == active_dataset.id,
+                Theme.cached_story_count == 0,
+                ~Theme.story_links.any(),
+            )
+        ).all()
+    )
+    if not unused_themes:
+        return active_dataset, {"deleted_theme_count": 0}
+    for theme in unused_themes:
+        _delete_theme_artifacts(session, theme.id)
+        session.delete(theme)
+    active_dataset.version += 1
+    record_audit_event(
+        session,
+        event_type="theme.unused_batch_deleted",
+        actor_user_id=actor_user_id,
+        dataset_id=active_dataset.id,
+        subject_table="themes",
+        payload={"deleted_theme_count": len(unused_themes), "rebuild_queued": False},
+    )
+    session.commit()
+    return session.get(Dataset, active_dataset.id), {"deleted_theme_count": len(unused_themes)}
 
 
 def _get_active_dataset(session: Session) -> Dataset | None:
@@ -395,6 +797,164 @@ def _story_title(story: Story) -> str:
         if value:
             return value
     return story.id
+
+
+def _empty_near_duplicate_result(model_name: str) -> dict:
+    return {
+        "items": [],
+        "artifact_version": None,
+        "model_name": model_name,
+        "total": 0,
+    }
+
+
+def _normalize_theme_merges(
+    session: Session,
+    dataset_id: str,
+    merges: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    if not merges:
+        raise ThemeCurationValidationError("At least one merge decision is required.")
+
+    theme_ids = {
+        theme_id
+        for merge in merges
+        for theme_id in (merge.get("source_theme_id", ""), merge.get("target_theme_id", ""))
+    }
+    themes = {
+        theme.id
+        for theme in session.scalars(
+            select(Theme).where(Theme.dataset_id == dataset_id, Theme.id.in_(theme_ids))
+        ).all()
+    }
+    source_to_target: dict[str, str] = {}
+    ordered_source_ids: list[str] = []
+    for merge in merges:
+        source_theme_id = clean_text(merge.get("source_theme_id", ""))
+        target_theme_id = clean_text(merge.get("target_theme_id", ""))
+        if source_theme_id not in themes:
+            raise ThemeLookupNotFoundError("Source theme not found.")
+        if target_theme_id not in themes:
+            raise ThemeLookupNotFoundError("Target theme not found.")
+        if source_theme_id == target_theme_id:
+            raise ThemeCurationValidationError("Source and target theme IDs must be different.")
+        previous_target = source_to_target.get(source_theme_id)
+        if previous_target is None:
+            source_to_target[source_theme_id] = target_theme_id
+            ordered_source_ids.append(source_theme_id)
+        elif previous_target != target_theme_id:
+            raise ThemeCurationValidationError(
+                "A source theme can only be merged into one target within the same validation batch."
+            )
+
+    resolved_target_ids: dict[str, str] = {}
+
+    def resolve_target(source_theme_id: str, trail: tuple[str, ...]) -> str:
+        if source_theme_id in resolved_target_ids:
+            return resolved_target_ids[source_theme_id]
+        if source_theme_id in trail:
+            raise ThemeCurationValidationError("Pending merge decisions create a cycle and cannot be validated together.")
+        target_theme_id = source_to_target[source_theme_id]
+        if target_theme_id in source_to_target:
+            target_theme_id = resolve_target(target_theme_id, (*trail, source_theme_id))
+        resolved_target_ids[source_theme_id] = target_theme_id
+        return target_theme_id
+
+    return [
+        {
+            "source_theme_id": source_theme_id,
+            "target_theme_id": resolve_target(source_theme_id, ()),
+        }
+        for source_theme_id in ordered_source_ids
+    ]
+
+
+def _apply_theme_merge(
+    session: Session,
+    *,
+    dataset_id: str,
+    source_theme_id: str,
+    target_theme_id: str,
+) -> set[str]:
+    source_links = list(
+        session.scalars(
+            select(StoryTheme)
+            .join(Story, Story.id == StoryTheme.story_id)
+            .where(
+                StoryTheme.theme_id == source_theme_id,
+                Story.dataset_id == dataset_id,
+            )
+        ).all()
+    )
+    source_story_ids = [link.story_id for link in source_links]
+    target_story_ids = set()
+    if source_story_ids:
+        target_story_ids = set(
+            session.scalars(
+                select(StoryTheme.story_id).where(
+                    StoryTheme.theme_id == target_theme_id,
+                    StoryTheme.story_id.in_(source_story_ids),
+                )
+            ).all()
+        )
+    for link in source_links:
+        if link.story_id in target_story_ids:
+            session.delete(link)
+        else:
+            link.theme_id = target_theme_id
+    session.flush()
+    remaining_source_links = session.scalar(
+        select(func.count()).select_from(StoryTheme).where(StoryTheme.theme_id == source_theme_id)
+    )
+    if remaining_source_links:
+        raise ThemeCurationConflictError("Source theme still has assignments and cannot be deleted.")
+    source_theme = session.scalar(
+        select(Theme).where(Theme.id == source_theme_id, Theme.dataset_id == dataset_id)
+    )
+    if source_theme is not None:
+        _delete_theme_artifacts(session, source_theme.id)
+        session.delete(source_theme)
+    return set(source_story_ids)
+
+
+def _touch_theme_stories(session: Session, story_ids: Iterable[str]) -> None:
+    ids = list(set(story_ids))
+    if not ids:
+        return
+    stories = session.scalars(
+        select(Story)
+        .where(Story.id.in_(ids))
+        .options(
+            selectinload(Story.trope_links).selectinload(StoryTrope.trope),
+            selectinload(Story.keyword_links).selectinload(StoryKeyword.keyword),
+            selectinload(Story.theme_links).selectinload(StoryTheme.theme),
+        )
+    ).all()
+    for story in stories:
+        sync_story_derived_fields(story)
+        story.version += 1
+
+
+def _refresh_theme_cached_story_count(session: Session, theme_id: str) -> None:
+    theme = session.get(Theme, theme_id)
+    if theme is None:
+        return
+    theme.cached_story_count = int(
+        session.scalar(select(func.count()).select_from(StoryTheme).where(StoryTheme.theme_id == theme_id)) or 0
+    )
+
+
+def _delete_theme_artifacts(session: Session, theme_id: str) -> None:
+    session.execute(
+        delete(TermSimilarityCache).where(
+            TermSimilarityCache.term_kind == TermKind.THEME,
+            or_(
+                TermSimilarityCache.source_term_id == theme_id,
+                TermSimilarityCache.target_term_id == theme_id,
+            ),
+        )
+    )
+    session.execute(delete(TermEmbedding).where(TermEmbedding.theme_id == theme_id))
 
 
 def _serialize_theme_summary(theme: Theme) -> dict:

@@ -10,12 +10,12 @@ import {
   deleteStoryTheme,
   deleteTrope,
   getDatasetStatus,
-  getCanonicalThemes,
   getErrorMessage,
   getStories,
   getStory,
   replaceStoryKeyword,
   searchKeywords,
+  searchThemes,
   searchTropes,
   updateCanonicalTrope,
   updateCanonicalTheme,
@@ -46,7 +46,6 @@ import { TermCard } from "../components/TermCard";
 import { TropeCard } from "../components/TropeCard";
 import { roleAtLeast, useAuth } from "../auth";
 import type {
-  CanonicalThemeListItem,
   SearchItem,
   StoryCompleteness,
   StoryDetail,
@@ -54,6 +53,7 @@ import type {
   StoryTheme,
   StoryTrope,
   ThemeConfirmationStatus,
+  ThemeSearchItem,
   TropeConfirmationStatus,
   TropeSearchItem,
 } from "../api/types";
@@ -170,7 +170,7 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
   const [keywordResults, setKeywordResults] = useState<SearchItem[]>([]);
   const [keywordSearchStatus, setKeywordSearchStatus] = useState<"idle" | "loading" | "ready">("idle");
   const [themeText, setThemeText] = useState("");
-  const [themeResults, setThemeResults] = useState<CanonicalThemeListItem[]>([]);
+  const [themeResults, setThemeResults] = useState<ThemeSearchItem[]>([]);
   const [themeSearchStatus, setThemeSearchStatus] = useState<"idle" | "loading" | "ready">("idle");
   const [editingKeywordId, setEditingKeywordId] = useState<string | null>(null);
   const [editingKeywordQuery, setEditingKeywordQuery] = useState("");
@@ -469,11 +469,11 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
       void (async () => {
         try {
           setThemeSearchStatus("loading");
-          const result = await getCanonicalThemes({ q: trimmedQuery, limit: 8 });
+          const result = await searchThemes({ query: trimmedQuery, limit: 8 });
           if (cancelled) {
             return;
           }
-          setThemeResults(result);
+          setThemeResults(result.items);
           setThemeSearchStatus("ready");
         } catch (error) {
           if (cancelled) {
@@ -1589,21 +1589,21 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
 
               <div className="stack">
                 <div className="panel-header">
-                  <h3>Matching existing themes</h3>
+                  <h3>Similar existing themes</h3>
                   <span className="pill">
                     {themeSearchStatus === "loading" ? "searching" : `${themeResults.length} results`}
                   </span>
                 </div>
                 {themeText.trim() && themeSearchStatus === "loading" ? <p className="muted">Searching themes...</p> : null}
                 {themeText.trim() && themeSearchStatus === "ready" && themeResults.length === 0 ? (
-                  <p className="muted">No existing theme fits. Add the typed text to create a new theme.</p>
+                  <p className="muted">No similar themes were returned for this query.</p>
                 ) : null}
                 {themeResults.map((theme) => {
                   const alreadyAssigned = assignedThemeIds.has(theme.id);
                   return (
                     <TermCard
                       key={theme.id}
-                      meta={`${theme.story_count} stor${theme.story_count === 1 ? "y" : "ies"}`}
+                      meta={`Similarity ${theme.score.toFixed(2)}`}
                       term={theme}
                       actions={
                         <button
@@ -1624,7 +1624,7 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
                 <div className="card-row">
                   <div>
                     <h3>Keep typed theme</h3>
-                    <p className="muted">Use this when none of the existing themes is the right fit.</p>
+                    <p className="muted">Use this when none of the similar existing themes is the right fit.</p>
                   </div>
                   <button
                     className="button"

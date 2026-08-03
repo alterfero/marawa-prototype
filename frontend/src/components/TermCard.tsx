@@ -27,7 +27,7 @@ export function TermCard({
         <div>
           <h3>{term.text}</h3>
         </div>
-        {actions ? <div className="button-row">{actions}</div> : null}
+        {actions ? <div className="button-row term-card-actions">{actions}</div> : null}
       </div>
       {meta ? <p className="muted">{meta}</p> : null}
       {children}

@@ -46,24 +46,26 @@ export function ConfirmationStatusSwitch({
   }
 
   return (
-    <div aria-label={ariaLabel} className={`confirmation-status-switch ${className}`.trim()} role="radiogroup">
-      {STATUS_OPTIONS.map((option) => (
-        <button
-          aria-checked={value === option.value}
-          className={`confirmation-status-switch-option confirmation-status-switch-option-${option.value} ${
-            value === option.value ? "confirmation-status-switch-option-active" : ""
-          }`}
-          data-status={option.value}
-          disabled={disabled}
-          key={option.value}
-          onClick={() => selectStatus(option.value)}
-          onKeyDown={handleKeyDown}
-          role="radio"
-          type="button"
-        >
-          {option.label}
-        </button>
-      ))}
+    <div className={`confirmation-status-switch-line ${className}`.trim()}>
+      <div aria-label={ariaLabel} className="confirmation-status-switch" role="radiogroup">
+        {STATUS_OPTIONS.map((option) => (
+          <button
+            aria-checked={value === option.value}
+            className={`confirmation-status-switch-option confirmation-status-switch-option-${option.value} ${
+              value === option.value ? "confirmation-status-switch-option-active" : ""
+            }`}
+            data-status={option.value}
+            disabled={disabled}
+            key={option.value}
+            onClick={() => selectStatus(option.value)}
+            onKeyDown={handleKeyDown}
+            role="radio"
+            type="button"
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }

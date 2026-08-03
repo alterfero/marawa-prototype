@@ -60,3 +60,13 @@ def search_keywords(
     search_service=Depends(get_search_service),
 ) -> SearchResponse:
     return SearchResponse(**search_service.search_terms(session, TermKind.KEYWORD, payload.query, limit=payload.limit))
+
+
+@router.post("/themes", response_model=SearchResponse)
+def search_themes(
+    payload: SearchRequest,
+    _: object = Depends(require_minimum_role(UserRole.GUEST)),
+    session: Session = Depends(get_db_session),
+    search_service=Depends(get_search_service),
+) -> SearchResponse:
+    return SearchResponse(**search_service.search_terms(session, TermKind.THEME, payload.query, limit=payload.limit))

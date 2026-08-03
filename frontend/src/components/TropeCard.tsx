@@ -62,7 +62,7 @@ export function TropeCard({
         </div>
         {badge || actions ? (
           <div
-            className="button-row trope-card-header-right"
+            className="button-row trope-card-header-right term-card-actions"
             onClick={(event) => event.stopPropagation()}
             onKeyDown={(event) => event.stopPropagation()}
           >

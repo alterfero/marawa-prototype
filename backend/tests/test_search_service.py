@@ -33,7 +33,7 @@ def make_csv_bytes(rows: list[dict[str, str]], csv_columns: list[str]) -> bytes:
 
 
 def test_rebuild_job_computes_term_embeddings_and_term_similarity_caches(tmp_path) -> None:
-    from app.core.csv_schema import CSV_COLUMNS, KEYWORD_FIELD, TROPE_FIELD
+    from app.core.csv_schema import CSV_COLUMNS, KEYWORD_FIELD, THEME_FIELD, TROPE_FIELD
 
     db_path = tmp_path / "search-service.db"
     engine = build_engine(f"sqlite:///{db_path}")
@@ -45,11 +45,13 @@ def test_rebuild_job_computes_term_embeddings_and_term_similarity_caches(tmp_pat
     row_one["Story title (Eng)"] = "Story One"
     row_one[TROPE_FIELD] = "§§ first trope\n§§ first trope variant"
     row_one[KEYWORD_FIELD] = "wolf ; moon"
+    row_one[THEME_FIELD] = "§§ first theme\n§§ first theme variant"
 
     row_two = {column: "" for column in CSV_COLUMNS}
     row_two["Story title (Eng)"] = "Story Two"
     row_two[TROPE_FIELD] = "§§ second trope\n§§ third trope"
     row_two[KEYWORD_FIELD] = "river ; sea"
+    row_two[THEME_FIELD] = "§§ second theme"
 
     with session_factory() as session:
         dataset, _ = upload_dataset_csv(
@@ -71,6 +73,11 @@ def test_rebuild_job_computes_term_embeddings_and_term_similarity_caches(tmp_pat
             .where(TermEmbedding.term_kind == TermKind.KEYWORD)
             .order_by(TermEmbedding.keyword_id)
         ).all()
+        theme_embeddings = session.scalars(
+            select(TermEmbedding)
+            .where(TermEmbedding.term_kind == TermKind.THEME)
+            .order_by(TermEmbedding.theme_id)
+        ).all()
         trope_similarity_cache = session.scalars(
             select(TermSimilarityCache)
             .where(TermSimilarityCache.term_kind == TermKind.TROPE)
@@ -86,13 +93,15 @@ def test_rebuild_job_computes_term_embeddings_and_term_similarity_caches(tmp_pat
     assert result["model_name"] == FakeEmbeddingBackend.model_name
     assert result["artifact_version"] == 1
     assert result["tropes_indexed"] == 4
+    assert result["themes_indexed"] == 3
     assert result["keywords_indexed"] == 4
     assert result["near_duplicate_pairs"] == 2
     assert result["near_duplicate_keyword_pairs"] == 4
     assert len(trope_embeddings) == 4
+    assert len(theme_embeddings) == 3
     assert len(keyword_embeddings) == 4
-    assert all(embedding.vector_dimensions == 3 for embedding in trope_embeddings + keyword_embeddings)
-    assert all(embedding.artifact_version == 1 for embedding in trope_embeddings + keyword_embeddings)
+    assert all(embedding.vector_dimensions == 3 for embedding in trope_embeddings + theme_embeddings + keyword_embeddings)
+    assert all(embedding.artifact_version == 1 for embedding in trope_embeddings + theme_embeddings + keyword_embeddings)
     assert len(trope_similarity_cache) == 2
     assert len(keyword_similarity_cache) == 4
     assert {entry.similarity_score > 0.9 for entry in trope_similarity_cache + keyword_similarity_cache} == {True}

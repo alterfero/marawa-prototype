@@ -4,7 +4,12 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db_session, require_minimum_role, require_minimum_role_with_csrf
 from app.api.errors import api_error
-from app.db.models import KeywordConfirmationStatus, TropeConfirmationStatus, UserRole
+from app.db.models import (
+    KeywordConfirmationStatus,
+    ThemeConfirmationStatus,
+    TropeConfirmationStatus,
+    UserRole,
+)
 from app.services.auth import AuthSessionContext
 from app.services.curation import (
     CurationConflictError,
@@ -32,6 +37,19 @@ from app.services.keywords import (
     KeywordMutationValidationError,
     KeywordVersionConflictError,
     set_keyword_confirmation_statuses,
+)
+from app.services.themes import (
+    ThemeCurationConflictError,
+    ThemeCurationValidationError,
+    ThemeLookupNotFoundError,
+    ThemeMutationValidationError,
+    ThemeVersionConflictError,
+    delete_unused_themes,
+    list_near_duplicate_themes,
+    list_similar_unconfirmed_themes,
+    merge_themes,
+    set_theme_confirmation_statuses,
+    validate_theme_merges,
 )
 
 
@@ -211,6 +229,88 @@ class DeleteUnusedKeywordsResponse(BaseModel):
     queued_job: JobSummaryResponse | None
 
 
+class ThemeSummaryResponse(BaseModel):
+    id: str
+    version: int | None = None
+    text: str
+    confirmation_status: ThemeConfirmationStatus | None = None
+    story_count: int
+
+
+class NearDuplicateThemePairResponse(BaseModel):
+    source_theme: ThemeSummaryResponse
+    target_theme: ThemeSummaryResponse
+    similarity_score: float
+    metadata: dict
+
+
+class NearDuplicateThemeListResponse(BaseModel):
+    items: list[NearDuplicateThemePairResponse]
+    artifact_version: int | None
+    model_name: str
+    total: int
+
+
+class SimilarUnconfirmedThemeResponse(ThemeSummaryResponse):
+    similarity_score: float
+
+
+class SimilarUnconfirmedThemeListResponse(BaseModel):
+    source_theme_id: str
+    items: list[SimilarUnconfirmedThemeResponse]
+    artifact_version: int | None
+    model_name: str
+    minimum_similarity: float
+    total: int
+
+
+class MergeThemesRequest(BaseModel):
+    source_theme_id: str
+    target_theme_id: str
+
+
+class MergeThemesResponse(BaseModel):
+    source_theme_id: str
+    target_theme_id: str
+    affected_story_count: int
+    dataset_version: int
+
+
+class ValidateThemesRequest(BaseModel):
+    merges: list[MergeThemesRequest]
+
+
+class AppliedThemeMergeSummaryResponse(BaseModel):
+    source_theme_id: str
+    target_theme_id: str
+    affected_story_count: int
+
+
+class ValidateThemesResponse(BaseModel):
+    applied_merges: list[AppliedThemeMergeSummaryResponse]
+    merge_count: int
+    affected_story_count: int
+    dataset_version: int
+
+
+class CanonicalizeThemeRequest(BaseModel):
+    theme_id: str
+    expected_theme_version: int
+
+
+class CanonicalizeThemesRequest(BaseModel):
+    themes: list[CanonicalizeThemeRequest]
+
+
+class CanonicalizeThemesResponse(BaseModel):
+    themes: list[ThemeSummaryResponse]
+
+
+class DeleteUnusedThemesResponse(BaseModel):
+    deleted_theme_count: int
+    dataset_version: int
+
+
 router = APIRouter(prefix="/curation", tags=["curation"])
 
 
@@ -260,6 +360,16 @@ def _raise_keyword_curation_error(exc: Exception) -> None:
     raise exc
 
 
+def _raise_theme_curation_error(exc: Exception) -> None:
+    if isinstance(exc, ThemeLookupNotFoundError):
+        raise api_error(404, "theme_not_found", str(exc)) from exc
+    if isinstance(exc, (ThemeCurationConflictError, ThemeVersionConflictError)):
+        raise api_error(409, "theme_merge_conflict", str(exc)) from exc
+    if isinstance(exc, (ThemeCurationValidationError, ThemeMutationValidationError)):
+        raise api_error(400, "theme_merge_invalid", str(exc)) from exc
+    raise exc
+
+
 @router.get("/near-duplicate-tropes", response_model=NearDuplicateTropeListResponse)
 def read_near_duplicate_tropes(
     _: object = Depends(require_minimum_role(UserRole.ADMIN)),
@@ -292,6 +402,40 @@ def read_similar_unconfirmed_tropes(
         )
     except Exception as exc:
         _raise_curation_error(exc)
+
+
+@router.get("/near-duplicate-themes", response_model=NearDuplicateThemeListResponse)
+def read_near_duplicate_themes(
+    _: object = Depends(require_minimum_role(UserRole.ADMIN)),
+    session: Session = Depends(get_db_session),
+    search_service=Depends(get_search_service),
+) -> NearDuplicateThemeListResponse:
+    return NearDuplicateThemeListResponse(
+        **list_near_duplicate_themes(session, model_name=search_service.model_name)
+    )
+
+
+@router.get("/themes/{theme_id}/similar-unconfirmed", response_model=SimilarUnconfirmedThemeListResponse)
+def read_similar_unconfirmed_themes(
+    theme_id: str,
+    minimum_similarity: float = Query(default=0.6, ge=0.0, le=1.0),
+    include_canonical: bool = Query(default=False),
+    _: object = Depends(require_minimum_role(UserRole.ADMIN)),
+    session: Session = Depends(get_db_session),
+    search_service=Depends(get_search_service),
+) -> SimilarUnconfirmedThemeListResponse:
+    try:
+        return SimilarUnconfirmedThemeListResponse(
+            **list_similar_unconfirmed_themes(
+                session,
+                source_theme_id=theme_id,
+                minimum_similarity=minimum_similarity,
+                search_service=search_service,
+                include_canonical=include_canonical,
+            )
+        )
+    except Exception as exc:
+        _raise_theme_curation_error(exc)
 
 
 @router.get("/near-duplicate-keywords", response_model=NearDuplicateKeywordListResponse)
@@ -434,6 +578,103 @@ def remove_unused_tropes(
         deleted_trope_count=summary["deleted_trope_count"],
         dataset_version=dataset.version,
         queued_job=_queued_job_summary(job),
+    )
+
+
+@router.post("/merge-themes", response_model=MergeThemesResponse)
+def merge_canonical_themes(
+    payload: MergeThemesRequest,
+    auth_context: AuthSessionContext = Depends(require_minimum_role_with_csrf(UserRole.ADMIN)),
+    session: Session = Depends(get_db_session),
+) -> MergeThemesResponse:
+    try:
+        dataset, summary = merge_themes(
+            session,
+            source_theme_id=payload.source_theme_id,
+            target_theme_id=payload.target_theme_id,
+            actor_user_id=auth_context.user.id,
+        )
+    except Exception as exc:
+        _raise_theme_curation_error(exc)
+    return MergeThemesResponse(
+        source_theme_id=summary["source_theme_id"],
+        target_theme_id=summary["target_theme_id"],
+        affected_story_count=summary["affected_story_count"],
+        dataset_version=dataset.version,
+    )
+
+
+@router.post("/validate-theme-merges", response_model=ValidateThemesResponse)
+def validate_canonical_theme_merges(
+    payload: ValidateThemesRequest,
+    auth_context: AuthSessionContext = Depends(require_minimum_role_with_csrf(UserRole.ADMIN)),
+    session: Session = Depends(get_db_session),
+) -> ValidateThemesResponse:
+    try:
+        dataset, summary = validate_theme_merges(
+            session,
+            merges=[
+                {
+                    "source_theme_id": merge.source_theme_id,
+                    "target_theme_id": merge.target_theme_id,
+                }
+                for merge in payload.merges
+            ],
+            actor_user_id=auth_context.user.id,
+        )
+    except Exception as exc:
+        _raise_theme_curation_error(exc)
+    return ValidateThemesResponse(
+        applied_merges=[
+            AppliedThemeMergeSummaryResponse(
+                source_theme_id=merge["source_theme_id"],
+                target_theme_id=merge["target_theme_id"],
+                affected_story_count=merge["affected_story_count"],
+            )
+            for merge in summary["applied_merges"]
+        ],
+        merge_count=summary["merge_count"],
+        affected_story_count=summary["affected_story_count"],
+        dataset_version=dataset.version,
+    )
+
+
+@router.post("/canonicalize-themes", response_model=CanonicalizeThemesResponse)
+def canonicalize_themes(
+    payload: CanonicalizeThemesRequest,
+    auth_context: AuthSessionContext = Depends(require_minimum_role_with_csrf(UserRole.ADMIN)),
+    session: Session = Depends(get_db_session),
+) -> CanonicalizeThemesResponse:
+    try:
+        themes = set_theme_confirmation_statuses(
+            session,
+            updates=[
+                {
+                    "theme_id": theme.theme_id,
+                    "expected_version": theme.expected_theme_version,
+                    "confirmation_status": ThemeConfirmationStatus.CANONICAL,
+                }
+                for theme in payload.themes
+            ],
+            actor_user_id=auth_context.user.id,
+        )
+    except Exception as exc:
+        _raise_theme_curation_error(exc)
+    return CanonicalizeThemesResponse(themes=[ThemeSummaryResponse(**theme) for theme in themes])
+
+
+@router.delete("/unused-themes", response_model=DeleteUnusedThemesResponse)
+def remove_unused_themes(
+    auth_context: AuthSessionContext = Depends(require_minimum_role_with_csrf(UserRole.ADMIN)),
+    session: Session = Depends(get_db_session),
+) -> DeleteUnusedThemesResponse:
+    try:
+        dataset, summary = delete_unused_themes(session, actor_user_id=auth_context.user.id)
+    except Exception as exc:
+        _raise_theme_curation_error(exc)
+    return DeleteUnusedThemesResponse(
+        deleted_theme_count=summary["deleted_theme_count"],
+        dataset_version=dataset.version,
     )
 
 

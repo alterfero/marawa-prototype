@@ -5,16 +5,26 @@ import {
   deleteTheme,
   getCanonicalThemes,
   getErrorMessage,
+  getSimilarUnconfirmedThemes,
   getStories,
   getThemeDetail,
+  mergeThemes,
   mergeUnconfirmedTheme,
+  searchThemes,
   updateCanonicalTheme,
   updateThemeConfirmationStatus,
 } from "../api/client";
 import { ConfirmationStatusSwitch } from "../components/ConfirmationStatusSwitch";
 import { StorySummaryCard } from "../components/StorySummaryCard";
 import { TermCard } from "../components/TermCard";
-import type { CanonicalThemeListItem, StorySummary, ThemeDetail, ThemeConfirmationStatus } from "../api/types";
+import type {
+  CanonicalThemeListItem,
+  SimilarUnconfirmedThemeListResponse,
+  StorySummary,
+  ThemeDetail,
+  ThemeConfirmationStatus,
+  ThemeSearchItem,
+} from "../api/types";
 import { routeHref, useHashSearch } from "../router";
 import { useDatasetMaintenance } from "../maintenance";
 
@@ -24,6 +34,11 @@ interface PageNotice {
   title: string;
   body?: string;
 }
+
+type ConfirmationStatusTheme = Pick<
+  CanonicalThemeListItem,
+  "id" | "version" | "text" | "confirmation_status" | "story_count"
+>;
 
 
 function confirmationStatusLabel(status: ThemeConfirmationStatus): string {
@@ -47,8 +62,14 @@ export function ThemeManagementView() {
   const [selectedThemeId, setSelectedThemeId] = useState<string | null>(null);
   const [selectedThemeDetail, setSelectedThemeDetail] = useState<ThemeDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [similarThemeFilter, setSimilarThemeFilter] = useState<"unconfirmed" | "all">("unconfirmed");
+  const [similarityThreshold, setSimilarityThreshold] = useState(0.6);
+  const [similarThemes, setSimilarThemes] = useState<SimilarUnconfirmedThemeListResponse | null>(null);
+  const [similarThemesLoading, setSimilarThemesLoading] = useState(false);
   const [editingThemeId, setEditingThemeId] = useState<string | null>(null);
   const [editingThemeText, setEditingThemeText] = useState("");
+  const [editingThemeResults, setEditingThemeResults] = useState<ThemeSearchItem[]>([]);
+  const [editingThemeSearchStatus, setEditingThemeSearchStatus] = useState<"idle" | "loading" | "ready">("idle");
   const [mergingThemeId, setMergingThemeId] = useState<string | null>(null);
   const [mergeTargetThemeId, setMergeTargetThemeId] = useState("");
   const [loading, setLoading] = useState(true);
@@ -74,6 +95,8 @@ export function ThemeManagementView() {
   function resetThemeEditor() {
     setEditingThemeId(null);
     setEditingThemeText("");
+    setEditingThemeResults([]);
+    setEditingThemeSearchStatus("idle");
   }
 
   function resetThemeMerge() {
@@ -130,6 +153,42 @@ export function ThemeManagementView() {
   }, [editingThemeId, themes]);
 
   useEffect(() => {
+    const query = editingThemeText.trim();
+    if (!editingThemeId || !query) {
+      setEditingThemeResults([]);
+      setEditingThemeSearchStatus("idle");
+      return;
+    }
+    let cancelled = false;
+    const timeoutId = window.setTimeout(() => {
+      void (async () => {
+        try {
+          setEditingThemeSearchStatus("loading");
+          const response = await searchThemes({ query, limit: 8 });
+          if (!cancelled) {
+            setEditingThemeResults(response.items);
+            setEditingThemeSearchStatus("ready");
+          }
+        } catch (caughtError) {
+          if (!cancelled) {
+            setEditingThemeResults([]);
+            setEditingThemeSearchStatus("ready");
+            setNotice({
+              tone: "error",
+              title: "Could not search replacement themes",
+              body: getErrorMessage(caughtError),
+            });
+          }
+        }
+      })();
+    }, 250);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [editingThemeId, editingThemeText]);
+
+  useEffect(() => {
     if (mergingThemeId && !themes.some((theme) => theme.id === mergingThemeId)) {
       resetThemeMerge();
     }
@@ -170,6 +229,44 @@ export function ThemeManagementView() {
       cancelled = true;
     };
   }, [selectedThemeId]);
+
+  useEffect(() => {
+    if (!selectedTheme) {
+      setSimilarThemes(null);
+      setSimilarThemesLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        setSimilarThemesLoading(true);
+        const response = await getSimilarUnconfirmedThemes(selectedTheme.id, {
+          minimum_similarity: similarityThreshold,
+          include_canonical: similarThemeFilter === "all",
+        });
+        if (!cancelled) {
+          setSimilarThemes(response);
+        }
+      } catch (caughtError) {
+        if (!cancelled) {
+          setSimilarThemes(null);
+          setNotice({
+            tone: "error",
+            title: "Could not load similar themes",
+            body: getErrorMessage(caughtError),
+          });
+        }
+      } finally {
+        if (!cancelled) {
+          setSimilarThemesLoading(false);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedTheme, similarityThreshold, similarThemeFilter]);
 
   function handleThemeRowKeyDown(event: KeyboardEvent<HTMLElement>, themeId: string) {
     if (loading || busy) {
@@ -320,7 +417,65 @@ export function ThemeManagementView() {
     }
   }
 
-  async function handleUpdateConfirmationStatus(theme: CanonicalThemeListItem, nextStatus: ThemeConfirmationStatus) {
+  async function handleMergeSimilarTheme(sourceTheme: ConfirmationStatusTheme) {
+    if (!selectedTheme || selectedTheme.confirmation_status !== "canonical") {
+      return;
+    }
+    if (!window.confirm(`Replace "${sourceTheme.text}" with "${selectedTheme.text}" in every story that uses it?`)) {
+      return;
+    }
+    try {
+      setBusy(true);
+      setNotice(null);
+      await mergeUnconfirmedTheme({
+        source_theme_id: sourceTheme.id,
+        expected_source_theme_version: sourceTheme.version,
+        target_theme_id: selectedTheme.id,
+      });
+      await refresh({ clearNotice: false });
+      setNotice({
+        tone: "success",
+        title: "Themes merged",
+        body: `Replaced ${sourceTheme.text} with ${selectedTheme.text} across its assigned stories.`,
+      });
+    } catch (caughtError) {
+      if (isThemeVersionConflict(caughtError)) {
+        await handleThemeVersionConflict("Could not merge theme");
+      } else {
+        setNotice({ tone: "error", title: "Could not merge theme", body: getErrorMessage(caughtError) });
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleMergeThemeInto(
+    sourceTheme: ConfirmationStatusTheme,
+    targetTheme: Pick<ConfirmationStatusTheme, "id" | "text" | "story_count">,
+  ) {
+    if (!window.confirm(`Replace "${sourceTheme.text}" with "${targetTheme.text}" in every story that uses it?`)) {
+      return;
+    }
+    try {
+      setBusy(true);
+      setNotice(null);
+      setSelectedThemeId(targetTheme.id);
+      const result = await mergeThemes({ source_theme_id: sourceTheme.id, target_theme_id: targetTheme.id });
+      await refresh({ clearNotice: false });
+      resetThemeEditor();
+      setNotice({
+        tone: "success",
+        title: "Themes merged",
+        body: `Replaced ${sourceTheme.text} with ${targetTheme.text} across ${result.affected_story_count} stor${result.affected_story_count === 1 ? "y" : "ies"}.`,
+      });
+    } catch (caughtError) {
+      setNotice({ tone: "error", title: "Could not merge themes", body: getErrorMessage(caughtError) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleUpdateConfirmationStatus(theme: ConfirmationStatusTheme, nextStatus: ThemeConfirmationStatus) {
     try {
       setBusy(true);
       const response = await updateThemeConfirmationStatus(theme.id, {
@@ -348,7 +503,7 @@ export function ThemeManagementView() {
     }
   }
 
-  function renderConfirmationActions(theme: CanonicalThemeListItem) {
+  function renderConfirmationActions(theme: ConfirmationStatusTheme) {
     return (
       <ConfirmationStatusSwitch
         ariaLabel="Theme confirmation status"
@@ -365,7 +520,7 @@ export function ThemeManagementView() {
         <div className="panel-header">
           <div>
             <h1>Theme management</h1>
-            <p className="muted">Manage canonical themes and their confirmation status. Themes are not vectorized or used for similarity search.</p>
+            <p className="muted">Browse canonical themes, inspect their stories, and compare them using embedding similarity.</p>
           </div>
         </div>
       </section>
@@ -487,6 +642,7 @@ export function ThemeManagementView() {
                           className="input"
                           disabled={loading || mutationDisabled}
                           onChange={(event) => setEditingThemeText(event.target.value)}
+                          placeholder="Type a replacement theme or reuse a similar existing one"
                           value={editingThemeText}
                         />
                       </label>
@@ -502,6 +658,38 @@ export function ThemeManagementView() {
                         <button className="button button-ghost" disabled={loading || busy} onClick={resetThemeEditor} type="button">
                           Cancel
                         </button>
+                      </div>
+                      <div className="stack">
+                        <div className="panel-header">
+                          <h3>Similar existing themes</h3>
+                          <span className="pill">
+                            {editingThemeSearchStatus === "loading" ? "searching" : `${editingThemeResults.length} results`}
+                          </span>
+                        </div>
+                        {editingThemeText.trim() && editingThemeSearchStatus === "loading" ? <p className="muted">Searching themes...</p> : null}
+                        {editingThemeText.trim() && editingThemeSearchStatus === "ready" && editingThemeResults.length === 0 ? (
+                          <p className="muted">No similar themes were returned for this query.</p>
+                        ) : null}
+                        {editingThemeResults.map((candidate) => {
+                          const isCurrentTheme = candidate.id === theme.id;
+                          return (
+                            <TermCard
+                              key={`edit-${theme.id}-${candidate.id}`}
+                              meta={`Similarity ${candidate.score.toFixed(2)}`}
+                              term={candidate}
+                              actions={
+                                <button
+                                  className="button button-ghost"
+                                  disabled={loading || mutationDisabled || isCurrentTheme}
+                                  onClick={() => void handleMergeThemeInto(theme, candidate)}
+                                  type="button"
+                                >
+                                  {isCurrentTheme ? "Current theme" : "Use existing theme"}
+                                </button>
+                              }
+                            />
+                          );
+                        })}
                       </div>
                     </div>
                   ) : null}
@@ -589,6 +777,79 @@ export function ThemeManagementView() {
                     story={story}
                   />
                 ))}
+              </div>
+
+              <div className="trope-management-similar-section">
+                <div className="panel-header">
+                  <div>
+                    <h3>Similar themes</h3>
+                    <p className="muted">Candidates are ordered by embedding similarity to the selected theme.</p>
+                  </div>
+                  <span className="pill">{similarThemesLoading ? "loading" : `${similarThemes?.total ?? 0} results`}</span>
+                </div>
+                <div aria-label="Similar theme results" className="similarity-scope-switch" role="group">
+                  <button
+                    aria-pressed={similarThemeFilter === "unconfirmed"}
+                    className={similarThemeFilter === "unconfirmed" ? "similarity-scope-switch-option-active" : undefined}
+                    disabled={loading || busy}
+                    onClick={() => setSimilarThemeFilter("unconfirmed")}
+                    type="button"
+                  >
+                    unconfirmed
+                  </button>
+                  <button
+                    aria-pressed={similarThemeFilter === "all"}
+                    className={similarThemeFilter === "all" ? "similarity-scope-switch-option-active" : undefined}
+                    disabled={loading || busy}
+                    onClick={() => setSimilarThemeFilter("all")}
+                    type="button"
+                  >
+                    all
+                  </button>
+                </div>
+                <label className="field trope-management-similarity-threshold" htmlFor="theme-management-similarity-threshold">
+                  <div className="card-row"><strong>Similarity threshold</strong><span className="pill">{similarityThreshold.toFixed(2)}</span></div>
+                  <input
+                    className="range-input"
+                    disabled={loading || busy}
+                    id="theme-management-similarity-threshold"
+                    max="1"
+                    min="0"
+                    onChange={(event) => setSimilarityThreshold(Number(event.target.value))}
+                    step="0.01"
+                    type="range"
+                    value={similarityThreshold}
+                  />
+                </label>
+                {similarThemesLoading ? <p className="muted">Loading similar themes...</p> : null}
+                {!similarThemesLoading && similarThemes?.artifact_version === null ? (
+                  <p className="muted">No current theme embeddings are available. Run Rebuild, then refresh this view.</p>
+                ) : null}
+                {!similarThemesLoading && similarThemes?.artifact_version !== null && similarThemes?.items.length === 0 ? (
+                  <p className="muted">
+                    {similarThemeFilter === "unconfirmed" ? "No unconfirmed themes meet the current threshold." : "No similar themes meet the current threshold."}
+                  </p>
+                ) : null}
+                <div className="list trope-management-similar-list">
+                  {similarThemes?.items.map((theme) => (
+                    <TermCard
+                      className="trope-management-similar-trope-card"
+                      key={theme.id}
+                      meta={`Similarity ${theme.similarity_score.toFixed(2)}`}
+                      term={theme}
+                      actions={
+                        <div className="button-row wrap-row">
+                          {renderConfirmationActions(theme)}
+                          {selectedTheme.confirmation_status === "canonical" && theme.confirmation_status === "unconfirmed" ? (
+                            <button className="button" disabled={mutationDisabled} onClick={() => void handleMergeSimilarTheme(theme)} type="button">
+                              Replace with selected theme
+                            </button>
+                          ) : null}
+                        </div>
+                      }
+                    />
+                  ))}
+                </div>
               </div>
             </section>
           ) : null}

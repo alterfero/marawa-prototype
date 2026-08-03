@@ -4,7 +4,7 @@ import io
 import numpy as np
 from fastapi.testclient import TestClient
 
-from app.core.csv_schema import CSV_COLUMNS, KEYWORD_FIELD, TROPE_FIELD
+from app.core.csv_schema import CSV_COLUMNS, KEYWORD_FIELD, THEME_FIELD, TROPE_FIELD
 from app.db import build_engine, build_session_factory
 from app.main import create_app
 from tests.auth_helpers import authenticate_admin, configure_auth_env
@@ -27,10 +27,11 @@ def make_csv_bytes(rows: list[dict[str, str]]) -> bytes:
     return buffer.getvalue().encode("utf-8-sig")
 
 
-def make_row(*, title: str, tropes: str = "", keywords: str = "") -> dict[str, str]:
+def make_row(*, title: str, tropes: str = "", themes: str = "", keywords: str = "") -> dict[str, str]:
     row = {column: "" for column in CSV_COLUMNS}
     row["Story title (Eng)"] = title
     row[TROPE_FIELD] = tropes
+    row[THEME_FIELD] = themes
     row[KEYWORD_FIELD] = keywords
     return row
 
@@ -624,3 +625,46 @@ def test_keyword_curation_merges_assignments_and_deletes_unused_keywords(monkeyp
     assert delete_unused_response.json()["deleted_keyword_count"] == 1
     assert delete_unused_response.json()["queued_job"] is None
     assert [keyword["text"] for keyword in remaining_keywords] == ["wolf"]
+
+
+def test_theme_curation_uses_independent_theme_embeddings_and_merges_assignments(monkeypatch, tmp_path) -> None:
+    configure_auth_env(monkeypatch)
+    with build_client(tmp_path, "theme-curation.db") as client:
+        authenticate_admin(client)
+        upload_dataset(
+            client,
+            [
+                make_row(title="Story One", themes="§§ first theme variant"),
+                make_row(title="Story Two", themes="§§ first theme\n§§ first theme variant"),
+            ],
+        )
+        request_rebuild(client)
+        process_next_job(client)
+
+        themes = client.get("/api/themes").json()
+        source = next(theme for theme in themes if theme["text"] == "first theme variant")
+        target = next(theme for theme in themes if theme["text"] == "first theme")
+        pairs_response = client.get("/api/curation/near-duplicate-themes")
+        search_response = client.post("/api/search/themes", json={"query": "first theme", "limit": 3})
+        similar_response = client.get(f"/api/curation/themes/{target['id']}/similar-unconfirmed")
+        merge_response = client.post(
+            "/api/curation/merge-themes",
+            json={"source_theme_id": source["id"], "target_theme_id": target["id"]},
+        )
+        stories = client.get("/api/stories").json()["items"]
+        create_unused_response = client.post("/api/themes", json={"text": "orphan theme"})
+        delete_unused_response = client.delete("/api/curation/unused-themes")
+
+    assert pairs_response.status_code == 200
+    assert pairs_response.json()["artifact_version"] == 1
+    assert pairs_response.json()["total"] == 1
+    assert search_response.status_code == 200
+    assert {item["text"] for item in search_response.json()["items"]} == {"first theme", "first theme variant"}
+    assert similar_response.status_code == 200
+    assert similar_response.json()["items"][0]["text"] == "first theme variant"
+    assert merge_response.status_code == 200
+    assert merge_response.json()["affected_story_count"] == 2
+    assert {story["fields"][THEME_FIELD] for story in stories} == {"§§ first theme"}
+    assert create_unused_response.status_code == 200
+    assert delete_unused_response.status_code == 200
+    assert delete_unused_response.json()["deleted_theme_count"] == 1

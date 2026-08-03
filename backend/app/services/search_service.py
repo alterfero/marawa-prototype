@@ -18,10 +18,12 @@ from app.db.models import (
     Keyword,
     Story,
     StoryKeyword,
+    StoryTheme,
     StoryTrope,
     TermEmbedding,
     TermKind,
     TermSimilarityCache,
+    Theme,
     Trope,
 )
 
@@ -62,6 +64,7 @@ class SearchService:
     def rebuild_embeddings(self, session: Session, *, dataset_id: str | None = None) -> dict[str, Any]:
         dataset = self._resolve_target_dataset(session, dataset_id)
         trope_terms = self._load_dataset_terms(session, dataset.id, TermKind.TROPE)
+        theme_terms = self._load_dataset_terms(session, dataset.id, TermKind.THEME)
         keyword_terms = self._load_dataset_terms(session, dataset.id, TermKind.KEYWORD)
         artifact_version = self._next_artifact_version(session, dataset.id)
 
@@ -70,6 +73,13 @@ class SearchService:
             dataset.id,
             TermKind.TROPE,
             trope_terms,
+            artifact_version,
+        )
+        theme_summary = self._rebuild_term_embeddings(
+            session,
+            dataset.id,
+            TermKind.THEME,
+            theme_terms,
             artifact_version,
         )
         keyword_summary = self._rebuild_term_embeddings(
@@ -85,6 +95,13 @@ class SearchService:
             dataset.id,
             TermKind.TROPE,
             trope_terms,
+            artifact_version,
+        )
+        theme_cache_summary = self._refresh_term_similarity_cache(
+            session,
+            dataset.id,
+            TermKind.THEME,
+            theme_terms,
             artifact_version,
         )
         keyword_cache_summary = self._refresh_term_similarity_cache(
@@ -103,8 +120,10 @@ class SearchService:
             "model_name": self.model_name,
             "artifact_version": artifact_version,
             "tropes_indexed": trope_summary["indexed_count"],
+            "themes_indexed": theme_summary["indexed_count"],
             "keywords_indexed": keyword_summary["indexed_count"],
             "near_duplicate_pairs": trope_cache_summary["pair_count"],
+            "near_duplicate_theme_pairs": theme_cache_summary["pair_count"],
             "near_duplicate_keyword_pairs": keyword_cache_summary["pair_count"],
         }
 
@@ -126,6 +145,7 @@ class SearchService:
                     TermEmbedding.model_name == self.model_name,
                     or_(
                         TermEmbedding.trope_id.in_(active_term_ids) if term_kind == TermKind.TROPE else False,
+                        TermEmbedding.theme_id.in_(active_term_ids) if term_kind == TermKind.THEME else False,
                         TermEmbedding.keyword_id.in_(active_term_ids) if term_kind == TermKind.KEYWORD else False,
                     ),
                 )
@@ -143,8 +163,9 @@ class SearchService:
             return self._lexical_fallback_result(active_terms, query, limit=limit)
 
         embedding_by_term_id = {
-            (embedding.trope_id if term_kind == TermKind.TROPE else embedding.keyword_id): embedding
+            self._embedding_term_id(embedding, term_kind): embedding
             for embedding in latest_embeddings
+            if self._embedding_term_id(embedding, term_kind) is not None
         }
         ordered_terms = [term for term in active_terms if term.id in embedding_by_term_id]
         if not ordered_terms:
@@ -405,6 +426,72 @@ class SearchService:
             if score >= minimum_score
         }
 
+    def get_similar_theme_scores(
+        self,
+        session: Session,
+        source_theme_id: str,
+        candidate_theme_ids: list[str],
+        *,
+        minimum_score: float = 0.0,
+    ) -> tuple[int | None, dict[str, float]]:
+        """Return current embedding similarities from one theme to candidate themes."""
+        candidate_ids = list(
+            dict.fromkeys(
+                theme_id
+                for theme_id in candidate_theme_ids
+                if theme_id and theme_id != source_theme_id
+            )
+        )
+        if not candidate_ids:
+            return None, {}
+
+        source_embedding = session.scalar(
+            select(TermEmbedding)
+            .where(
+                TermEmbedding.term_kind == TermKind.THEME,
+                TermEmbedding.model_name == self.model_name,
+                TermEmbedding.theme_id == source_theme_id,
+            )
+            .order_by(TermEmbedding.artifact_version.desc())
+        )
+        if source_embedding is None or source_embedding.vector_blob is None or source_embedding.vector_dimensions is None:
+            return None, {}
+
+        artifact_version = source_embedding.artifact_version
+        candidate_embeddings = list(
+            session.scalars(
+                select(TermEmbedding).where(
+                    TermEmbedding.term_kind == TermKind.THEME,
+                    TermEmbedding.model_name == self.model_name,
+                    TermEmbedding.artifact_version == artifact_version,
+                    TermEmbedding.theme_id.in_(candidate_ids),
+                )
+            ).all()
+        )
+        usable_candidates = [
+            embedding
+            for embedding in candidate_embeddings
+            if embedding.theme_id is not None
+            and embedding.vector_blob is not None
+            and embedding.vector_dimensions == source_embedding.vector_dimensions
+        ]
+        if not usable_candidates:
+            return artifact_version, {}
+
+        source_vector = blob_to_vector(source_embedding.vector_blob, source_embedding.vector_dimensions)
+        candidate_matrix = np.vstack(
+            [
+                blob_to_vector(embedding.vector_blob, embedding.vector_dimensions)
+                for embedding in usable_candidates
+            ]
+        ).astype(np.float32)
+        scores = cosine_similarity(source_vector, candidate_matrix)
+        return artifact_version, {
+            embedding.theme_id: float(score)
+            for embedding, score in zip(usable_candidates, scores.tolist(), strict=True)
+            if score >= minimum_score
+        }
+
     def _lexical_fallback_result(
         self,
         terms: list[SearchTermRecord],
@@ -522,6 +609,31 @@ class SearchService:
                 for row in rows
             ]
 
+        if term_kind == TermKind.THEME:
+            rows = session.execute(
+                select(
+                    Theme.id,
+                    Theme.text,
+                    Theme.normalized_text,
+                    func.count(func.distinct(Story.id)).label("story_count"),
+                )
+                .select_from(Theme)
+                .join(StoryTheme, StoryTheme.theme_id == Theme.id)
+                .join(Story, Story.id == StoryTheme.story_id)
+                .where(Story.dataset_id == dataset_id)
+                .group_by(Theme.id, Theme.text, Theme.normalized_text)
+                .order_by(Theme.text.asc(), Theme.id.asc())
+            ).all()
+            return [
+                SearchTermRecord(
+                    id=row.id,
+                    text=row.text,
+                    normalized_text=row.normalized_text,
+                    story_count=int(row.story_count),
+                )
+                for row in rows
+            ]
+
         rows = session.execute(
             select(
                 Keyword.id,
@@ -573,7 +685,21 @@ class SearchService:
                 Keyword.dataset_id == dataset_id,
             )
         )
-        current = max(int(latest_trope_version or 0), int(latest_keyword_version or 0))
+        latest_theme_version = session.scalar(
+            select(func.max(TermEmbedding.artifact_version))
+            .select_from(TermEmbedding)
+            .join(Theme, Theme.id == TermEmbedding.theme_id)
+            .where(
+                TermEmbedding.term_kind == TermKind.THEME,
+                TermEmbedding.model_name == self.model_name,
+                Theme.dataset_id == dataset_id,
+            )
+        )
+        current = max(
+            int(latest_trope_version or 0),
+            int(latest_theme_version or 0),
+            int(latest_keyword_version or 0),
+        )
         return current + 1
 
     def _rebuild_term_embeddings(
@@ -587,6 +713,9 @@ class SearchService:
         if term_kind == TermKind.TROPE:
             dataset_term_ids = select(Trope.id).where(Trope.dataset_id == dataset_id)
             delete_filter = TermEmbedding.trope_id.in_(dataset_term_ids)
+        elif term_kind == TermKind.THEME:
+            dataset_term_ids = select(Theme.id).where(Theme.dataset_id == dataset_id)
+            delete_filter = TermEmbedding.theme_id.in_(dataset_term_ids)
         else:
             dataset_term_ids = select(Keyword.id).where(Keyword.dataset_id == dataset_id)
             delete_filter = TermEmbedding.keyword_id.in_(dataset_term_ids)
@@ -610,6 +739,7 @@ class SearchService:
                 TermEmbedding(
                     term_kind=term_kind,
                     trope_id=term.id if term_kind == TermKind.TROPE else None,
+                    theme_id=term.id if term_kind == TermKind.THEME else None,
                     keyword_id=term.id if term_kind == TermKind.KEYWORD else None,
                     model_name=self.model_name,
                     artifact_version=artifact_version,
@@ -632,6 +762,10 @@ class SearchService:
             dataset_term_ids = select(Trope.id).where(Trope.dataset_id == dataset_id)
             term_id_column = TermEmbedding.trope_id
             near_duplicate_reason = "near_duplicate_trope"
+        elif term_kind == TermKind.THEME:
+            dataset_term_ids = select(Theme.id).where(Theme.dataset_id == dataset_id)
+            term_id_column = TermEmbedding.theme_id
+            near_duplicate_reason = "near_duplicate_theme"
         else:
             dataset_term_ids = select(Keyword.id).where(Keyword.dataset_id == dataset_id)
             term_id_column = TermEmbedding.keyword_id
@@ -662,9 +796,9 @@ class SearchService:
             ).all()
         )
         embedding_by_term_id = {
-            (embedding.trope_id if term_kind == TermKind.TROPE else embedding.keyword_id): embedding
+            self._embedding_term_id(embedding, term_kind): embedding
             for embedding in embeddings
-            if (embedding.trope_id if term_kind == TermKind.TROPE else embedding.keyword_id) is not None
+            if self._embedding_term_id(embedding, term_kind) is not None
         }
         ordered_terms = [term for term in terms if term.id in embedding_by_term_id]
         if len(ordered_terms) < 2:
@@ -702,6 +836,14 @@ class SearchService:
                 )
                 pair_count += 1
         return {"pair_count": pair_count}
+
+    @staticmethod
+    def _embedding_term_id(embedding: TermEmbedding, term_kind: TermKind) -> str | None:
+        if term_kind == TermKind.TROPE:
+            return embedding.trope_id
+        if term_kind == TermKind.THEME:
+            return embedding.theme_id
+        return embedding.keyword_id
 
     def _resolve_target_dataset(self, session: Session, dataset_id: str | None) -> Dataset:
         if dataset_id:

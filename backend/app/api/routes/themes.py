@@ -12,6 +12,7 @@ from app.services.themes import (
     ThemeMutationValidationError,
     ThemeVersionConflictError,
     delete_theme,
+    ensure_canonical_theme,
     get_theme_detail,
     list_canonical_themes,
     merge_unconfirmed_theme,
@@ -26,6 +27,16 @@ class ThemeListItemResponse(BaseModel):
     text: str
     confirmation_status: ThemeConfirmationStatus
     story_count: int
+    story_ids: list[str] = Field(default_factory=list)
+
+
+class CreateThemeRequest(BaseModel):
+    text: str = Field(min_length=1)
+
+
+class CreateThemeResponse(BaseModel):
+    theme: ThemeListItemResponse
+    created: bool
 
 
 class ThemeStorySummaryResponse(BaseModel):
@@ -79,12 +90,36 @@ router = APIRouter(prefix="/themes", tags=["themes"])
 
 @router.get("", response_model=list[ThemeListItemResponse])
 def read_themes(
+    unused_only: bool = Query(default=False),
     q: str | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=5000),
+    include_story_ids: bool = Query(default=False),
     _: object = Depends(require_minimum_role(UserRole.GUEST)),
     session: Session = Depends(get_db_session),
 ) -> list[ThemeListItemResponse]:
-    return [ThemeListItemResponse(**item) for item in list_canonical_themes(session, query=q, limit=limit)]
+    return [
+        ThemeListItemResponse(**item)
+        for item in list_canonical_themes(
+            session,
+            unused_only=unused_only,
+            query=q,
+            limit=limit,
+            include_story_ids=include_story_ids,
+        )
+    ]
+
+
+@router.post("", response_model=CreateThemeResponse)
+def create_canonical_theme(
+    payload: CreateThemeRequest,
+    auth_context: AuthSessionContext = Depends(require_minimum_role_with_csrf(UserRole.CONTRIBUTOR)),
+    session: Session = Depends(get_db_session),
+) -> CreateThemeResponse:
+    try:
+        theme, created = ensure_canonical_theme(session, payload.text, actor_user_id=auth_context.user.id)
+    except ThemeMutationValidationError as exc:
+        raise api_error(400, "theme_mutation_invalid", str(exc)) from exc
+    return CreateThemeResponse(theme=ThemeListItemResponse(**theme), created=created)
 
 
 @router.get("/{theme_id}", response_model=ThemeDetailResponse)

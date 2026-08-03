@@ -4,7 +4,9 @@ import type {
   CreateKeywordResponse,
   CanonicalizeKeywordsResponse,
   CanonicalThemeListItem,
+  CanonicalizeThemesResponse,
   CreateTropeResponse,
+  CreateThemeResponse,
   CreateStoryResponse,
   CreateUserResponse,
   CurrentUser,
@@ -20,6 +22,7 @@ import type {
   DeleteUnusedKeywordsResponse,
   DeleteTropeResponse,
   DeleteUnusedTropesResponse,
+  DeleteUnusedThemesResponse,
   DeleteThemeResponse,
   ExplorationNetworkResponse,
   JobDetail,
@@ -28,10 +31,13 @@ import type {
   MergeKeywordResponse,
   MergeKeywordsResponse,
   MergeTropesResponse,
+  MergeThemesResponse,
   NearDuplicateTropeListResponse,
   NearDuplicateKeywordListResponse,
+  NearDuplicateThemeListResponse,
   SimilarUnconfirmedTropeListResponse,
   SimilarUnconfirmedKeywordListResponse,
+  SimilarUnconfirmedThemeListResponse,
   PasswordResetResponse,
   ReviewItem,
   ReviewStatus,
@@ -55,10 +61,12 @@ import type {
   UpdateKeywordResponse,
   ValidateKeywordsResponse,
   ValidateTropesResponse,
+  ValidateThemesResponse,
   SearchResponse,
   TropeSequenceGraphResponse,
   TropeDetail,
   TropeSearchResponse,
+  ThemeSearchResponse,
 } from "./types";
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || "/api").replace(/\/$/, "");
@@ -499,6 +507,27 @@ export function getSimilarUnconfirmedTropes(
   );
 }
 
+export function getNearDuplicateThemes(): Promise<NearDuplicateThemeListResponse> {
+  return request<NearDuplicateThemeListResponse>("/curation/near-duplicate-themes");
+}
+
+export function getSimilarUnconfirmedThemes(
+  themeId: string,
+  payload?: { minimum_similarity?: number; include_canonical?: boolean },
+): Promise<SimilarUnconfirmedThemeListResponse> {
+  const params = new URLSearchParams();
+  if (typeof payload?.minimum_similarity === "number") {
+    params.set("minimum_similarity", String(payload.minimum_similarity));
+  }
+  if (payload?.include_canonical) {
+    params.set("include_canonical", "true");
+  }
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return request<SimilarUnconfirmedThemeListResponse>(
+    `/curation/themes/${encodeURIComponent(themeId)}/similar-unconfirmed${suffix}`,
+  );
+}
+
 export function getNearDuplicateKeywords(): Promise<NearDuplicateKeywordListResponse> {
   return request<NearDuplicateKeywordListResponse>("/curation/near-duplicate-keywords");
 }
@@ -625,16 +654,72 @@ export function deleteUnusedTropes(): Promise<DeleteUnusedTropesResponse> {
   });
 }
 
-export function getCanonicalThemes(payload?: { q?: string; limit?: number }): Promise<CanonicalThemeListItem[]> {
+export function mergeThemes(payload: {
+  source_theme_id: string;
+  target_theme_id: string;
+}): Promise<MergeThemesResponse> {
+  return request<MergeThemesResponse>("/curation/merge-themes", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function validateThemeMerges(payload: {
+  merges: Array<{ source_theme_id: string; target_theme_id: string }>;
+}): Promise<ValidateThemesResponse> {
+  return request<ValidateThemesResponse>("/curation/validate-theme-merges", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function canonicalizeThemes(payload: {
+  themes: Array<{ theme_id: string; expected_theme_version: number }>;
+}): Promise<CanonicalizeThemesResponse> {
+  return request<CanonicalizeThemesResponse>("/curation/canonicalize-themes", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteUnusedThemes(): Promise<DeleteUnusedThemesResponse> {
+  return request<DeleteUnusedThemesResponse>("/curation/unused-themes", {
+    method: "DELETE",
+  });
+}
+
+export function getCanonicalThemes(payload?: {
+  unused_only?: boolean;
+  q?: string;
+  limit?: number;
+  include_story_ids?: boolean;
+}): Promise<CanonicalThemeListItem[]> {
   const params = new URLSearchParams();
+  if (payload?.unused_only) {
+    params.set("unused_only", "true");
+  }
   if (payload?.q?.trim()) {
     params.set("q", payload.q.trim());
   }
   if (typeof payload?.limit === "number") {
     params.set("limit", String(payload.limit));
   }
+  if (payload?.include_story_ids) {
+    params.set("include_story_ids", "true");
+  }
   const suffix = params.toString() ? `?${params.toString()}` : "";
   return request<CanonicalThemeListItem[]>(`/themes${suffix}`);
+}
+
+export function createCanonicalTheme(text: string): Promise<CreateThemeResponse> {
+  return request<CreateThemeResponse>("/themes", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text }),
+  });
 }
 
 export function getThemeDetail(themeId: string): Promise<ThemeDetail> {
@@ -859,6 +944,16 @@ export function buildTropeSequenceGraph(payload: {
 
 export function searchKeywords(payload: { query: string; limit?: number }): Promise<SearchResponse> {
   return request<SearchResponse>("/search/keywords", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function searchThemes(payload: { query: string; limit?: number }): Promise<ThemeSearchResponse> {
+  return request<ThemeSearchResponse>("/search/themes", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

@@ -39,6 +39,7 @@ export interface EmbeddingStatus {
   artifact_version: number | null;
   rebuilt_dataset_version: number | null;
   indexed_trope_count: number;
+  indexed_theme_count: number;
   indexed_keyword_count: number;
   last_built_at: string | null;
   last_error_message: string | null;
@@ -69,6 +70,7 @@ export interface JobDetail {
 export interface DatasetStatus {
   story_count: number;
   trope_count: number;
+  theme_count: number;
   keyword_count: number;
   active_dataset_version: number | null;
   latest_job: JobSummary | null;
@@ -531,6 +533,8 @@ export interface SearchResponse {
 
 export type TropeSearchItem = SearchItem;
 export type TropeSearchResponse = SearchResponse;
+export type ThemeSearchItem = SearchItem;
+export type ThemeSearchResponse = SearchResponse;
 
 export interface CanonicalTropeListItem {
   id: string;
@@ -562,6 +566,7 @@ export interface CanonicalThemeListItem {
   text: string;
   confirmation_status: ThemeConfirmationStatus;
   story_count: number;
+  story_ids: string[];
 }
 
 export interface ThemeStorySummary {
@@ -578,6 +583,11 @@ export interface UpdateThemeResponse {
   theme: CanonicalThemeListItem;
 }
 
+export interface CreateThemeResponse {
+  theme: CanonicalThemeListItem;
+  created: boolean;
+}
+
 export interface UpdateThemeConfirmationResponse {
   theme: CanonicalThemeListItem;
 }
@@ -592,6 +602,75 @@ export interface MergeThemeResponse {
   source_theme_id: string;
   target_theme: CanonicalThemeListItem;
   affected_story_count: number;
+  dataset_version: number;
+}
+
+export interface ThemeSummary {
+  id: string;
+  version?: number;
+  text: string;
+  confirmation_status?: ThemeConfirmationStatus;
+  story_count: number;
+}
+
+export interface NearDuplicateThemePair {
+  source_theme: ThemeSummary;
+  target_theme: ThemeSummary;
+  similarity_score: number;
+  metadata: Record<string, unknown>;
+}
+
+export interface NearDuplicateThemeListResponse {
+  items: NearDuplicateThemePair[];
+  artifact_version: number | null;
+  model_name: string;
+  total: number;
+}
+
+export interface SimilarUnconfirmedTheme {
+  id: string;
+  version: number;
+  text: string;
+  confirmation_status: ThemeConfirmationStatus;
+  story_count: number;
+  similarity_score: number;
+}
+
+export interface SimilarUnconfirmedThemeListResponse {
+  source_theme_id: string;
+  items: SimilarUnconfirmedTheme[];
+  artifact_version: number | null;
+  model_name: string;
+  minimum_similarity: number;
+  total: number;
+}
+
+export interface MergeThemesResponse {
+  source_theme_id: string;
+  target_theme_id: string;
+  affected_story_count: number;
+  dataset_version: number;
+}
+
+export interface AppliedThemeMergeSummary {
+  source_theme_id: string;
+  target_theme_id: string;
+  affected_story_count: number;
+}
+
+export interface ValidateThemesResponse {
+  applied_merges: AppliedThemeMergeSummary[];
+  merge_count: number;
+  affected_story_count: number;
+  dataset_version: number;
+}
+
+export interface CanonicalizeThemesResponse {
+  themes: ThemeSummary[];
+}
+
+export interface DeleteUnusedThemesResponse {
+  deleted_theme_count: number;
   dataset_version: number;
 }
 

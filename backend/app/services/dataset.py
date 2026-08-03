@@ -11,10 +11,12 @@ from app.db.models import (
     Keyword,
     Story,
     StoryKeyword,
+    StoryTheme,
     StoryTrope,
     TermEmbedding,
     TermKind,
     TermSimilarityCache,
+    Theme,
     Trope,
 )
 from app.services.audit import record_audit_event
@@ -36,6 +38,7 @@ def _embedding_status(
     *,
     dataset: Dataset | None,
     trope_count: int,
+    theme_count: int,
     keyword_count: int,
     model_name: str,
 ) -> dict:
@@ -54,6 +57,7 @@ def _embedding_status(
             "artifact_version": None,
             "rebuilt_dataset_version": None,
             "indexed_trope_count": 0,
+            "indexed_theme_count": 0,
             "indexed_keyword_count": 0,
             "last_built_at": None,
             "last_error_message": None
@@ -83,9 +87,11 @@ def _embedding_status(
     artifact_version = None
     rebuilt_dataset_version = None
     indexed_trope_count = 0
+    indexed_theme_count = 0
     indexed_keyword_count = 0
     last_built_at = None
     actual_trope_embeddings = 0
+    actual_theme_embeddings = 0
     actual_keyword_embeddings = 0
 
     if latest_successful_rebuild is not None:
@@ -93,6 +99,7 @@ def _embedding_status(
         raw_artifact_version = result.get("artifact_version")
         raw_rebuilt_dataset_version = result.get("dataset_version")
         raw_tropes_indexed = result.get("tropes_indexed")
+        raw_themes_indexed = result.get("themes_indexed")
         raw_keywords_indexed = result.get("keywords_indexed")
 
         artifact_version = raw_artifact_version if isinstance(raw_artifact_version, int) else None
@@ -100,6 +107,7 @@ def _embedding_status(
             raw_rebuilt_dataset_version if isinstance(raw_rebuilt_dataset_version, int) else None
         )
         indexed_trope_count = raw_tropes_indexed if isinstance(raw_tropes_indexed, int) else 0
+        indexed_theme_count = raw_themes_indexed if isinstance(raw_themes_indexed, int) else 0
         indexed_keyword_count = raw_keywords_indexed if isinstance(raw_keywords_indexed, int) else 0
         last_built_at = latest_successful_rebuild.finished_at.isoformat() if latest_successful_rebuild.finished_at else None
 
@@ -108,6 +116,7 @@ def _embedding_status(
             active_keyword_ids = (
                 select(StoryKeyword.keyword_id).join(Story).where(Story.dataset_id == dataset.id).distinct()
             )
+            active_theme_ids = select(StoryTheme.theme_id).join(Story).where(Story.dataset_id == dataset.id).distinct()
             actual_trope_embeddings = (
                 session.scalar(
                     select(func.count(TermEmbedding.id)).where(
@@ -130,12 +139,24 @@ def _embedding_status(
                 )
                 or 0
             )
+            actual_theme_embeddings = (
+                session.scalar(
+                    select(func.count(TermEmbedding.id)).where(
+                        TermEmbedding.term_kind == TermKind.THEME,
+                        TermEmbedding.model_name == model_name,
+                        TermEmbedding.artifact_version == artifact_version,
+                        TermEmbedding.theme_id.in_(active_theme_ids),
+                    )
+                )
+                or 0
+            )
 
     ready = latest_successful_rebuild is not None
     current = (
         ready
         and rebuilt_dataset_version == dataset.version
         and actual_trope_embeddings == trope_count
+        and actual_theme_embeddings == theme_count
         and actual_keyword_embeddings == keyword_count
     )
 
@@ -160,6 +181,7 @@ def _embedding_status(
         "artifact_version": artifact_version,
         "rebuilt_dataset_version": rebuilt_dataset_version,
         "indexed_trope_count": int(indexed_trope_count),
+        "indexed_theme_count": int(indexed_theme_count),
         "indexed_keyword_count": int(indexed_keyword_count),
         "last_built_at": last_built_at,
         "last_error_message": None
@@ -177,6 +199,7 @@ def get_dataset_status(session: Session, *, model_name: str) -> dict:
         return {
             "story_count": 0,
             "trope_count": 0,
+            "theme_count": 0,
             "keyword_count": 0,
             "active_dataset_version": None,
             "latest_job": _job_summary(latest_job),
@@ -185,6 +208,7 @@ def get_dataset_status(session: Session, *, model_name: str) -> dict:
                 session,
                 dataset=None,
                 trope_count=0,
+                theme_count=0,
                 keyword_count=0,
                 model_name=model_name,
             ),
@@ -209,10 +233,20 @@ def get_dataset_status(session: Session, *, model_name: str) -> dict:
         )
         or 0
     )
+    theme_count = (
+        session.scalar(
+            select(func.count(func.distinct(StoryTheme.theme_id)))
+            .select_from(StoryTheme)
+            .join(Story, Story.id == StoryTheme.story_id)
+            .where(Story.dataset_id == dataset.id)
+        )
+        or 0
+    )
     latest_job = session.scalar(select(Job).order_by(Job.created_at.desc(), Job.id.desc()))
     return {
         "story_count": int(story_count),
         "trope_count": int(trope_count),
+        "theme_count": int(theme_count),
         "keyword_count": int(keyword_count),
         "active_dataset_version": dataset.version,
         "latest_job": _job_summary(latest_job),
@@ -221,6 +255,7 @@ def get_dataset_status(session: Session, *, model_name: str) -> dict:
             session,
             dataset=dataset,
             trope_count=int(trope_count),
+            theme_count=int(theme_count),
             keyword_count=int(keyword_count),
             model_name=model_name,
         ),
@@ -330,10 +365,12 @@ def clear_dataset_data(session: Session, *, actor_user_id: str | None = None) ->
     session.execute(delete(TermSimilarityCache))
     session.execute(delete(TermEmbedding))
     session.execute(delete(StoryTrope))
+    session.execute(delete(StoryTheme))
     session.execute(delete(StoryKeyword))
     session.execute(delete(Job))
     session.execute(delete(Story))
     session.execute(delete(Trope))
+    session.execute(delete(Theme))
     session.execute(delete(Keyword))
     session.execute(delete(Dataset))
     session.commit()

@@ -35,6 +35,7 @@ class EmbeddingStatusResponse(BaseModel):
     artifact_version: int | None
     rebuilt_dataset_version: int | None
     indexed_trope_count: int
+    indexed_theme_count: int
     indexed_keyword_count: int
     last_built_at: str | None
     last_error_message: str | None
@@ -52,6 +53,7 @@ class DatasetMaintenanceResponse(BaseModel):
 class DatasetStatusResponse(BaseModel):
     story_count: int
     trope_count: int
+    theme_count: int
     keyword_count: int
     active_dataset_version: int | None
     latest_job: JobSummaryResponse | None

@@ -111,6 +111,7 @@ class JobStatus(str, Enum):
 
 class TermKind(str, Enum):
     TROPE = "trope"
+    THEME = "theme"
     KEYWORD = "keyword"
 
 
@@ -419,6 +420,7 @@ class Theme(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     dataset: Mapped["Dataset"] = relationship(back_populates="themes")
     story_links: Mapped[list["StoryTheme"]] = relationship(back_populates="theme")
+    embeddings: Mapped[list["TermEmbedding"]] = relationship(back_populates="theme")
 
     @validates("text")
     def _sync_text_fields(self, _: str, value: str) -> str:
@@ -569,10 +571,13 @@ class TermEmbedding(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "term_embeddings"
     __table_args__ = (
         CheckConstraint(
-            "(trope_id IS NOT NULL AND keyword_id IS NULL) OR (trope_id IS NULL AND keyword_id IS NOT NULL)",
+            "(trope_id IS NOT NULL AND theme_id IS NULL AND keyword_id IS NULL) "
+            "OR (trope_id IS NULL AND theme_id IS NOT NULL AND keyword_id IS NULL) "
+            "OR (trope_id IS NULL AND theme_id IS NULL AND keyword_id IS NOT NULL)",
             name="ck_term_embeddings_exactly_one_term",
         ),
         Index("uq_term_embeddings_trope_model", "trope_id", "model_name", unique=True),
+        Index("uq_term_embeddings_theme_model", "theme_id", "model_name", unique=True),
         Index("uq_term_embeddings_keyword_model", "keyword_id", "model_name", unique=True),
     )
 
@@ -587,6 +592,7 @@ class TermEmbedding(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         index=True,
     )
     trope_id: Mapped[str | None] = mapped_column(ForeignKey("tropes.id", ondelete="CASCADE"))
+    theme_id: Mapped[str | None] = mapped_column(ForeignKey("themes.id", ondelete="CASCADE"))
     keyword_id: Mapped[str | None] = mapped_column(ForeignKey("keywords.id", ondelete="CASCADE"))
     model_name: Mapped[str] = mapped_column(String(255), nullable=False)
     artifact_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False, index=True)
@@ -595,6 +601,7 @@ class TermEmbedding(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     content_hash: Mapped[str | None] = mapped_column(String(64))
 
     trope: Mapped["Trope | None"] = relationship(back_populates="embeddings")
+    theme: Mapped["Theme | None"] = relationship(back_populates="embeddings")
     keyword: Mapped["Keyword | None"] = relationship(back_populates="embeddings")
 
 
