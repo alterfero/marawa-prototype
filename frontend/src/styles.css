@@ -628,6 +628,27 @@ p {
   cursor: not-allowed;
 }
 
+.keyword-confirmation-control {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+  min-width: 0;
+}
+
+.keyword-confirmation-status-switch {
+  width: min(100%, 16rem);
+  max-width: 100%;
+  min-width: 0;
+}
+
+.keyword-confirmation-status-switch .confirmation-status-switch-option {
+  padding-inline: 0.5rem;
+}
+
+.keyword-curation-target-actions {
+  justify-content: flex-start;
+}
+
 .trope-management-browser {
   align-self: start;
 }

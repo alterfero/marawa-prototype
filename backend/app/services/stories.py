@@ -62,12 +62,20 @@ class StoryKeywordNotFoundError(StoryServiceError):
     """Raised when a story-keyword assignment cannot be found."""
 
 
+class StoryThemeNotFoundError(StoryServiceError):
+    """Raised when a story-theme assignment cannot be found."""
+
+
 class TropeNotFoundError(StoryServiceError):
     """Raised when a canonical trope cannot be found."""
 
 
 class KeywordNotFoundError(StoryServiceError):
     """Raised when a canonical keyword cannot be found."""
+
+
+class ThemeNotFoundError(StoryServiceError):
+    """Raised when a canonical theme cannot be found."""
 
 
 class StoryVersionConflictError(StoryServiceError):
@@ -144,6 +152,15 @@ def get_story_keywords(session: Session, story_id: str) -> dict:
         "story_id": story.id,
         "story_version": story.version,
         "items": [_serialize_story_keyword(link) for link in _ordered_keyword_links(story)],
+    }
+
+
+def get_story_themes(session: Session, story_id: str) -> dict:
+    _, story = _get_active_story(session, story_id)
+    return {
+        "story_id": story.id,
+        "story_version": story.version,
+        "items": [_serialize_story_theme(link) for link in _ordered_theme_links(story)],
     }
 
 
@@ -552,6 +569,58 @@ def add_story_keyword(
     return story, active_dataset, link, job
 
 
+def add_story_theme(
+    session: Session,
+    story_id: str,
+    *,
+    expected_story_version: int,
+    theme_id: str | None = None,
+    text: str | None = None,
+    actor_user_id: str | None = None,
+) -> tuple[Story, Dataset, StoryTheme, object]:
+    active_dataset, story = _get_active_story(session, story_id)
+    _assert_story_version(story, expected_story_version)
+
+    theme, _ = _resolve_theme(
+        session,
+        active_dataset.id,
+        theme_id=theme_id,
+        text=text,
+        actor_user_id=actor_user_id,
+    )
+    if any(link.theme_id == theme.id for link in story.theme_links):
+        raise StoryMutationValidationError("Story already has this theme assignment.")
+
+    link = StoryTheme(theme=theme, position=_next_theme_position(story))
+    story.theme_links.append(link)
+    session.flush()
+
+    _refresh_theme_cached_story_count(session, active_dataset.id, theme.id)
+    sync_story_derived_fields(story)
+    _increment_versions(story, active_dataset)
+    job = _queue_story_rebuild(
+        session,
+        dataset_id=active_dataset.id,
+        story_id=story.id,
+        reason="story_theme_added",
+    )
+    record_audit_event(
+        session,
+        event_type="story.theme_added",
+        actor_user_id=actor_user_id,
+        dataset_id=active_dataset.id,
+        subject_table="stories",
+        subject_id=story.id,
+        payload={
+            "story_version": story.version,
+            "dataset_version": active_dataset.version,
+            "theme_id": theme.id,
+        },
+    )
+    session.commit()
+    return story, active_dataset, link, job
+
+
 def replace_story_trope(
     session: Session,
     story_id: str,
@@ -858,6 +927,51 @@ def delete_story_keyword(
     return story, active_dataset, removed_keyword_id, job
 
 
+def delete_story_theme(
+    session: Session,
+    story_id: str,
+    theme_id: str,
+    *,
+    expected_story_version: int,
+    actor_user_id: str | None = None,
+) -> tuple[Story, Dataset, str, object]:
+    active_dataset, story = _get_active_story(session, story_id)
+    _assert_story_version(story, expected_story_version)
+
+    link = next((item for item in story.theme_links if item.theme_id == theme_id), None)
+    if link is None:
+        raise StoryThemeNotFoundError("Theme assignment not found on this story.")
+
+    removed_theme_id = link.theme_id
+    story.theme_links.remove(link)
+    session.flush()
+
+    _refresh_theme_cached_story_count(session, active_dataset.id, removed_theme_id)
+    sync_story_derived_fields(story)
+    _increment_versions(story, active_dataset)
+    job = _queue_story_rebuild(
+        session,
+        dataset_id=active_dataset.id,
+        story_id=story.id,
+        reason="story_theme_deleted",
+    )
+    record_audit_event(
+        session,
+        event_type="story.theme_deleted",
+        actor_user_id=actor_user_id,
+        dataset_id=active_dataset.id,
+        subject_table="stories",
+        subject_id=story.id,
+        payload={
+            "story_version": story.version,
+            "dataset_version": active_dataset.version,
+            "theme_id": removed_theme_id,
+        },
+    )
+    session.commit()
+    return story, active_dataset, removed_theme_id, job
+
+
 def validate_story_trope(
     session: Session,
     story_id: str,
@@ -1099,9 +1213,26 @@ def _resolve_theme(
     session: Session,
     dataset_id: str,
     *,
-    text: str,
+    theme_id: str | None = None,
+    text: str | None = None,
     actor_user_id: str | None = None,
 ) -> tuple[Theme, bool]:
+    has_theme_id = bool(clean_text(theme_id))
+    has_text = bool(clean_text(text))
+    if has_theme_id == has_text:
+        raise StoryMutationValidationError("Provide exactly one of theme_id or text when assigning a theme.")
+
+    if has_theme_id:
+        theme = session.scalar(
+            select(Theme).where(
+                Theme.id == clean_text(theme_id),
+                Theme.dataset_id == dataset_id,
+            )
+        )
+        if theme is None:
+            raise ThemeNotFoundError("Canonical theme not found.")
+        return theme, False
+
     theme_text = clean_text(text)
     marker = normalize_text(theme_text)
     if not marker:
@@ -1212,6 +1343,11 @@ def _next_trope_position(story: Story) -> int:
 
 def _next_keyword_position(story: Story) -> int:
     positions = [link.position for link in story.keyword_links if link.position is not None]
+    return (max(positions) + 1) if positions else 0
+
+
+def _next_theme_position(story: Story) -> int:
+    positions = [link.position for link in story.theme_links if link.position is not None]
     return (max(positions) + 1) if positions else 0
 
 
@@ -1356,6 +1492,7 @@ def _serialize_story_detail(story: Story) -> dict:
         "updated_at": story.updated_at.isoformat(),
         "fields": _build_story_fields(story),
         "tropes": [_serialize_story_trope(link) for link in _ordered_trope_links(story)],
+        "themes": [_serialize_story_theme(link) for link in _ordered_theme_links(story)],
         "keywords": [_serialize_story_keyword(link) for link in _ordered_keyword_links(story)],
     }
 
@@ -1377,6 +1514,17 @@ def _serialize_story_keyword(link: StoryKeyword) -> dict:
     return {
         "id": link.keyword.id,
         "text": link.keyword.text,
+        "position": link.position,
+    }
+
+
+def _serialize_story_theme(link: StoryTheme) -> dict:
+    return {
+        "id": link.theme.id,
+        "version": link.theme.version,
+        "text": link.theme.text,
+        "story_count": int(link.theme.cached_story_count or 0),
+        "confirmation_status": link.theme.confirmation_status.value,
         "position": link.position,
     }
 

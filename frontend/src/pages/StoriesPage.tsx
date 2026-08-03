@@ -2,12 +2,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   addStoryKeyword,
+  addStoryTheme,
   addStoryTrope,
   ApiError,
   createStory,
   deleteStoryKeyword,
+  deleteStoryTheme,
   deleteTrope,
   getDatasetStatus,
+  getCanonicalThemes,
   getErrorMessage,
   getStories,
   getStory,
@@ -15,7 +18,9 @@ import {
   searchKeywords,
   searchTropes,
   updateCanonicalTrope,
+  updateCanonicalTheme,
   updateStory,
+  updateThemeConfirmationStatus,
   updateTropeConfirmationStatus,
 } from "../api/client";
 import {
@@ -41,11 +46,14 @@ import { TermCard } from "../components/TermCard";
 import { TropeCard } from "../components/TropeCard";
 import { roleAtLeast, useAuth } from "../auth";
 import type {
+  CanonicalThemeListItem,
   SearchItem,
   StoryCompleteness,
   StoryDetail,
   StorySummary,
+  StoryTheme,
   StoryTrope,
+  ThemeConfirmationStatus,
   TropeConfirmationStatus,
   TropeSearchItem,
 } from "../api/types";
@@ -65,7 +73,7 @@ function completenessBadgeClassName(completeness: StoryCompleteness): string {
   return `story-completeness-${completeness.replace(/\s+/g, "-")}`;
 }
 
-function confirmationStatusLabel(status: TropeConfirmationStatus): string {
+function confirmationStatusLabel(status: TropeConfirmationStatus | ThemeConfirmationStatus): string {
   return status === "canonical" ? "Canonical" : "Unconfirmed";
 }
 
@@ -161,6 +169,9 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
   const [keywordQuery, setKeywordQuery] = useState("");
   const [keywordResults, setKeywordResults] = useState<SearchItem[]>([]);
   const [keywordSearchStatus, setKeywordSearchStatus] = useState<"idle" | "loading" | "ready">("idle");
+  const [themeText, setThemeText] = useState("");
+  const [themeResults, setThemeResults] = useState<CanonicalThemeListItem[]>([]);
+  const [themeSearchStatus, setThemeSearchStatus] = useState<"idle" | "loading" | "ready">("idle");
   const [editingKeywordId, setEditingKeywordId] = useState<string | null>(null);
   const [editingKeywordQuery, setEditingKeywordQuery] = useState("");
   const [editingKeywordResults, setEditingKeywordResults] = useState<SearchItem[]>([]);
@@ -176,9 +187,11 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
   );
   const assignedTropeIds = new Set(detail?.tropes.map((trope) => trope.id) ?? []);
   const assignedKeywordIds = new Set(detail?.keywords.map((keyword) => keyword.id) ?? []);
+  const assignedThemeIds = new Set(detail?.themes.map((theme) => theme.id) ?? []);
   const editingKeyword = detail?.keywords.find((keyword) => keyword.id === editingKeywordId) ?? null;
   const interactionDisabled = busy || storiesLoading || storyLoading || maintenance.active;
   const canManageTropes = roleAtLeast(user?.role, "admin");
+  const canManageThemes = roleAtLeast(user?.role, "admin");
   const changedFieldDraft = detail ? changedStoryFields(fieldDraft, detail.fields) : {};
   const fieldsDirty = Object.keys(changedFieldDraft).length > 0;
   const hasInvalidRecordingDate =
@@ -322,6 +335,9 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
   useEffect(() => {
     resetKeywordEditor();
     setLocationDraft(null);
+    setThemeText("");
+    setThemeResults([]);
+    setThemeSearchStatus("idle");
   }, [selectedStoryId]);
 
   useEffect(() => {
@@ -439,6 +455,46 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
       window.clearTimeout(timeoutId);
     };
   }, [keywordQuery]);
+
+  useEffect(() => {
+    const trimmedQuery = themeText.trim();
+    if (!trimmedQuery) {
+      setThemeResults([]);
+      setThemeSearchStatus("idle");
+      return;
+    }
+
+    let cancelled = false;
+    const timeoutId = window.setTimeout(() => {
+      void (async () => {
+        try {
+          setThemeSearchStatus("loading");
+          const result = await getCanonicalThemes({ q: trimmedQuery, limit: 8 });
+          if (cancelled) {
+            return;
+          }
+          setThemeResults(result);
+          setThemeSearchStatus("ready");
+        } catch (error) {
+          if (cancelled) {
+            return;
+          }
+          setThemeResults([]);
+          setThemeSearchStatus("ready");
+          setNotice({
+            tone: "error",
+            title: "Could not search themes",
+            body: getErrorMessage(error),
+          });
+        }
+      })();
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [themeText]);
 
   useEffect(() => {
     if (!editingKeywordId) {
@@ -682,6 +738,54 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
     );
   }
 
+  async function handleKeepTypedTheme() {
+    if (!detail || !themeText.trim()) {
+      return;
+    }
+    await runStoryMutation(
+      detail.id,
+      () =>
+        addStoryTheme(detail.id, {
+          expected_story_version: detail.version,
+          text: themeText.trim(),
+        }),
+      {
+        tone: "success",
+        title: "Theme saved",
+        body: "The theme was added to the story.",
+      },
+      () => {
+        setThemeText("");
+        setThemeResults([]);
+        setThemeSearchStatus("idle");
+      },
+    );
+  }
+
+  async function handleUseExistingTheme(themeId: string) {
+    if (!detail) {
+      return;
+    }
+    await runStoryMutation(
+      detail.id,
+      () =>
+        addStoryTheme(detail.id, {
+          expected_story_version: detail.version,
+          theme_id: themeId,
+        }),
+      {
+        tone: "success",
+        title: "Theme assigned",
+        body: "The existing theme was added to the story.",
+      },
+      () => {
+        setThemeText("");
+        setThemeResults([]);
+        setThemeSearchStatus("idle");
+      },
+    );
+  }
+
   async function runCanonicalTropeMutation(action: () => Promise<unknown>, successNotice: PageNotice) {
     if (!detail) {
       return;
@@ -803,6 +907,128 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
     );
   }
 
+  async function runCanonicalThemeMutation(action: () => Promise<unknown>, successNotice: PageNotice) {
+    if (!detail) {
+      return;
+    }
+
+    try {
+      setBusy(true);
+      setNotice(null);
+      await action();
+      await refresh(detail.id);
+      setNotice(successNotice);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        await refresh(detail.id);
+        setNotice({
+          tone: "error",
+          title: "Theme updated elsewhere",
+          body: "This theme changed in another browser session. The story now shows the latest version.",
+        });
+        return;
+      }
+      setNotice({
+        tone: "error",
+        title: "Could not update theme",
+        body: getErrorMessage(error),
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleEditCanonicalTheme(theme: StoryTheme) {
+    const nextText = window.prompt("Edit canonical theme", theme.text)?.trim();
+    if (!nextText || nextText === theme.text) {
+      return;
+    }
+
+    await runCanonicalThemeMutation(
+      () =>
+        updateCanonicalTheme({
+          theme_id: theme.id,
+          expected_theme_version: theme.version,
+          text: nextText,
+        }),
+      {
+        tone: "success",
+        title: "Theme edited",
+        body: "The canonical theme text was updated everywhere it is used.",
+      },
+    );
+  }
+
+  async function handleUpdateThemeConfirmationStatus(theme: StoryTheme, nextStatus: ThemeConfirmationStatus) {
+    await runCanonicalThemeMutation(
+      () =>
+        updateThemeConfirmationStatus(theme.id, {
+          expected_theme_version: theme.version,
+          confirmation_status: nextStatus,
+        }),
+      {
+        tone: "success",
+        title: "Theme updated",
+        body: `Confirmation status set to ${confirmationStatusLabel(nextStatus).toLowerCase()}.`,
+      },
+    );
+  }
+
+  async function handleDeleteStoryTheme(theme: StoryTheme) {
+    if (!detail) {
+      return;
+    }
+    await runStoryMutation(
+      detail.id,
+      () => deleteStoryTheme(detail.id, theme.id, detail.version),
+      {
+        tone: "success",
+        title: "Theme removed",
+        body: "The theme assignment was removed from this story.",
+      },
+    );
+  }
+
+  function renderStoryThemeActions(theme: StoryTheme) {
+    if (!canManageThemes && !canEdit) {
+      return undefined;
+    }
+    return (
+      <div className="trope-card-admin-actions">
+        {canManageThemes ? (
+          <ConfirmationStatusSwitch
+            ariaLabel="Theme confirmation status"
+            disabled={interactionDisabled}
+            onChange={(nextStatus) => void handleUpdateThemeConfirmationStatus(theme, nextStatus)}
+            value={theme.confirmation_status}
+          />
+        ) : null}
+        <div className="button-row">
+          {canManageThemes ? (
+            <button
+              className="button button-ghost"
+              disabled={interactionDisabled}
+              onClick={() => void handleEditCanonicalTheme(theme)}
+              type="button"
+            >
+              Edit
+            </button>
+          ) : null}
+          {canEdit ? (
+            <button
+              className="button button-danger"
+              disabled={interactionDisabled}
+              onClick={() => void handleDeleteStoryTheme(theme)}
+              type="button"
+            >
+              Delete
+            </button>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
   async function handleUseExistingKeyword(keywordId: string) {
     if (!detail) {
       return;
@@ -911,8 +1137,8 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
             <h1>{canEdit ? "Stories and story editing" : "Stories"}</h1>
             <p className="muted">
               {canEdit
-                ? "Browse stories, update fields, and manage trope and keyword assignments."
-                : "Browse story details, tropes, and keywords in read-only mode."}
+                ? "Browse stories, update fields, and manage trope, theme, and keyword assignments."
+                : "Browse story details, tropes, themes, and keywords in read-only mode."}
             </p>
           </div>
           <button className="button button-ghost" disabled={storiesLoading || storyLoading} onClick={() => void refresh()} type="button">
@@ -1321,6 +1547,97 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
               )}
             </div>
           </section>
+
+          <section className="panel">
+            <div className="panel-header">
+              <h2>Current themes</h2>
+              {detail ? <span className="pill">{detail.themes.length}</span> : null}
+            </div>
+            <div className="stack">
+              {detail?.themes.length ? (
+                detail.themes.map((theme) => (
+                  <TermCard
+                    className="stories-current-theme-card"
+                    key={theme.id}
+                    meta={`${theme.story_count} stor${theme.story_count === 1 ? "y" : "ies"}`}
+                    term={theme}
+                    actions={renderStoryThemeActions(theme)}
+                  />
+                ))
+              ) : (
+                <p className="muted">No themes on this story yet.</p>
+              )}
+            </div>
+          </section>
+
+          {canEdit ? (
+            <section className="panel">
+              <div className="panel-header">
+                <h2>Add theme</h2>
+              </div>
+
+              <label className="field">
+                <span>Theme</span>
+                <input
+                  className="input"
+                  disabled={interactionDisabled}
+                  onChange={(event) => setThemeText(event.target.value)}
+                  placeholder="Search existing themes or type a new one"
+                  value={themeText}
+                />
+              </label>
+
+              <div className="stack">
+                <div className="panel-header">
+                  <h3>Matching existing themes</h3>
+                  <span className="pill">
+                    {themeSearchStatus === "loading" ? "searching" : `${themeResults.length} results`}
+                  </span>
+                </div>
+                {themeText.trim() && themeSearchStatus === "loading" ? <p className="muted">Searching themes...</p> : null}
+                {themeText.trim() && themeSearchStatus === "ready" && themeResults.length === 0 ? (
+                  <p className="muted">No existing theme fits. Add the typed text to create a new theme.</p>
+                ) : null}
+                {themeResults.map((theme) => {
+                  const alreadyAssigned = assignedThemeIds.has(theme.id);
+                  return (
+                    <TermCard
+                      key={theme.id}
+                      meta={`${theme.story_count} stor${theme.story_count === 1 ? "y" : "ies"}`}
+                      term={theme}
+                      actions={
+                        <button
+                          className="button button-ghost"
+                          disabled={!detail || interactionDisabled || alreadyAssigned}
+                          onClick={() => void handleUseExistingTheme(theme.id)}
+                          type="button"
+                        >
+                          {alreadyAssigned ? "Already assigned" : "Use existing theme"}
+                        </button>
+                      }
+                    />
+                  );
+                })}
+              </div>
+
+              <div className="card subdued">
+                <div className="card-row">
+                  <div>
+                    <h3>Keep typed theme</h3>
+                    <p className="muted">Use this when none of the existing themes is the right fit.</p>
+                  </div>
+                  <button
+                    className="button"
+                    disabled={!detail || interactionDisabled || !themeText.trim()}
+                    onClick={() => void handleKeepTypedTheme()}
+                    type="button"
+                  >
+                    Create and add theme
+                  </button>
+                </div>
+              </div>
+            </section>
+          ) : null}
 
           {canEdit ? (
             <section className="panel">

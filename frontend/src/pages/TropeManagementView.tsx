@@ -432,23 +432,33 @@ export function TropeManagementView() {
     }
   }
 
-  async function handleMergeTrope(sourceTrope: Pick<CanonicalTropeListItem, "id" | "text">, targetTropeId: string) {
+  async function handleMergeTrope(
+    sourceTrope: Pick<CanonicalTropeListItem, "id" | "text">,
+    targetTrope: Pick<CanonicalTropeListItem, "id" | "text">,
+  ) {
+    const shouldMerge = window.confirm(
+      `Replace "${sourceTrope.text}" with "${targetTrope.text}" in every story that uses it?\n\nThis retires "${sourceTrope.text}" as a canonical trope. It will not leave both tropes assigned to a story.`,
+    );
+    if (!shouldMerge) {
+      return;
+    }
+
     try {
       setBusy(true);
       setNotice(null);
-      setSelectedTropeId(targetTropeId);
+      setSelectedTropeId(targetTrope.id);
       const result = await mergeTropes({
         source_trope_id: sourceTrope.id,
-        target_trope_id: targetTropeId,
+        target_trope_id: targetTrope.id,
       });
       await refresh({ clearNotice: false });
       resetTropeEditor();
       setNotice({
         tone: "success",
         title: "Tropes merged",
-        body: `Merged ${sourceTrope.text} into the selected canonical trope across ${result.affected_story_count} stor${
+        body: `Replaced ${sourceTrope.text} with ${targetTrope.text} across ${result.affected_story_count} stor${
           result.affected_story_count === 1 ? "y" : "ies"
-        }. Run Rebuild in the menu when you want fresh derived artifacts.`,
+        }. The source trope was retired. Run Rebuild in the menu when you want fresh derived artifacts.`,
       });
     } catch (caughtError) {
       setNotice({
@@ -658,7 +668,7 @@ export function TropeManagementView() {
                   <button
                     className="button button-ghost"
                     disabled={loading || mutationDisabled || isCurrentTrope}
-                    onClick={() => void handleMergeTrope(trope, item.id)}
+                    onClick={() => void handleMergeTrope(trope, item)}
                     type="button"
                   >
                     {isCurrentTrope ? "Current trope" : sameNormalizedText ? "Merge duplicate" : "Use existing trope"}
@@ -889,10 +899,10 @@ export function TropeManagementView() {
                           <button
                             className="button"
                             disabled={mutationDisabled}
-                            onClick={() => void handleMergeTrope(trope, selectedTrope.id)}
+                            onClick={() => void handleMergeTrope(trope, selectedTrope)}
                             type="button"
                           >
-                            Merge with top trope
+                            Replace with top trope
                           </button>
                         </div>
                       }

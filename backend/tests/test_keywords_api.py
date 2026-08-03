@@ -98,6 +98,8 @@ def test_keywords_api_lists_details_and_reuses_existing_keyword(client: TestClie
     assert body["keyword"]["id"] == keyword_id
     assert body["keyword"]["text"] == "moon"
     assert body["keyword"]["story_count"] == 2
+    assert body["keyword"]["version"] == 1
+    assert body["keyword"]["confirmation_status"] == "unconfirmed"
 
 
 def test_keywords_api_creates_unused_keyword_and_filters_unused_only(client: TestClient) -> None:
@@ -115,7 +117,93 @@ def test_keywords_api_creates_unused_keyword_and_filters_unused_only(client: Tes
     assert unused_response.json() == [
         {
             "id": body["keyword"]["id"],
+            "version": 1,
             "text": "Night Canoe",
+            "confirmation_status": "unconfirmed",
             "story_count": 0,
         }
     ]
+
+
+def test_keyword_management_updates_confirmation_text_and_story_fields(client: TestClient) -> None:
+    upload_dataset(client, [make_row(title="Story One", keywords="moon")])
+    keyword = client.get("/api/keywords").json()[0]
+    story = client.get("/api/stories").json()["items"][0]
+
+    confirmation = client.put(
+        f"/api/keywords/{keyword['id']}/confirmation",
+        json={
+            "expected_keyword_version": keyword["version"],
+            "confirmation_status": "canonical",
+        },
+    )
+    stale_confirmation = client.put(
+        f"/api/keywords/{keyword['id']}/confirmation",
+        json={
+            "expected_keyword_version": keyword["version"],
+            "confirmation_status": "unconfirmed",
+        },
+    )
+    renamed = client.put(
+        f"/api/keywords/{keyword['id']}",
+        json={
+            "expected_keyword_version": confirmation.json()["keyword"]["version"],
+            "text": "lunar",
+        },
+    )
+    story_after_rename = client.get(f"/api/stories/{story['id']}")
+    deleted = client.delete(
+        f"/api/keywords/{keyword['id']}?expected_keyword_version={renamed.json()['keyword']['version']}&remove_from_all_stories=true"
+    )
+    story_after_delete = client.get(f"/api/stories/{story['id']}")
+
+    assert confirmation.status_code == 200
+    assert confirmation.json()["keyword"]["confirmation_status"] == "canonical"
+    assert confirmation.json()["keyword"]["version"] == 2
+    assert stale_confirmation.status_code == 409
+    assert stale_confirmation.json()["code"] == "keyword_version_conflict"
+    assert renamed.status_code == 200
+    assert renamed.json()["keyword"]["text"] == "lunar"
+    assert story_after_rename.json()["fields"][KEYWORD_FIELD] == "lunar"
+    assert deleted.status_code == 200
+    assert deleted.json()["affected_story_count"] == 1
+    assert story_after_delete.json()["fields"][KEYWORD_FIELD] == ""
+
+
+def test_unconfirmed_keyword_merges_into_canonical_keyword(client: TestClient) -> None:
+    upload_dataset(
+        client,
+        [
+            make_row(title="Moon only", keywords="moon"),
+            make_row(title="Both keywords", keywords="lunar ; moon"),
+        ],
+    )
+    keywords = client.get("/api/keywords").json()
+    lunar = next(keyword for keyword in keywords if keyword["text"] == "lunar")
+    moon = next(keyword for keyword in keywords if keyword["text"] == "moon")
+    canonicalized = client.put(
+        f"/api/keywords/{moon['id']}/confirmation",
+        json={
+            "expected_keyword_version": moon["version"],
+            "confirmation_status": "canonical",
+        },
+    )
+    merged = client.post(
+        f"/api/keywords/{lunar['id']}/merge",
+        json={
+            "expected_source_keyword_version": lunar["version"],
+            "target_keyword_id": moon["id"],
+        },
+    )
+    keywords_after_merge = client.get("/api/keywords").json()
+    stories_after_merge = client.get("/api/stories").json()["items"]
+
+    assert canonicalized.status_code == 200
+    assert merged.status_code == 200
+    assert merged.json()["source_keyword_id"] == lunar["id"]
+    assert merged.json()["target_keyword"]["id"] == moon["id"]
+    assert merged.json()["affected_story_count"] == 1
+    assert [(keyword["text"], keyword["confirmation_status"], keyword["story_count"]) for keyword in keywords_after_merge] == [
+        ("moon", "canonical", 2)
+    ]
+    assert {story["fields"][KEYWORD_FIELD] for story in stories_after_merge} == {"moon"}

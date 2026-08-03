@@ -32,7 +32,7 @@ def make_csv_bytes(rows: list[dict[str, str]], csv_columns: list[str]) -> bytes:
     return buffer.getvalue().encode("utf-8-sig")
 
 
-def test_rebuild_job_computes_term_embeddings_and_trope_similarity_cache(tmp_path) -> None:
+def test_rebuild_job_computes_term_embeddings_and_term_similarity_caches(tmp_path) -> None:
     from app.core.csv_schema import CSV_COLUMNS, KEYWORD_FIELD, TROPE_FIELD
 
     db_path = tmp_path / "search-service.db"
@@ -71,9 +71,14 @@ def test_rebuild_job_computes_term_embeddings_and_trope_similarity_cache(tmp_pat
             .where(TermEmbedding.term_kind == TermKind.KEYWORD)
             .order_by(TermEmbedding.keyword_id)
         ).all()
-        similarity_cache = session.scalars(
+        trope_similarity_cache = session.scalars(
             select(TermSimilarityCache)
             .where(TermSimilarityCache.term_kind == TermKind.TROPE)
+            .order_by(TermSimilarityCache.source_term_id, TermSimilarityCache.target_term_id)
+        ).all()
+        keyword_similarity_cache = session.scalars(
+            select(TermSimilarityCache)
+            .where(TermSimilarityCache.term_kind == TermKind.KEYWORD)
             .order_by(TermSimilarityCache.source_term_id, TermSimilarityCache.target_term_id)
         ).all()
 
@@ -82,12 +87,15 @@ def test_rebuild_job_computes_term_embeddings_and_trope_similarity_cache(tmp_pat
     assert result["artifact_version"] == 1
     assert result["tropes_indexed"] == 4
     assert result["keywords_indexed"] == 4
+    assert result["near_duplicate_pairs"] == 2
+    assert result["near_duplicate_keyword_pairs"] == 4
     assert len(trope_embeddings) == 4
     assert len(keyword_embeddings) == 4
     assert all(embedding.vector_dimensions == 3 for embedding in trope_embeddings + keyword_embeddings)
     assert all(embedding.artifact_version == 1 for embedding in trope_embeddings + keyword_embeddings)
-    assert len(similarity_cache) == 2
-    assert {entry.similarity_score > 0.9 for entry in similarity_cache} == {True}
+    assert len(trope_similarity_cache) == 2
+    assert len(keyword_similarity_cache) == 4
+    assert {entry.similarity_score > 0.9 for entry in trope_similarity_cache + keyword_similarity_cache} == {True}
 
 
 def test_search_service_returns_similar_terms_with_explanation(tmp_path) -> None:
@@ -123,6 +131,8 @@ def test_search_service_returns_similar_terms_with_explanation(tmp_path) -> None
     assert keyword_results["items"][0]["text"] == "wolf"
     assert keyword_results["items"][1]["text"] == "moon"
     assert keyword_results["items"][0]["explanation"]["model_name"] == FakeEmbeddingBackend.model_name
+    assert keyword_results["items"][1]["explanation"]["cache_hit"] is True
+    assert keyword_results["items"][1]["explanation"]["near_duplicate"] is True
 
 
 def test_search_service_falls_back_to_lexical_matches_when_embeddings_are_missing(tmp_path) -> None:

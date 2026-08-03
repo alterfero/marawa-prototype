@@ -80,7 +80,20 @@ class SearchService:
             artifact_version,
         )
         session.flush()
-        cache_summary = self._refresh_trope_similarity_cache(session, dataset.id, trope_terms, artifact_version)
+        trope_cache_summary = self._refresh_term_similarity_cache(
+            session,
+            dataset.id,
+            TermKind.TROPE,
+            trope_terms,
+            artifact_version,
+        )
+        keyword_cache_summary = self._refresh_term_similarity_cache(
+            session,
+            dataset.id,
+            TermKind.KEYWORD,
+            keyword_terms,
+            artifact_version,
+        )
 
         session.flush()
         return {
@@ -91,7 +104,8 @@ class SearchService:
             "artifact_version": artifact_version,
             "tropes_indexed": trope_summary["indexed_count"],
             "keywords_indexed": keyword_summary["indexed_count"],
-            "near_duplicate_pairs": cache_summary["pair_count"],
+            "near_duplicate_pairs": trope_cache_summary["pair_count"],
+            "near_duplicate_keyword_pairs": keyword_cache_summary["pair_count"],
         }
 
     def search_terms(self, session: Session, term_kind: TermKind, query: str, *, limit: int = 10) -> dict[str, Any]:
@@ -158,10 +172,10 @@ class SearchService:
         query_marker = normalize_text(query)
         exact_term = next((term for term in ordered_terms if term.normalized_text == query_marker), None)
         cache_map: dict[str, TermSimilarityCache] = {}
-        if term_kind == TermKind.TROPE and exact_term is not None:
+        if exact_term is not None:
             cache_entries = session.scalars(
                 select(TermSimilarityCache).where(
-                    TermSimilarityCache.term_kind == TermKind.TROPE,
+                    TermSimilarityCache.term_kind == term_kind,
                     TermSimilarityCache.model_name == self.model_name,
                     TermSimilarityCache.artifact_version == latest_artifact_version,
                     TermSimilarityCache.source_term_id == exact_term.id,
@@ -321,6 +335,72 @@ class SearchService:
         scores = cosine_similarity(source_vector, candidate_matrix)
         return artifact_version, {
             embedding.trope_id: float(score)
+            for embedding, score in zip(usable_candidates, scores.tolist(), strict=True)
+            if score >= minimum_score
+        }
+
+    def get_similar_keyword_scores(
+        self,
+        session: Session,
+        source_keyword_id: str,
+        candidate_keyword_ids: list[str],
+        *,
+        minimum_score: float = 0.0,
+    ) -> tuple[int | None, dict[str, float]]:
+        """Return current embedding similarities from one keyword to candidate keywords."""
+        candidate_ids = list(
+            dict.fromkeys(
+                keyword_id
+                for keyword_id in candidate_keyword_ids
+                if keyword_id and keyword_id != source_keyword_id
+            )
+        )
+        if not candidate_ids:
+            return None, {}
+
+        source_embedding = session.scalar(
+            select(TermEmbedding)
+            .where(
+                TermEmbedding.term_kind == TermKind.KEYWORD,
+                TermEmbedding.model_name == self.model_name,
+                TermEmbedding.keyword_id == source_keyword_id,
+            )
+            .order_by(TermEmbedding.artifact_version.desc())
+        )
+        if source_embedding is None or source_embedding.vector_blob is None or source_embedding.vector_dimensions is None:
+            return None, {}
+
+        artifact_version = source_embedding.artifact_version
+        candidate_embeddings = list(
+            session.scalars(
+                select(TermEmbedding).where(
+                    TermEmbedding.term_kind == TermKind.KEYWORD,
+                    TermEmbedding.model_name == self.model_name,
+                    TermEmbedding.artifact_version == artifact_version,
+                    TermEmbedding.keyword_id.in_(candidate_ids),
+                )
+            ).all()
+        )
+        usable_candidates = [
+            embedding
+            for embedding in candidate_embeddings
+            if embedding.keyword_id is not None
+            and embedding.vector_blob is not None
+            and embedding.vector_dimensions == source_embedding.vector_dimensions
+        ]
+        if not usable_candidates:
+            return artifact_version, {}
+
+        source_vector = blob_to_vector(source_embedding.vector_blob, source_embedding.vector_dimensions)
+        candidate_matrix = np.vstack(
+            [
+                blob_to_vector(embedding.vector_blob, embedding.vector_dimensions)
+                for embedding in usable_candidates
+            ]
+        ).astype(np.float32)
+        scores = cosine_similarity(source_vector, candidate_matrix)
+        return artifact_version, {
+            embedding.keyword_id: float(score)
             for embedding, score in zip(usable_candidates, scores.tolist(), strict=True)
             if score >= minimum_score
         }
@@ -540,48 +620,61 @@ class SearchService:
 
         return {"indexed_count": len(terms)}
 
-    def _refresh_trope_similarity_cache(
+    def _refresh_term_similarity_cache(
         self,
         session: Session,
         dataset_id: str,
-        trope_terms: list[SearchTermRecord],
+        term_kind: TermKind,
+        terms: list[SearchTermRecord],
         artifact_version: int,
     ) -> dict[str, int]:
-        dataset_trope_ids = select(Trope.id).where(Trope.dataset_id == dataset_id)
+        if term_kind == TermKind.TROPE:
+            dataset_term_ids = select(Trope.id).where(Trope.dataset_id == dataset_id)
+            term_id_column = TermEmbedding.trope_id
+            near_duplicate_reason = "near_duplicate_trope"
+        else:
+            dataset_term_ids = select(Keyword.id).where(Keyword.dataset_id == dataset_id)
+            term_id_column = TermEmbedding.keyword_id
+            near_duplicate_reason = "near_duplicate_keyword"
+
         session.execute(
             delete(TermSimilarityCache).where(
-                TermSimilarityCache.term_kind == TermKind.TROPE,
+                TermSimilarityCache.term_kind == term_kind,
                 TermSimilarityCache.model_name == self.model_name,
                 or_(
-                    TermSimilarityCache.source_term_id.in_(dataset_trope_ids),
-                    TermSimilarityCache.target_term_id.in_(dataset_trope_ids),
+                    TermSimilarityCache.source_term_id.in_(dataset_term_ids),
+                    TermSimilarityCache.target_term_id.in_(dataset_term_ids),
                 ),
             )
         )
 
-        if len(trope_terms) < 2:
+        if len(terms) < 2:
             return {"pair_count": 0}
 
         embeddings = list(
             session.scalars(
                 select(TermEmbedding).where(
-                    TermEmbedding.term_kind == TermKind.TROPE,
+                    TermEmbedding.term_kind == term_kind,
                     TermEmbedding.model_name == self.model_name,
                     TermEmbedding.artifact_version == artifact_version,
-                    TermEmbedding.trope_id.in_([term.id for term in trope_terms]),
+                    term_id_column.in_([term.id for term in terms]),
                 )
             ).all()
         )
-        embedding_by_trope_id = {embedding.trope_id: embedding for embedding in embeddings if embedding.trope_id is not None}
-        ordered_terms = [term for term in trope_terms if term.id in embedding_by_trope_id]
+        embedding_by_term_id = {
+            (embedding.trope_id if term_kind == TermKind.TROPE else embedding.keyword_id): embedding
+            for embedding in embeddings
+            if (embedding.trope_id if term_kind == TermKind.TROPE else embedding.keyword_id) is not None
+        }
+        ordered_terms = [term for term in terms if term.id in embedding_by_term_id]
         if len(ordered_terms) < 2:
             return {"pair_count": 0}
 
         matrix = np.vstack(
             [
                 blob_to_vector(
-                    embedding_by_trope_id[term.id].vector_blob,
-                    embedding_by_trope_id[term.id].vector_dimensions,
+                    embedding_by_term_id[term.id].vector_blob,
+                    embedding_by_term_id[term.id].vector_dimensions,
                 )
                 for term in ordered_terms
             ]
@@ -595,14 +688,14 @@ class SearchService:
                 target_term = ordered_terms[target_index]
                 session.add(
                     TermSimilarityCache(
-                        term_kind=TermKind.TROPE,
+                        term_kind=term_kind,
                         model_name=self.model_name,
                         artifact_version=artifact_version,
                         source_term_id=source_term.id,
                         target_term_id=target_term.id,
                         similarity_score=float(score),
                         metadata_json={
-                            "reason": "near_duplicate_trope",
+                            "reason": near_duplicate_reason,
                             "threshold": self.near_duplicate_threshold,
                         },
                     )

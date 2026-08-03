@@ -4,7 +4,13 @@ from sqlalchemy.orm import Session
 
 from app.api.errors import api_error
 from app.api.deps import get_db_session, require_minimum_role, require_minimum_role_with_csrf
-from app.db.models import StoryCompleteness, StoryTropeOrigin, TropeConfirmationStatus, UserRole
+from app.db.models import (
+    StoryCompleteness,
+    StoryTropeOrigin,
+    ThemeConfirmationStatus,
+    TropeConfirmationStatus,
+    UserRole,
+)
 from app.services.auth import AuthSessionContext
 from app.services.stories import (
     ActiveDatasetNotFoundError,
@@ -14,16 +20,21 @@ from app.services.stories import (
     StoryMutationValidationError,
     StoryKeywordNotFoundError,
     StoryNotFoundError,
+    StoryThemeNotFoundError,
     StoryTropeNotFoundError,
     StoryVersionConflictError,
     TropeNotFoundError,
+    ThemeNotFoundError,
     add_story_keyword,
+    add_story_theme,
     add_story_trope,
     create_story,
     delete_story_keyword,
+    delete_story_theme,
     delete_story_trope,
     get_story_detail,
     get_story_keywords,
+    get_story_themes,
     get_story_tropes,
     list_active_stories,
     replace_story_keyword,
@@ -76,6 +87,15 @@ class StoryKeywordResponse(BaseModel):
     position: int | None
 
 
+class StoryThemeResponse(BaseModel):
+    id: str
+    version: int
+    text: str
+    story_count: int
+    confirmation_status: ThemeConfirmationStatus
+    position: int | None
+
+
 class StoryDetailResponse(BaseModel):
     id: str
     dataset_id: str
@@ -86,6 +106,7 @@ class StoryDetailResponse(BaseModel):
     updated_at: str
     fields: dict[str, str]
     tropes: list[StoryTropeResponse]
+    themes: list[StoryThemeResponse]
     keywords: list[StoryKeywordResponse]
 
 
@@ -99,6 +120,12 @@ class StoryKeywordsResponse(BaseModel):
     story_id: str
     story_version: int
     items: list[StoryKeywordResponse]
+
+
+class StoryThemesResponse(BaseModel):
+    story_id: str
+    story_version: int
+    items: list[StoryThemeResponse]
 
 
 class CreateStoryRequest(BaseModel):
@@ -124,6 +151,12 @@ class AddStoryTropeRequest(BaseModel):
 class AddStoryKeywordRequest(BaseModel):
     expected_story_version: int
     keyword_id: str | None = None
+    text: str | None = None
+
+
+class AddStoryThemeRequest(BaseModel):
+    expected_story_version: int
+    theme_id: str | None = None
     text: str | None = None
 
 
@@ -159,6 +192,14 @@ class StoryKeywordMutationResponse(BaseModel):
     queued_job: JobSummaryResponse | None
 
 
+class StoryThemeMutationResponse(BaseModel):
+    story_id: str
+    story_version: int
+    dataset_version: int
+    theme: StoryThemeResponse
+    queued_job: JobSummaryResponse | None
+
+
 class DeleteStoryTropeResponse(BaseModel):
     story_id: str
     story_version: int
@@ -172,6 +213,14 @@ class DeleteStoryKeywordResponse(BaseModel):
     story_version: int
     dataset_version: int
     deleted_keyword_id: str
+    queued_job: JobSummaryResponse | None
+
+
+class DeleteStoryThemeResponse(BaseModel):
+    story_id: str
+    story_version: int
+    dataset_version: int
+    deleted_theme_id: str
     queued_job: JobSummaryResponse | None
 
 
@@ -217,10 +266,14 @@ def _raise_story_service_error(exc: Exception) -> None:
         raise api_error(404, "story_trope_not_found", str(exc)) from exc
     if isinstance(exc, StoryKeywordNotFoundError):
         raise api_error(404, "story_keyword_not_found", str(exc)) from exc
+    if isinstance(exc, StoryThemeNotFoundError):
+        raise api_error(404, "story_theme_not_found", str(exc)) from exc
     if isinstance(exc, TropeNotFoundError):
         raise api_error(404, "trope_not_found", str(exc)) from exc
     if isinstance(exc, KeywordNotFoundError):
         raise api_error(404, "keyword_not_found", str(exc)) from exc
+    if isinstance(exc, ThemeNotFoundError):
+        raise api_error(404, "theme_not_found", str(exc)) from exc
     if isinstance(exc, StoryMutationValidationError):
         raise api_error(400, "story_mutation_invalid", str(exc)) from exc
     if isinstance(exc, StoryCompletenessPermissionError):
@@ -325,6 +378,18 @@ def read_story_keywords(
         _raise_story_service_error(exc)
 
 
+@router.get("/{story_id}/themes", response_model=StoryThemesResponse)
+def read_story_themes(
+    story_id: str,
+    _: object = Depends(require_minimum_role(UserRole.GUEST)),
+    session: Session = Depends(get_db_session),
+) -> StoryThemesResponse:
+    try:
+        return StoryThemesResponse(**get_story_themes(session, story_id))
+    except Exception as exc:
+        _raise_story_service_error(exc)
+
+
 @router.post("/{story_id}/tropes", response_model=StoryTropeMutationResponse, status_code=201)
 def create_story_trope(
     story_id: str,
@@ -391,6 +456,41 @@ def create_story_keyword(
         keyword=StoryKeywordResponse(
             id=link.keyword.id,
             text=link.keyword.text,
+            position=link.position,
+        ),
+        queued_job=_queued_job_summary(job),
+    )
+
+
+@router.post("/{story_id}/themes", response_model=StoryThemeMutationResponse, status_code=201)
+def create_story_theme(
+    story_id: str,
+    payload: AddStoryThemeRequest,
+    auth_context: AuthSessionContext = Depends(require_minimum_role_with_csrf(UserRole.CONTRIBUTOR)),
+    session: Session = Depends(get_db_session),
+) -> StoryThemeMutationResponse:
+    try:
+        story, dataset, link, job = add_story_theme(
+            session,
+            story_id,
+            expected_story_version=payload.expected_story_version,
+            theme_id=payload.theme_id,
+            text=payload.text,
+            actor_user_id=auth_context.user.id,
+        )
+    except Exception as exc:
+        _raise_story_service_error(exc)
+
+    return StoryThemeMutationResponse(
+        story_id=story.id,
+        story_version=story.version,
+        dataset_version=dataset.version,
+        theme=StoryThemeResponse(
+            id=link.theme.id,
+            version=link.theme.version,
+            text=link.theme.text,
+            story_count=int(link.theme.cached_story_count or 0),
+            confirmation_status=link.theme.confirmation_status,
             position=link.position,
         ),
         queued_job=_queued_job_summary(job),
@@ -526,6 +626,34 @@ def remove_story_keyword(
         story_version=story.version,
         dataset_version=dataset.version,
         deleted_keyword_id=deleted_keyword_id,
+        queued_job=_queued_job_summary(job),
+    )
+
+
+@router.delete("/{story_id}/themes/{theme_id}", response_model=DeleteStoryThemeResponse)
+def remove_story_theme(
+    story_id: str,
+    theme_id: str,
+    payload: StoryVersionRequest = Body(...),
+    auth_context: AuthSessionContext = Depends(require_minimum_role_with_csrf(UserRole.CONTRIBUTOR)),
+    session: Session = Depends(get_db_session),
+) -> DeleteStoryThemeResponse:
+    try:
+        story, dataset, deleted_theme_id, job = delete_story_theme(
+            session,
+            story_id,
+            theme_id,
+            expected_story_version=payload.expected_story_version,
+            actor_user_id=auth_context.user.id,
+        )
+    except Exception as exc:
+        _raise_story_service_error(exc)
+
+    return DeleteStoryThemeResponse(
+        story_id=story.id,
+        story_version=story.version,
+        dataset_version=dataset.version,
+        deleted_theme_id=deleted_theme_id,
         queued_job=_queued_job_summary(job),
     )
 

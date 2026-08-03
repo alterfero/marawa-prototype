@@ -189,3 +189,44 @@ def test_unconfirmed_theme_merges_into_canonical_theme(monkeypatch, tmp_path) ->
         ("Creation", "canonical", 2)
     ]
     assert {story["fields"][THEME_FIELD] for story in stories_after_merge} == {"§§ Creation"}
+
+
+def test_story_theme_assignments_are_independent_and_removable(monkeypatch, tmp_path) -> None:
+    configure_auth_env(monkeypatch)
+    engine = build_engine(f"sqlite:///{tmp_path / 'story-theme-assignment-api.db'}")
+    session_factory = build_session_factory(engine)
+    app = create_app(db_engine=engine, session_factory=session_factory, job_runner_enabled=False)
+
+    with TestClient(app) as client:
+        authenticate_admin(client)
+        upload_dataset(client, [make_row(title="Story One")])
+        story = client.get("/api/stories").json()["items"][0]
+
+        added = client.post(
+            f"/api/stories/{story['id']}/themes",
+            json={
+                "expected_story_version": story["version"],
+                "text": "Creation",
+            },
+        )
+        detail_after_add = client.get(f"/api/stories/{story['id']}")
+        themes_after_add = client.get("/api/themes")
+        removed = client.request(
+            "DELETE",
+            f"/api/stories/{story['id']}/themes/{added.json()['theme']['id']}",
+            json={"expected_story_version": added.json()["story_version"]},
+        )
+        detail_after_remove = client.get(f"/api/stories/{story['id']}")
+        themes_after_remove = client.get("/api/themes")
+
+    assert added.status_code == 201
+    assert added.json()["theme"]["confirmation_status"] == "unconfirmed"
+    assert detail_after_add.status_code == 200
+    assert detail_after_add.json()["fields"][THEME_FIELD] == "§§ Creation"
+    assert [theme["text"] for theme in detail_after_add.json()["themes"]] == ["Creation"]
+    assert detail_after_add.json()["tropes"] == []
+    assert [(theme["text"], theme["story_count"]) for theme in themes_after_add.json()] == [("Creation", 1)]
+    assert removed.status_code == 200
+    assert detail_after_remove.json()["fields"][THEME_FIELD] == ""
+    assert detail_after_remove.json()["themes"] == []
+    assert [(theme["text"], theme["story_count"]) for theme in themes_after_remove.json()] == [("Creation", 0)]

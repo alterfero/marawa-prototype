@@ -1,6 +1,8 @@
 import type {
   AuthSessionResponse,
   CanonicalKeywordListItem,
+  CreateKeywordResponse,
+  CanonicalizeKeywordsResponse,
   CanonicalThemeListItem,
   CreateTropeResponse,
   CreateStoryResponse,
@@ -13,21 +15,30 @@ import type {
   CanonicalizeTropesResponse,
   DeleteStoryKeywordResponse,
   DeleteStoryTropeResponse,
+  DeleteStoryThemeResponse,
+  DeleteKeywordResponse,
+  DeleteUnusedKeywordsResponse,
   DeleteTropeResponse,
   DeleteUnusedTropesResponse,
   DeleteThemeResponse,
   ExplorationNetworkResponse,
   JobDetail,
   KeywordDetail,
+  KeywordConfirmationStatus,
+  MergeKeywordResponse,
+  MergeKeywordsResponse,
   MergeTropesResponse,
   NearDuplicateTropeListResponse,
+  NearDuplicateKeywordListResponse,
   SimilarUnconfirmedTropeListResponse,
+  SimilarUnconfirmedKeywordListResponse,
   PasswordResetResponse,
   ReviewItem,
   ReviewStatus,
   StoryCompleteness,
   StoryDetail,
   StoryKeywordMutationResponse,
+  StoryThemeMutationResponse,
   StoryListResponse,
   StoryTropeMutationResponse,
   StoryTropesResponse,
@@ -40,6 +51,9 @@ import type {
   UpdateTropeConfirmationResponse,
   UpdateThemeResponse,
   UpdateThemeConfirmationResponse,
+  UpdateKeywordConfirmationResponse,
+  UpdateKeywordResponse,
+  ValidateKeywordsResponse,
   ValidateTropesResponse,
   SearchResponse,
   TropeSequenceGraphResponse,
@@ -409,6 +423,19 @@ export function addStoryKeyword(
   });
 }
 
+export function addStoryTheme(
+  storyId: string,
+  payload: { expected_story_version: number; theme_id?: string; text?: string },
+): Promise<StoryThemeMutationResponse> {
+  return request<StoryThemeMutationResponse>(`/stories/${storyId}/themes`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
 export function replaceStoryKeyword(
   storyId: string,
   keywordId: string,
@@ -437,6 +464,20 @@ export function deleteStoryKeyword(
   });
 }
 
+export function deleteStoryTheme(
+  storyId: string,
+  themeId: string,
+  expectedStoryVersion: number,
+): Promise<DeleteStoryThemeResponse> {
+  return request<DeleteStoryThemeResponse>(`/stories/${storyId}/themes/${themeId}`, {
+    method: "DELETE",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ expected_story_version: expectedStoryVersion }),
+  });
+}
+
 export function getNearDuplicateTropes(): Promise<NearDuplicateTropeListResponse> {
   return request<NearDuplicateTropeListResponse>("/curation/near-duplicate-tropes");
 }
@@ -456,6 +497,76 @@ export function getSimilarUnconfirmedTropes(
   return request<SimilarUnconfirmedTropeListResponse>(
     `/curation/tropes/${encodeURIComponent(tropeId)}/similar-unconfirmed${suffix}`,
   );
+}
+
+export function getNearDuplicateKeywords(): Promise<NearDuplicateKeywordListResponse> {
+  return request<NearDuplicateKeywordListResponse>("/curation/near-duplicate-keywords");
+}
+
+export function getSimilarUnconfirmedKeywords(
+  keywordId: string,
+  payload?: { minimum_similarity?: number; include_canonical?: boolean },
+): Promise<SimilarUnconfirmedKeywordListResponse> {
+  const params = new URLSearchParams();
+  if (typeof payload?.minimum_similarity === "number") {
+    params.set("minimum_similarity", String(payload.minimum_similarity));
+  }
+  if (payload?.include_canonical) {
+    params.set("include_canonical", "true");
+  }
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return request<SimilarUnconfirmedKeywordListResponse>(
+    `/curation/keywords/${encodeURIComponent(keywordId)}/similar-unconfirmed${suffix}`,
+  );
+}
+
+export function mergeKeywords(payload: {
+  source_keyword_id: string;
+  target_keyword_id: string;
+}): Promise<MergeKeywordsResponse> {
+  return request<MergeKeywordsResponse>("/curation/merge-keywords", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function validateKeywordMerges(payload: {
+  merges: Array<{
+    source_keyword_id: string;
+    target_keyword_id: string;
+  }>;
+}): Promise<ValidateKeywordsResponse> {
+  return request<ValidateKeywordsResponse>("/curation/validate-keyword-merges", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function canonicalizeKeywords(payload: {
+  keywords: Array<{
+    keyword_id: string;
+    expected_keyword_version: number;
+  }>;
+}): Promise<CanonicalizeKeywordsResponse> {
+  return request<CanonicalizeKeywordsResponse>("/curation/canonicalize-keywords", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteUnusedKeywords(): Promise<DeleteUnusedKeywordsResponse> {
+  return request<DeleteUnusedKeywordsResponse>("/curation/unused-keywords", {
+    method: "DELETE",
+  });
 }
 
 export function mergeTropes(payload: {
@@ -617,6 +728,82 @@ export function getCanonicalKeywords(payload?: {
 
 export function getKeywordDetail(keywordId: string): Promise<KeywordDetail> {
   return request<KeywordDetail>(`/keywords/${keywordId}`);
+}
+
+export function createCanonicalKeyword(text: string): Promise<CreateKeywordResponse> {
+  return request<CreateKeywordResponse>("/keywords", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ text }),
+  });
+}
+
+export function updateCanonicalKeyword(payload: {
+  keyword_id: string;
+  expected_keyword_version: number;
+  text: string;
+}): Promise<UpdateKeywordResponse> {
+  return request<UpdateKeywordResponse>(`/keywords/${payload.keyword_id}`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      expected_keyword_version: payload.expected_keyword_version,
+      text: payload.text,
+    }),
+  });
+}
+
+export function updateKeywordConfirmationStatus(
+  keywordId: string,
+  payload: {
+    expected_keyword_version: number;
+    confirmation_status: KeywordConfirmationStatus;
+  },
+): Promise<UpdateKeywordConfirmationResponse> {
+  return request<UpdateKeywordConfirmationResponse>(`/keywords/${keywordId}/confirmation`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteKeyword(payload: {
+  keyword_id: string;
+  expected_keyword_version: number;
+  remove_from_all_stories: boolean;
+}): Promise<DeleteKeywordResponse> {
+  const params = new URLSearchParams({
+    expected_keyword_version: String(payload.expected_keyword_version),
+  });
+  if (payload.remove_from_all_stories) {
+    params.set("remove_from_all_stories", "true");
+  }
+  return request<DeleteKeywordResponse>(`/keywords/${payload.keyword_id}?${params.toString()}`, {
+    method: "DELETE",
+  });
+}
+
+export function mergeUnconfirmedKeyword(payload: {
+  source_keyword_id: string;
+  expected_source_keyword_version: number;
+  target_keyword_id: string;
+}): Promise<MergeKeywordResponse> {
+  return request<MergeKeywordResponse>(`/keywords/${payload.source_keyword_id}/merge`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      expected_source_keyword_version: payload.expected_source_keyword_version,
+      target_keyword_id: payload.target_keyword_id,
+    }),
+  });
 }
 
 export function buildExplorationNetwork(payload: {

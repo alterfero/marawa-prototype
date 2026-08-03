@@ -507,3 +507,120 @@ def test_tropes_route_lists_unused_tropes(monkeypatch, tmp_path) -> None:
     assert body[0]["id"] == trope_id
     assert body[0]["text"] == "orphan trope"
     assert body[0]["story_count"] == 0
+
+
+def test_keyword_curation_similarity_filters_canonical_candidates_and_near_duplicate_pairs(monkeypatch, tmp_path) -> None:
+    configure_auth_env(monkeypatch)
+    with build_client(tmp_path, "keyword-curation-similarity.db") as client:
+        authenticate_admin(client)
+        upload_dataset(client, [make_row(title="Story One", keywords="wolf ; moon ; river")])
+        request_rebuild(client)
+        process_next_job(client)
+
+        keywords = client.get("/api/keywords").json()
+        wolf = next(keyword for keyword in keywords if keyword["text"] == "wolf")
+        moon = next(keyword for keyword in keywords if keyword["text"] == "moon")
+
+        pairs_response = client.get("/api/curation/near-duplicate-keywords")
+        similar_response = client.get(f"/api/curation/keywords/{wolf['id']}/similar-unconfirmed")
+        canonicalize_response = client.put(
+            f"/api/keywords/{moon['id']}/confirmation",
+            json={
+                "expected_keyword_version": moon["version"],
+                "confirmation_status": "canonical",
+            },
+        )
+        filtered_response = client.get(f"/api/curation/keywords/{wolf['id']}/similar-unconfirmed")
+        include_canonical_response = client.get(
+            f"/api/curation/keywords/{wolf['id']}/similar-unconfirmed?include_canonical=true"
+        )
+        oriented_pairs_response = client.get("/api/curation/near-duplicate-keywords")
+
+    assert pairs_response.status_code == 200
+    pairs_body = pairs_response.json()
+    assert pairs_body["artifact_version"] == 1
+    assert pairs_body["model_name"] == FakeEmbeddingBackend.model_name
+    assert pairs_body["total"] == 1
+    first_pair = pairs_body["items"][0]
+    assert {first_pair["source_keyword"]["text"], first_pair["target_keyword"]["text"]} == {"wolf", "moon"}
+    assert first_pair["similarity_score"] > 0.9
+
+    assert similar_response.status_code == 200
+    similar_body = similar_response.json()
+    assert similar_body["artifact_version"] == 1
+    assert similar_body["items"][0]["text"] == "moon"
+    assert similar_body["items"][0]["confirmation_status"] == "unconfirmed"
+
+    assert canonicalize_response.status_code == 200
+    assert filtered_response.status_code == 200
+    assert filtered_response.json()["items"] == []
+    assert include_canonical_response.status_code == 200
+    assert include_canonical_response.json()["items"][0]["text"] == "moon"
+    assert include_canonical_response.json()["items"][0]["confirmation_status"] == "canonical"
+
+    assert oriented_pairs_response.status_code == 200
+    oriented_pair = oriented_pairs_response.json()["items"][0]
+    assert oriented_pair["source_keyword"]["text"] == "wolf"
+    assert oriented_pair["source_keyword"]["confirmation_status"] == "unconfirmed"
+    assert oriented_pair["target_keyword"]["text"] == "moon"
+    assert oriented_pair["target_keyword"]["confirmation_status"] == "canonical"
+
+
+def test_keyword_curation_merges_assignments_and_deletes_unused_keywords(monkeypatch, tmp_path) -> None:
+    configure_auth_env(monkeypatch)
+    with build_client(tmp_path, "keyword-curation-merge.db") as client:
+        authenticate_admin(client)
+        upload_dataset(
+            client,
+            [
+                make_row(title="Story One", keywords="moon"),
+                make_row(title="Story Two", keywords="wolf ; moon"),
+            ],
+        )
+        request_rebuild(client)
+        process_next_job(client)
+
+        stories = client.get("/api/stories").json()["items"]
+        story_one_id = stories[0]["id"]
+        story_two_id = stories[1]["id"]
+        keywords = client.get("/api/keywords").json()
+        source = next(keyword for keyword in keywords if keyword["text"] == "moon")
+        target = next(keyword for keyword in keywords if keyword["text"] == "wolf")
+
+        merge_response = client.post(
+            "/api/curation/merge-keywords",
+            json={
+                "source_keyword_id": source["id"],
+                "target_keyword_id": target["id"],
+            },
+        )
+        story_one_detail = client.get(f"/api/stories/{story_one_id}").json()
+        story_two_detail = client.get(f"/api/stories/{story_two_id}").json()
+        missing_source_response = client.get(f"/api/keywords/{source['id']}")
+
+        create_unused_response = client.post("/api/keywords", json={"text": "orphan keyword"})
+        delete_unused_response = client.delete("/api/curation/unused-keywords")
+        remaining_keywords = client.get("/api/keywords").json()
+
+    assert merge_response.status_code == 200
+    merge_body = merge_response.json()
+    assert merge_body["source_keyword_id"] == source["id"]
+    assert merge_body["target_keyword_id"] == target["id"]
+    assert merge_body["affected_story_count"] == 2
+    assert merge_body["dataset_version"] == 2
+    assert merge_body["queued_job"] is None
+
+    assert story_one_detail["version"] == 2
+    assert story_one_detail["fields"][KEYWORD_FIELD] == "wolf"
+    assert [keyword["text"] for keyword in story_one_detail["keywords"]] == ["wolf"]
+    assert story_two_detail["version"] == 2
+    assert story_two_detail["fields"][KEYWORD_FIELD] == "wolf"
+    assert [keyword["text"] for keyword in story_two_detail["keywords"]] == ["wolf"]
+    assert missing_source_response.status_code == 404
+
+    assert create_unused_response.status_code == 200
+    assert create_unused_response.json()["created"] is True
+    assert delete_unused_response.status_code == 200
+    assert delete_unused_response.json()["deleted_keyword_count"] == 1
+    assert delete_unused_response.json()["queued_job"] is None
+    assert [keyword["text"] for keyword in remaining_keywords] == ["wolf"]

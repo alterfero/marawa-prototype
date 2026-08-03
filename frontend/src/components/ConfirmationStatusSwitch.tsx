@@ -7,6 +7,7 @@ interface ConfirmationStatusSwitchProps {
   onChange: (value: ConfirmationStatus) => void;
   disabled?: boolean;
   ariaLabel: string;
+  className?: string;
 }
 
 const STATUS_OPTIONS: Array<{ value: ConfirmationStatus; label: string }> = [
@@ -14,7 +15,13 @@ const STATUS_OPTIONS: Array<{ value: ConfirmationStatus; label: string }> = [
   { value: "canonical", label: "Canonical" },
 ];
 
-export function ConfirmationStatusSwitch({ value, onChange, disabled = false, ariaLabel }: ConfirmationStatusSwitchProps) {
+export function ConfirmationStatusSwitch({
+  value,
+  onChange,
+  disabled = false,
+  ariaLabel,
+  className = "",
+}: ConfirmationStatusSwitchProps) {
   function selectStatus(nextValue: ConfirmationStatus) {
     if (!disabled && nextValue !== value) {
       onChange(nextValue);
@@ -39,7 +46,7 @@ export function ConfirmationStatusSwitch({ value, onChange, disabled = false, ar
   }
 
   return (
-    <div aria-label={ariaLabel} className="confirmation-status-switch" role="radiogroup">
+    <div aria-label={ariaLabel} className={`confirmation-status-switch ${className}`.trim()} role="radiogroup">
       {STATUS_OPTIONS.map((option) => (
         <button
           aria-checked={value === option.value}

@@ -11,6 +11,7 @@ export type ReviewType = "story_created" | "story_updated" | "trope_pending" | "
 export type StoryCompleteness = "incomplete" | "pending review" | "complete";
 export type TropeConfirmationStatus = "unconfirmed" | "canonical";
 export type ThemeConfirmationStatus = "unconfirmed" | "canonical";
+export type KeywordConfirmationStatus = "unconfirmed" | "canonical";
 
 export interface CurrentUser {
   id: string;
@@ -129,6 +130,16 @@ export interface StoryKeyword {
   position: number | null;
 }
 
+
+export interface StoryTheme {
+  id: string;
+  version: number;
+  text: string;
+  story_count: number;
+  confirmation_status: ThemeConfirmationStatus;
+  position: number | null;
+}
+
 export interface StoryDetail {
   id: string;
   dataset_id: string;
@@ -139,6 +150,7 @@ export interface StoryDetail {
   updated_at: string;
   fields: Record<string, string>;
   tropes: StoryTrope[];
+  themes: StoryTheme[];
   keywords: StoryKeyword[];
 }
 
@@ -178,11 +190,29 @@ export interface StoryKeywordMutationResponse {
   queued_job: JobSummary | null;
 }
 
+
+export interface StoryThemeMutationResponse {
+  story_id: string;
+  story_version: number;
+  dataset_version: number;
+  theme: StoryTheme;
+  queued_job: JobSummary | null;
+}
+
 export interface DeleteStoryKeywordResponse {
   story_id: string;
   story_version: number;
   dataset_version: number;
   deleted_keyword_id: string;
+  queued_job: JobSummary | null;
+}
+
+
+export interface DeleteStoryThemeResponse {
+  story_id: string;
+  story_version: number;
+  dataset_version: number;
+  deleted_theme_id: string;
   queued_job: JobSummary | null;
 }
 
@@ -281,7 +311,9 @@ export interface UpdateTropeConfirmationResponse {
 
 export interface CanonicalKeywordListItem {
   id: string;
+  version: number;
   text: string;
+  confirmation_status: KeywordConfirmationStatus;
   story_count: number;
 }
 
@@ -291,11 +323,93 @@ export interface KeywordStorySummary {
   source_row_number: number | null;
 }
 
-export interface KeywordDetail {
-  id: string;
-  text: string;
-  story_count: number;
+export interface KeywordDetail extends CanonicalKeywordListItem {
   stories: KeywordStorySummary[];
+}
+
+export interface UpdateKeywordResponse {
+  keyword: CanonicalKeywordListItem;
+}
+
+export interface CreateKeywordResponse {
+  keyword: CanonicalKeywordListItem;
+  created: boolean;
+}
+
+export interface UpdateKeywordConfirmationResponse {
+  keyword: CanonicalKeywordListItem;
+}
+
+export interface DeleteKeywordResponse {
+  deleted_keyword_id: string;
+  affected_story_count: number;
+  dataset_version: number;
+}
+
+export interface MergeKeywordResponse {
+  source_keyword_id: string;
+  target_keyword: CanonicalKeywordListItem;
+  affected_story_count: number;
+  dataset_version: number;
+}
+
+export interface NearDuplicateKeywordPair {
+  source_keyword: CanonicalKeywordListItem;
+  target_keyword: CanonicalKeywordListItem;
+  similarity_score: number;
+  metadata: Record<string, unknown>;
+}
+
+export interface NearDuplicateKeywordListResponse {
+  items: NearDuplicateKeywordPair[];
+  artifact_version: number | null;
+  model_name: string;
+  total: number;
+}
+
+export interface SimilarUnconfirmedKeyword extends CanonicalKeywordListItem {
+  similarity_score: number;
+}
+
+export interface SimilarUnconfirmedKeywordListResponse {
+  source_keyword_id: string;
+  items: SimilarUnconfirmedKeyword[];
+  artifact_version: number | null;
+  model_name: string;
+  minimum_similarity: number;
+  total: number;
+}
+
+export interface MergeKeywordsResponse {
+  source_keyword_id: string;
+  target_keyword_id: string;
+  affected_story_count: number;
+  dataset_version: number;
+  queued_job: JobSummary | null;
+}
+
+export interface AppliedKeywordMergeSummary {
+  source_keyword_id: string;
+  target_keyword_id: string;
+  affected_story_count: number;
+}
+
+export interface ValidateKeywordsResponse {
+  applied_merges: AppliedKeywordMergeSummary[];
+  merge_count: number;
+  affected_story_count: number;
+  dataset_version: number;
+  queued_job: JobSummary | null;
+}
+
+export interface CanonicalizeKeywordsResponse {
+  keywords: CanonicalKeywordListItem[];
+}
+
+export interface DeleteUnusedKeywordsResponse {
+  deleted_keyword_count: number;
+  dataset_version: number;
+  queued_job: JobSummary | null;
 }
 
 export interface ExplorationCandidate {

@@ -17,6 +17,8 @@ import { RedeemTokenPage } from "./pages/RedeemTokenPage";
 import { StoriesPage } from "./pages/StoriesPage";
 import { TropeManagementView } from "./pages/TropeManagementView";
 import { ThemeManagementView } from "./pages/ThemeManagementView";
+import { KeywordCurationPage } from "./pages/KeywordCurationPage";
+import { KeywordManagementView } from "./pages/KeywordManagementView";
 
 const SIDEBAR_STATUS_POLL_INTERVAL_MS = 5000;
 const REBUILD_JOB_POLL_INTERVAL_MS = 2000;
@@ -39,6 +41,8 @@ const NAV_ITEMS: NavItem[] = [
   { route: "/trope-management", label: "Trope management", minimumRole: "admin" },
   { route: "/curation", label: "Trope curation", minimumRole: "admin" },
   { route: "/theme-management", label: "Theme management", minimumRole: "admin" },
+  { route: "/keyword-management", label: "Keyword management", minimumRole: "admin" },
+  { route: "/keyword-curation", label: "Keyword curation", minimumRole: "admin" },
   { route: "/users", label: "Users", minimumRole: "admin" },
 ];
 
@@ -53,6 +57,8 @@ function minimumRoleForRoute(route: AppRoute): UserRole | null {
     case "/trope-management":
     case "/curation":
     case "/theme-management":
+    case "/keyword-management":
+    case "/keyword-curation":
     case "/users":
       return "admin";
     default:
@@ -142,6 +148,10 @@ function CurrentPage({
       return <CurationPage />;
     case "/theme-management":
       return <ThemeManagementView />;
+    case "/keyword-management":
+      return <KeywordManagementView />;
+    case "/keyword-curation":
+      return <KeywordCurationPage />;
     case "/users":
       return <AdminUsersPage />;
     case "/exploration":

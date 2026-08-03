@@ -10,6 +10,8 @@ export type AppRoute =
   | "/trope-management"
   | "/curation"
   | "/theme-management"
+  | "/keyword-management"
+  | "/keyword-curation"
   | "/users"
   | "/exploration";
 
@@ -24,6 +26,8 @@ const KNOWN_ROUTES: AppRoute[] = [
   "/trope-management",
   "/curation",
   "/theme-management",
+  "/keyword-management",
+  "/keyword-curation",
   "/users",
   "/exploration",
 ];

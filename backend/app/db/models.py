@@ -77,6 +77,11 @@ class ThemeConfirmationStatus(str, Enum):
     CANONICAL = "canonical"
 
 
+class KeywordConfirmationStatus(str, Enum):
+    UNCONFIRMED = "unconfirmed"
+    CANONICAL = "canonical"
+
+
 class StoryCompleteness(str, Enum):
     INCOMPLETE = "incomplete"
     PENDING_REVIEW = "pending review"
@@ -347,8 +352,20 @@ class Keyword(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
     dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.id", ondelete="RESTRICT"), nullable=False, index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
     normalized_text: Mapped[str] = mapped_column(String(512), nullable=False)
+    confirmation_status: Mapped[KeywordConfirmationStatus] = mapped_column(
+        SqlEnum(
+            KeywordConfirmationStatus,
+            native_enum=False,
+            validate_strings=True,
+            values_callable=enum_values,
+        ),
+        default=KeywordConfirmationStatus.UNCONFIRMED,
+        nullable=False,
+        index=True,
+    )
     review_status: Mapped[TermReviewStatus] = mapped_column(
         SqlEnum(
             TermReviewStatus,
