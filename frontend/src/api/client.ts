@@ -164,8 +164,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await parseJson(response)) as T;
 }
 
-export function getDatasetExportUrl(): string {
-  return buildUrl("/dataset/export.csv");
+export function getDatasetExportUrl(format: "legacy" | "full" = "full"): string {
+  return buildUrl(`/dataset/export.csv?format=${format}`);
 }
 
 export function getErrorMessage(error: unknown): string {

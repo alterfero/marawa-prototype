@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, File, Request, UploadFile
+from typing import Literal
+
+from fastapi import APIRouter, Depends, File, Query, Request, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -177,11 +179,15 @@ def clear_dataset(
 
 @router.get("/export.csv")
 def export_dataset_csv(
+    export_format: Literal["legacy", "full"] = Query(default="legacy", alias="format"),
     auth_context: AuthSessionContext = Depends(require_minimum_role(UserRole.ADMIN)),
     session: Session = Depends(get_db_session),
 ) -> Response:
     try:
-        csv_bytes = export_active_dataset_to_csv_bytes(session)
+        csv_bytes = export_active_dataset_to_csv_bytes(
+            session,
+            include_marawa_metadata=export_format == "full",
+        )
     except CSVImportValidationError as exc:
         raise api_error(404, "active_dataset_not_found", str(exc)) from exc
 
@@ -195,6 +201,7 @@ def export_dataset_csv(
         subject_id=active_dataset.id if active_dataset is not None else None,
         payload={
             "dataset_version": active_dataset.version if active_dataset is not None else None,
+            "format": export_format,
             "content_length": len(csv_bytes),
         },
     )
@@ -203,5 +210,11 @@ def export_dataset_csv(
     return Response(
         content=csv_bytes,
         media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": 'attachment; filename="dataset-export.csv"'},
+        headers={
+            "Content-Disposition": (
+                'attachment; filename="dataset-full-export.csv"'
+                if export_format == "full"
+                else 'attachment; filename="dataset-export.csv"'
+            )
+        },
     )

@@ -352,7 +352,11 @@ Access:
 - admin
 
 Purpose:
-- export the active dataset as a legacy-compatible CSV.
+- export the active dataset as a CSV.
+
+Query parameters:
+- `format=legacy` (default) returns the strict legacy-compatible CSV.
+- `format=full` returns the full Marawa CSV, which appends supported metadata columns for story completeness, term confirmation/review statuses, unused terms, and trope assignment provenance.
 
 ### `DELETE /api/dataset`
 

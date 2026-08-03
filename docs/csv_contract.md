@@ -15,7 +15,7 @@ Product terminology uses `trope` and `theme`, but CSV compatibility retains the 
 
 ## Canonical Header Contract
 
-The exported CSV must preserve the exact legacy column names and exact column order below.
+The legacy CSV export must preserve the exact legacy column names and exact column order below.
 
 1. `Entered by`
 2. `Source first or second hand`
@@ -69,8 +69,9 @@ The exported CSV must preserve the exact legacy column names and exact column or
 
 - Extra non-canonical columns may be accepted on import for legacy compatibility.
 - Known template-only columns such as `Abstracts : AI or Human ?`, `Motifs validés`, and `motifs Pacifique  ?` are accepted on import and ignored on export.
-- Extra columns are not part of the supported round-trip contract.
-- Export writes only the canonical columns listed above.
+- The full Marawa export uses the appended `Marawa story metadata` and `Marawa term catalog` columns as a supported round-trip extension. These two columns must appear together when present.
+- Other extra columns are not part of the supported round-trip contract.
+- The legacy export writes only the canonical columns listed above.
 
 ### Blank Rows
 
@@ -92,6 +93,15 @@ The exported CSV must preserve the exact legacy column names and exact column or
 - Export always uses the canonical header order.
 - Export always serializes from the active dataset in PostgreSQL, not from the original uploaded file bytes.
 - Internal metadata such as story IDs, versions, job IDs, timestamps, and dataset IDs is never exported.
+
+### Full Marawa Export
+
+`GET /api/dataset/export.csv?format=full` is the lossless CSV export. It appends two JSON columns after the legacy columns, so the legacy prefix remains unchanged:
+
+- `Marawa story metadata` preserves story completeness, original source-row information, and each trope assignment's origin and validation status.
+- `Marawa term catalog` appears on the first story row and preserves every trope, theme, and keyword, including unused terms. It records each term's text and `canonical` or `unconfirmed` confirmation status; tropes and keywords also retain their administrative review status.
+
+The standard `GET /api/dataset/export.csv` response remains the strict legacy export for external tools that require the exact legacy header. A full export can be uploaded again to restore this semantic data.
 
 ## Field Value Normalization
 
@@ -167,6 +177,7 @@ Example:
 - Exact exported legacy column order.
 - Preservation of all canonical field slots.
 - Stable canonical serialization of trope, keyword, and theme values.
+- A full Marawa export round-trips story completeness, trope assignment provenance and validation state, all term confirmation statuses, term review state where applicable, and unused terms.
 
 ### Not Guaranteed
 

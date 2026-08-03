@@ -333,7 +333,7 @@ export function DatasetPage({ canManageDataset }: { canManageDataset: boolean })
               <h2>Upload CSV</h2>
               <form className="stack" onSubmit={(event) => void handleSubmit(event)}>
                 <label className="field">
-                  <span>Legacy CSV file</span>
+                  <span>Legacy or full Marawa CSV file</span>
                   <input
                     accept=".csv,text/csv"
                     className="input"
@@ -352,13 +352,26 @@ export function DatasetPage({ canManageDataset }: { canManageDataset: boolean })
             <div className="stack">
               <h2>Export CSV</h2>
               {status?.active_dataset_version ? (
-                <a className="button button-ghost" href={getDatasetExportUrl()}>
-                  Download export
-                </a>
+                <>
+                  <a className="button button-ghost" href={getDatasetExportUrl("full")}>
+                    Download full export
+                  </a>
+                  <a className="button button-ghost" href={getDatasetExportUrl("legacy")}>
+                    Download legacy export
+                  </a>
+                  <p className="muted">
+                    The full export preserves story completeness plus trope, theme, and keyword statuses. Use the legacy export for older tools.
+                  </p>
+                </>
               ) : (
-                <span aria-disabled="true" className="button button-ghost button-disabled">
-                  Download export
-                </span>
+                <>
+                  <span aria-disabled="true" className="button button-ghost button-disabled">
+                    Download full export
+                  </span>
+                  <span aria-disabled="true" className="button button-ghost button-disabled">
+                    Download legacy export
+                  </span>
+                </>
               )}
             </div>
           </section>

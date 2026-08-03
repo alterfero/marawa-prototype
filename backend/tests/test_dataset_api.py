@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
 from app.core.config import get_settings
-from app.core.csv_schema import CSV_COLUMNS, KEYWORD_FIELD, TROPE_FIELD, TROPE_PROPOSAL_FIELD
+from app.core.csv_schema import CSV_COLUMNS, FULL_EXPORT_COLUMNS, KEYWORD_FIELD, TROPE_FIELD, TROPE_PROPOSAL_FIELD
 from app.db import (
     Dataset,
     Job,
@@ -390,6 +390,20 @@ def test_dataset_export_downloads_current_dataset_as_csv(client: TestClient) -> 
     assert rows[0]["Story title (Eng)"] == "Exported Story"
     assert rows[0][KEYWORD_FIELD] == "canoe ; sea"
     assert rows[0][TROPE_FIELD] == "§§ first trope\n§§ second trope"
+
+    full_response = client.get("/api/dataset/export.csv?format=full")
+
+    assert full_response.status_code == 200
+    assert full_response.headers["content-disposition"] == 'attachment; filename="dataset-full-export.csv"'
+    full_reader = csv.DictReader(io.StringIO(full_response.content.decode("utf-8-sig")))
+    assert full_reader.fieldnames == FULL_EXPORT_COLUMNS
+
+    full_upload_response = client.post(
+        "/api/dataset/upload",
+        files={"file": ("dataset-full-export.csv", full_response.content, "text/csv")},
+    )
+
+    assert full_upload_response.status_code == 201
 
 
 def test_clear_dataset_removes_current_data_and_returns_empty_state(client: TestClient) -> None:

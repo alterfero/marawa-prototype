@@ -301,6 +301,21 @@ p {
   align-items: flex-start;
 }
 
+.stories-current-theme-card .card-row {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.stories-current-theme-card .card-row > :first-child {
+  min-width: 0;
+  flex: 1 1 12rem;
+}
+
+.stories-current-theme-card .term-card-actions {
+  max-width: 100%;
+  margin-left: auto;
+}
+
 .stories-current-trope-card .trope-card-header-right {
   display: grid;
   gap: 0.75rem;

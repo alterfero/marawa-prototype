@@ -1,25 +1,39 @@
 import csv
 import io
+import json
 
 import pytest
 from sqlalchemy import select
 
-from app.core.csv_schema import CSV_COLUMNS, KEYWORD_FIELD, THEME_FIELD, TROPE_FIELD, TROPE_PROPOSAL_FIELD
+from app.core.csv_schema import (
+    CSV_COLUMNS,
+    FULL_EXPORT_COLUMNS,
+    KEYWORD_FIELD,
+    MARAWA_STORY_METADATA_FIELD,
+    MARAWA_TERM_CATALOG_FIELD,
+    THEME_FIELD,
+    TROPE_FIELD,
+    TROPE_PROPOSAL_FIELD,
+)
 from app.db import (
     Dataset,
     DatasetStatus,
+    Keyword,
     Story,
+    StoryCompleteness,
     StoryKeyword,
     StoryTheme,
     StoryTrope,
     StoryTropeOrigin,
+    TermReviewStatus,
+    ThemeConfirmationStatus,
+    Trope,
     build_engine,
     build_session_factory,
     initialize_database,
 )
-from app.db.models import AssignmentStatus
-from app.db.models import Theme
-from app.services.csv_io import CSVImportValidationError, export_active_dataset_to_csv_bytes, import_csv_bytes
+from app.db.models import AssignmentStatus, KeywordConfirmationStatus, Theme, TropeConfirmationStatus
+from app.services.csv_io import CSVImportValidationError, _load_csv_rows, export_active_dataset_to_csv_bytes, import_csv_bytes
 
 
 def make_csv_bytes(rows: list[dict[str, str]], *, fieldnames: list[str] | None = None) -> bytes:
@@ -217,6 +231,41 @@ def test_import_csv_rejects_malformed_csv_content(tmp_path) -> None:
     assert "malformed" in str(exc_info.value).lower()
 
 
+def test_full_csv_accepts_a_term_catalog_larger_than_the_default_csv_field_limit() -> None:
+    row = {column: "" for column in FULL_EXPORT_COLUMNS}
+    row["Story title (Eng)"] = "Large full export"
+    row[MARAWA_STORY_METADATA_FIELD] = json.dumps(
+        {
+            "schema_version": 1,
+            "completeness": "incomplete",
+            "source_row_number": 1,
+            "trope_assignments": [],
+        }
+    )
+    row[MARAWA_TERM_CATALOG_FIELD] = json.dumps(
+        {
+            "schema_version": 1,
+            "tropes": [
+                {
+                    "text": f"unused trope {index} {'x' * 100}",
+                    "confirmation_status": "unconfirmed",
+                    "review_status": "approved",
+                }
+                for index in range(1000)
+            ],
+            "themes": [],
+            "keywords": [],
+        }
+    )
+    assert len(row[MARAWA_TERM_CATALOG_FIELD]) > csv.field_size_limit()
+
+    rows, is_full_export = _load_csv_rows(make_csv_bytes([row], fieldnames=FULL_EXPORT_COLUMNS))
+
+    assert is_full_export is True
+    assert len(rows) == 1
+    assert len(rows[0].term_catalog["tropes"]) == 1000
+
+
 def test_import_csv_creates_staged_dataset_and_preserves_story_row_order(tmp_path) -> None:
     row_one = {column: "" for column in CSV_COLUMNS}
     row_one["Story title (Eng)"] = "Story One"
@@ -316,6 +365,128 @@ def test_export_csv_uses_exact_legacy_header_and_reconstructs_terms_from_links(t
     assert rows[0]["Story title (Eng)"] == "Canonical Story"
     assert rows[0][KEYWORD_FIELD] == "wolf ; moon"
     assert rows[0][TROPE_FIELD] == "§§ first trope\n§§ second trope"
+
+
+def test_full_export_round_trips_story_and_term_metadata(tmp_path) -> None:
+    row = {column: "" for column in CSV_COLUMNS}
+    row["Story title (Eng)"] = "Lossless Story"
+    row[KEYWORD_FIELD] = "wolf ; moon"
+    row[TROPE_FIELD] = "§§ first trope\n§§ second trope"
+    row[THEME_FIELD] = "§§ Creation\n§§ Ocean"
+
+    with make_session(tmp_path, "full-export-source.db") as session:
+        dataset = import_csv_bytes(session, make_csv_bytes([row]), source_filename="source.csv")
+        activate_dataset(session, dataset)
+        story = session.scalar(select(Story).where(Story.dataset_id == dataset.id))
+        assert story is not None
+        story.completeness = StoryCompleteness.COMPLETE
+        trope_links = sorted(story.trope_links, key=lambda link: link.position)
+        trope_links[0].trope.confirmation_status = TropeConfirmationStatus.CANONICAL
+        trope_links[0].trope.review_status = TermReviewStatus.REJECTED
+        trope_links[1].origin = StoryTropeOrigin.SEMANTIC_SUGGESTION
+        trope_links[1].status = AssignmentStatus.PENDING
+        keyword_links = sorted(story.keyword_links, key=lambda link: link.position)
+        keyword_links[0].keyword.confirmation_status = KeywordConfirmationStatus.CANONICAL
+        keyword_links[0].keyword.review_status = TermReviewStatus.PENDING_REVIEW
+        theme_links = sorted(story.theme_links, key=lambda link: link.position)
+        theme_links[0].theme.confirmation_status = ThemeConfirmationStatus.CANONICAL
+        session.add_all(
+            [
+                Trope(
+                    dataset_id=dataset.id,
+                    text="unused canonical trope",
+                    confirmation_status=TropeConfirmationStatus.CANONICAL,
+                    review_status=TermReviewStatus.PENDING_REVIEW,
+                ),
+                Theme(
+                    dataset_id=dataset.id,
+                    text="unused canonical theme",
+                    confirmation_status=ThemeConfirmationStatus.CANONICAL,
+                ),
+                Keyword(
+                    dataset_id=dataset.id,
+                    text="unused canonical keyword",
+                    confirmation_status=KeywordConfirmationStatus.CANONICAL,
+                    review_status=TermReviewStatus.REJECTED,
+                ),
+            ]
+        )
+        session.commit()
+        exported = export_active_dataset_to_csv_bytes(session, include_marawa_metadata=True)
+
+    reader = csv.DictReader(io.StringIO(exported.decode("utf-8-sig")))
+    exported_rows = list(reader)
+    story_metadata = json.loads(exported_rows[0][MARAWA_STORY_METADATA_FIELD])
+    term_catalog = json.loads(exported_rows[0][MARAWA_TERM_CATALOG_FIELD])
+
+    assert reader.fieldnames == FULL_EXPORT_COLUMNS
+    assert story_metadata == {
+        "schema_version": 1,
+        "completeness": "complete",
+        "source_row_number": 1,
+        "trope_assignments": [
+            {"text": "first trope", "origin": "csv_import", "status": "validated"},
+            {"text": "second trope", "origin": "semantic_suggestion", "status": "pending"},
+        ],
+    }
+    assert {item["text"] for item in term_catalog["tropes"]} == {
+        "first trope",
+        "second trope",
+        "unused canonical trope",
+    }
+    assert {item["text"] for item in term_catalog["themes"]} == {
+        "Creation",
+        "Ocean",
+        "unused canonical theme",
+    }
+    assert {item["text"] for item in term_catalog["keywords"]} == {
+        "wolf",
+        "moon",
+        "unused canonical keyword",
+    }
+
+    with make_session(tmp_path, "full-export-target.db") as session:
+        imported_dataset = import_csv_bytes(session, exported, source_filename="full.csv")
+        imported_story = session.scalar(select(Story).where(Story.dataset_id == imported_dataset.id))
+        imported_tropes = {
+            trope.text: (trope.confirmation_status, trope.review_status)
+            for trope in session.scalars(select(Trope).where(Trope.dataset_id == imported_dataset.id)).all()
+        }
+        imported_themes = {
+            theme.text: theme.confirmation_status
+            for theme in session.scalars(select(Theme).where(Theme.dataset_id == imported_dataset.id)).all()
+        }
+        imported_keywords = {
+            keyword.text: (keyword.confirmation_status, keyword.review_status)
+            for keyword in session.scalars(select(Keyword).where(Keyword.dataset_id == imported_dataset.id)).all()
+        }
+        imported_trope_assignments = [
+            (link.trope.text, link.origin, link.status)
+            for link in sorted(imported_story.trope_links, key=lambda link: link.position)
+        ]
+
+    assert imported_story is not None
+    assert imported_story.completeness == StoryCompleteness.COMPLETE
+    assert imported_story.source_row_number == 1
+    assert imported_trope_assignments == [
+        ("first trope", StoryTropeOrigin.CSV_IMPORT, AssignmentStatus.VALIDATED),
+        ("second trope", StoryTropeOrigin.SEMANTIC_SUGGESTION, AssignmentStatus.PENDING),
+    ]
+    assert imported_tropes == {
+        "first trope": (TropeConfirmationStatus.CANONICAL, TermReviewStatus.REJECTED),
+        "second trope": (TropeConfirmationStatus.UNCONFIRMED, TermReviewStatus.APPROVED),
+        "unused canonical trope": (TropeConfirmationStatus.CANONICAL, TermReviewStatus.PENDING_REVIEW),
+    }
+    assert imported_themes == {
+        "Creation": ThemeConfirmationStatus.CANONICAL,
+        "Ocean": ThemeConfirmationStatus.UNCONFIRMED,
+        "unused canonical theme": ThemeConfirmationStatus.CANONICAL,
+    }
+    assert imported_keywords == {
+        "wolf": (KeywordConfirmationStatus.CANONICAL, TermReviewStatus.PENDING_REVIEW),
+        "moon": (KeywordConfirmationStatus.UNCONFIRMED, TermReviewStatus.APPROVED),
+        "unused canonical keyword": (KeywordConfirmationStatus.CANONICAL, TermReviewStatus.REJECTED),
+    }
 
 
 def test_import_export_round_trip_preserves_story_order_and_canonical_term_serialization(tmp_path) -> None:
