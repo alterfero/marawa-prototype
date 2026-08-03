@@ -149,6 +149,7 @@ function SemanticForceGraph({
   graph,
   disabled,
   focusedNodeId,
+  processingLabel,
   onToggleStatus,
   onMerge,
   onFocusNeighborhood,
@@ -157,6 +158,7 @@ function SemanticForceGraph({
   graph: SemanticGraphResponse;
   disabled: boolean;
   focusedNodeId: string | null;
+  processingLabel: string | null;
   onToggleStatus: (node: SemanticGraphNode) => Promise<void>;
   onMerge: (source: SemanticGraphNode, target: SemanticGraphNode) => Promise<void>;
   onFocusNeighborhood: (nodeId: string) => void;
@@ -501,6 +503,12 @@ function SemanticForceGraph({
           })}
         </g>
       </svg>
+      {processingLabel ? (
+        <div aria-live="polite" className="semantic-graph-processing-overlay" role="status">
+          <span aria-hidden="true" className="semantic-graph-processing-spinner" />
+          <span>{processingLabel}</span>
+        </div>
+      ) : null}
       <div aria-label="Graph zoom controls" className="semantic-graph-zoom-controls" role="group">
         <button
           aria-label="Zoom in"
@@ -755,6 +763,13 @@ export function SemanticGraphsPage() {
   }
 
   const interactionDisabled = loading || mutating || maintenance.active;
+  const graphProcessingLabel = mutating
+    ? "Applying graph change…"
+    : loading
+      ? "Calculating semantic graph…"
+      : maintenance.active
+        ? "Semantic rebuild in progress…"
+        : null;
   return (
     <section className="page-stack semantic-graphs-page">
       <section className="panel panel-experimental">
@@ -849,7 +864,12 @@ export function SemanticGraphsPage() {
       ) : null}
 
       <section className="panel semantic-graph-panel">
-        {loading && !displayedGraph ? <p className="semantic-graph-placeholder">Loading semantic graph…</p> : null}
+        {loading && !displayedGraph ? (
+          <p className="semantic-graph-placeholder semantic-graph-placeholder-loading" role="status">
+            <span aria-hidden="true" className="semantic-graph-processing-spinner" />
+            Calculating semantic graph…
+          </p>
+        ) : null}
         {!loading && displayedGraph && displayedGraph.nodes.length === 0 ? (
           <p className="semantic-graph-placeholder">No {displayItemKind(itemKind).toLowerCase()} are available for this view.</p>
         ) : null}
@@ -866,6 +886,7 @@ export function SemanticGraphsPage() {
               onFocusNeighborhood={setFocusedNodeId}
               onMerge={handleMerge}
               onToggleStatus={handleToggleStatus}
+              processingLabel={graphProcessingLabel}
             />
             <div className="semantic-graph-footer">
               <span>{displayedGraph.nodes.length} nodes{focusedNodeId ? " in focus" : ""}</span>

@@ -1274,6 +1274,37 @@ p {
   overflow: hidden;
 }
 
+.semantic-graph-processing-overlay {
+  position: absolute;
+  z-index: 4;
+  inset: 0;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 0.7rem;
+  background: rgba(255, 255, 255, 0.78);
+  color: #173d43;
+  font-size: 0.9rem;
+  font-weight: 700;
+  pointer-events: auto;
+}
+
+.semantic-graph-processing-spinner {
+  display: inline-block;
+  width: 1.65rem;
+  height: 1.65rem;
+  border: 3px solid rgba(13, 91, 67, 0.2);
+  border-top-color: #0d5b43;
+  border-radius: 999px;
+  animation: semantic-graph-processing-spin 750ms linear infinite;
+}
+
+@keyframes semantic-graph-processing-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .semantic-graph-background {
   fill: transparent;
   cursor: grab;
@@ -1459,6 +1490,12 @@ p {
   padding: 2rem;
   color: #48656c;
   text-align: center;
+}
+
+.semantic-graph-placeholder-loading {
+  display: grid;
+  justify-items: center;
+  gap: 0.7rem;
 }
 
 .stat-card-highlight {
