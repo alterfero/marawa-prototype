@@ -653,7 +653,13 @@ p {
 }
 
 .theme-curation-target-confirmation {
+  display: grid;
+  gap: 0.65rem;
   margin-top: 0.75rem;
+}
+
+.theme-curation-target-actions {
+  justify-content: flex-start;
 }
 
 .keyword-curation-target-actions {

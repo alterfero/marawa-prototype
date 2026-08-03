@@ -49,6 +49,7 @@ interface PendingMergeDecision {
 }
 
 type PairTargetOverride = TropeSummary;
+type PairDirection = "forward" | "reverse";
 
 function formatJobStatus(job: JobSummary | JobDetail | null): string {
   if (!job) {
@@ -96,13 +97,18 @@ function pairHasUsableVersions(pair: NearDuplicateTropePair): boolean {
 
 function resolvePairSelection(
   pair: NearDuplicateTropePair,
+  direction: PairDirection,
   targetOverride?: PairTargetOverride,
 ): { source: TropeSummary; target: TropeSummary } {
-  if (!targetOverride || targetOverride.id === pair.source_trope.id) {
-    return { source: pair.source_trope, target: pair.target_trope };
+  const { source, target } =
+    direction === "reverse"
+      ? { source: pair.target_trope, target: pair.source_trope }
+      : { source: pair.source_trope, target: pair.target_trope };
+  if (!targetOverride || targetOverride.id === source.id) {
+    return { source, target };
   }
   return {
-    source: pair.source_trope,
+    source,
     target: targetOverride,
   };
 }
@@ -112,6 +118,7 @@ export function CurationPage() {
   const [pairs, setPairs] = useState<NearDuplicateTropeListResponse | null>(null);
   const [unusedQuery, setUnusedQuery] = useState("");
   const [unusedTropes, setUnusedTropes] = useState<CanonicalTropeListItem[]>([]);
+  const [pairDirections, setPairDirections] = useState<Record<string, PairDirection>>({});
   const [targetOverrides, setTargetOverrides] = useState<Record<string, PairTargetOverride>>({});
   const [pendingMerges, setPendingMerges] = useState<PendingMergeDecision[]>([]);
   const [editingPairId, setEditingPairId] = useState<string | null>(null);
@@ -289,7 +296,7 @@ export function CurationPage() {
 
   function handleStageMerge(pair: NearDuplicateTropePair) {
     const pairId = pairKey(pair);
-    const { source, target } = resolvePairSelection(pair, targetOverrides[pairId]);
+    const { source, target } = resolvePairSelection(pair, pairDirections[pairId] ?? "forward", targetOverrides[pairId]);
     const nextDecision = buildPendingMergeDecision(pairId, source, target, pair.similarity_score);
 
     setPendingMerges((current) => {
@@ -313,10 +320,28 @@ export function CurationPage() {
     setModalNotice(null);
   }
 
+  function handleSwapPairDirection(pair: NearDuplicateTropePair) {
+    const pairId = pairKey(pair);
+    setPairDirections((current) => ({
+      ...current,
+      [pairId]: current[pairId] === "reverse" ? "forward" : "reverse",
+    }));
+    setTargetOverrides((current) => {
+      if (!(pairId in current)) {
+        return current;
+      }
+      const next = { ...current };
+      delete next[pairId];
+      return next;
+    });
+    if (editingPairId === pairId) {
+      resetTargetEditor();
+    }
+  }
+
   function applyPairTargetSelection(pair: NearDuplicateTropePair, nextTarget: TropeSummary): boolean {
     const pairId = pairKey(pair);
-    const source = pair.source_trope;
-    const defaultTarget = pair.target_trope;
+    const { source, target: defaultTarget } = resolvePairSelection(pair, pairDirections[pairId] ?? "forward");
 
     if (nextTarget.id === source.id) {
       setModalNotice({
@@ -675,9 +700,15 @@ export function CurationPage() {
   const pendingSourceIds = useMemo(() => new Set(pendingMerges.map((merge) => merge.source_trope_id)), [pendingMerges]);
   const editingPair = editingPairId && pairs ? pairs.items.find((pair) => pairKey(pair) === editingPairId) ?? null : null;
   const editingDefaultSelection = editingPair
-    ? { source: editingPair.source_trope, target: editingPair.target_trope }
+    ? resolvePairSelection(editingPair, pairDirections[pairKey(editingPair)] ?? "forward")
     : null;
-  const editingSelection = editingPair ? resolvePairSelection(editingPair, targetOverrides[pairKey(editingPair)]) : null;
+  const editingSelection = editingPair
+    ? resolvePairSelection(
+        editingPair,
+        pairDirections[pairKey(editingPair)] ?? "forward",
+        targetOverrides[pairKey(editingPair)],
+      )
+    : null;
 
   return (
     <div className="page-stack">
@@ -776,7 +807,11 @@ export function CurationPage() {
             {pairs?.items.length ? (
               pairs.items.map((pair) => {
                 const pairId = pairKey(pair);
-                const { source, target } = resolvePairSelection(pair, targetOverrides[pairId]);
+                const { source, target } = resolvePairSelection(
+                  pair,
+                  pairDirections[pairId] ?? "forward",
+                  targetOverrides[pairId],
+                );
                 const affectedStoryCount = source.story_count;
                 const pendingDecision = pendingMerges.find((merge) => merge.pair_id === pairId);
                 const sourceAlreadyPending = pendingSourceIds.has(source.id);
@@ -786,6 +821,16 @@ export function CurationPage() {
                   <article className="card" key={pairId}>
                     <div className="panel-header">
                       <h3>Similarity {pair.similarity_score.toFixed(2)}</h3>
+                      {target.confirmation_status !== "canonical" ? (
+                        <button
+                          className="button button-ghost"
+                          disabled={mutationDisabled || Boolean(pendingDecision)}
+                          onClick={() => handleSwapPairDirection(pair)}
+                          type="button"
+                        >
+                          Swap source and target
+                        </button>
+                      ) : null}
                     </div>
 
                     <div className="field-grid">

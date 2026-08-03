@@ -36,6 +36,8 @@ interface PendingMergeDecision {
   target: CanonicalKeywordListItem;
 }
 
+type PairDirection = "forward" | "reverse";
+
 function pairKey(pair: NearDuplicateKeywordPair): string {
   return `${pair.source_keyword.id}:${pair.target_keyword.id}`;
 }
@@ -52,6 +54,7 @@ export function KeywordCurationPage() {
   const [pairs, setPairs] = useState<NearDuplicateKeywordListResponse | null>(null);
   const [unusedKeywords, setUnusedKeywords] = useState<CanonicalKeywordListItem[]>([]);
   const [unusedQuery, setUnusedQuery] = useState("");
+  const [pairDirections, setPairDirections] = useState<Record<string, PairDirection>>({});
   const [targetOverrides, setTargetOverrides] = useState<Record<string, CanonicalKeywordListItem>>({});
   const [pendingMerges, setPendingMerges] = useState<PendingMergeDecision[]>([]);
   const [editingPairId, setEditingPairId] = useState<string | null>(null);
@@ -134,11 +137,17 @@ export function KeywordCurationPage() {
 
   const pendingSourceIds = useMemo(() => new Set(pendingMerges.map((merge) => merge.source.id)), [pendingMerges]);
   const editingPair = editingPairId ? pairs?.items.find((pair) => pairKey(pair) === editingPairId) ?? null : null;
+  const editingSelection = editingPair ? selectedPairTerms(editingPair) : null;
 
   function selectedPairTerms(pair: NearDuplicateKeywordPair) {
+    const direction = pairDirections[pairKey(pair)] ?? "forward";
+    const { source, target } =
+      direction === "reverse"
+        ? { source: pair.target_keyword, target: pair.source_keyword }
+        : { source: pair.source_keyword, target: pair.target_keyword };
     return {
-      source: pair.source_keyword,
-      target: targetOverrides[pairKey(pair)] ?? pair.target_keyword,
+      source,
+      target: targetOverrides[pairKey(pair)] ?? target,
     };
   }
 
@@ -148,6 +157,25 @@ export function KeywordCurationPage() {
     setTargetResults([]);
     setTargetSearchStatus("idle");
     setEditorNotice(null);
+  }
+
+  function swapPairDirection(pair: NearDuplicateKeywordPair) {
+    const id = pairKey(pair);
+    setPairDirections((current) => ({
+      ...current,
+      [id]: current[id] === "reverse" ? "forward" : "reverse",
+    }));
+    setTargetOverrides((current) => {
+      if (!(id in current)) {
+        return current;
+      }
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
+    if (editingPairId === id) {
+      resetTargetEditor();
+    }
   }
 
   function stageMerge(pair: NearDuplicateKeywordPair) {
@@ -163,7 +191,8 @@ export function KeywordCurationPage() {
   }
 
   function setPairTarget(pair: NearDuplicateKeywordPair, target: CanonicalKeywordListItem) {
-    if (target.id === pair.source_keyword.id) {
+    const { source } = selectedPairTerms(pair);
+    if (target.id === source.id) {
       setEditorNotice({
         tone: "error",
         title: "Target must differ from source",
@@ -437,7 +466,19 @@ export function KeywordCurationPage() {
                 const canStage = !isPending && !pendingSourceIds.has(source.id);
                 return (
                   <article className="card" key={id}>
-                    <div className="panel-header"><h3>Similarity {pair.similarity_score.toFixed(2)}</h3></div>
+                    <div className="panel-header">
+                      <h3>Similarity {pair.similarity_score.toFixed(2)}</h3>
+                      {target.confirmation_status !== "canonical" ? (
+                        <button
+                          className="button button-ghost"
+                          disabled={mutationDisabled || isPending}
+                          onClick={() => swapPairDirection(pair)}
+                          type="button"
+                        >
+                          Swap source and target
+                        </button>
+                      ) : null}
+                    </div>
                     <div className="field-grid">
                       <div className="stack"><strong>Source</strong><TermCard className="subdued" term={source} /></div>
                       <div className="stack">
@@ -580,11 +621,11 @@ export function KeywordCurationPage() {
                     actions={
                       <button
                         className="button button-ghost"
-                        disabled={mutationDisabled || result.id === editingPair.source_keyword.id}
+                        disabled={mutationDisabled || result.id === editingSelection?.source.id}
                         onClick={() => void useExistingTarget(editingPair, result.id)}
                         type="button"
                       >
-                        {result.id === editingPair.source_keyword.id ? "Source keyword" : "Use existing keyword"}
+                        {result.id === editingSelection?.source.id ? "Source keyword" : "Use existing keyword"}
                       </button>
                     }
                   />

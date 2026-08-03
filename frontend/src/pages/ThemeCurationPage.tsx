@@ -36,6 +36,8 @@ interface PendingMerge {
   target: ThemeSummary;
 }
 
+type PairDirection = "forward" | "reverse";
+
 function pairKey(pair: { source_theme: ThemeSummary; target_theme: ThemeSummary }): string {
   return `${pair.source_theme.id}:${pair.target_theme.id}`;
 }
@@ -43,10 +45,15 @@ function pairKey(pair: { source_theme: ThemeSummary; target_theme: ThemeSummary 
 function selectedTerms(
   pair: NearDuplicateThemeListResponse["items"][number],
   overrides: Record<string, ThemeSummary>,
+  direction: PairDirection,
 ): { source: ThemeSummary; target: ThemeSummary } {
+  const { source, target } =
+    direction === "reverse"
+      ? { source: pair.target_theme, target: pair.source_theme }
+      : { source: pair.source_theme, target: pair.target_theme };
   return {
-    source: pair.source_theme,
-    target: overrides[pairKey(pair)] ?? pair.target_theme,
+    source,
+    target: overrides[pairKey(pair)] ?? target,
   };
 }
 
@@ -55,6 +62,7 @@ export function ThemeCurationPage() {
   const [pairs, setPairs] = useState<NearDuplicateThemeListResponse | null>(null);
   const [themes, setThemes] = useState<CanonicalThemeListItem[]>([]);
   const [pendingMerges, setPendingMerges] = useState<PendingMerge[]>([]);
+  const [pairDirections, setPairDirections] = useState<Record<string, PairDirection>>({});
   const [targetOverrides, setTargetOverrides] = useState<Record<string, ThemeSummary>>({});
   const [editingPairId, setEditingPairId] = useState<string | null>(null);
   const [targetQuery, setTargetQuery] = useState("");
@@ -99,6 +107,13 @@ export function ThemeCurationPage() {
   const editingPair = useMemo(
     () => (editingPairId ? pairs?.items.find((pair) => pairKey(pair) === editingPairId) ?? null : null),
     [editingPairId, pairs],
+  );
+  const editingSelection = useMemo(
+    () =>
+      editingPair
+        ? selectedTerms(editingPair, targetOverrides, pairDirections[pairKey(editingPair)] ?? "forward")
+        : null,
+    [editingPair, pairDirections, targetOverrides],
   );
 
   useEffect(() => {
@@ -151,9 +166,34 @@ export function ThemeCurationPage() {
     setEditorNotice(null);
   }
 
-  function stageMerge(pair: NearDuplicateThemeListResponse["items"][number]) {
-    const { source, target } = selectedTerms(pair, targetOverrides);
+  function startEditingTarget(pair: NearDuplicateThemeListResponse["items"][number], target: ThemeSummary) {
+    setEditingPairId(pairKey(pair));
+    setTargetQuery(target.text);
+    setEditorNotice(null);
+  }
+
+  function swapPairDirection(pair: NearDuplicateThemeListResponse["items"][number]) {
     const id = pairKey(pair);
+    setPairDirections((current) => ({
+      ...current,
+      [id]: current[id] === "reverse" ? "forward" : "reverse",
+    }));
+    setTargetOverrides((current) => {
+      if (!(id in current)) {
+        return current;
+      }
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
+    if (editingPairId === id) {
+      resetTargetEditor();
+    }
+  }
+
+  function stageMerge(pair: NearDuplicateThemeListResponse["items"][number]) {
+    const id = pairKey(pair);
+    const { source, target } = selectedTerms(pair, targetOverrides, pairDirections[id] ?? "forward");
     setPendingMerges((current) =>
       current.some((merge) => merge.pairId === id || merge.source.id === source.id)
         ? current
@@ -162,11 +202,12 @@ export function ThemeCurationPage() {
   }
 
   function setPairTarget(pair: NearDuplicateThemeListResponse["items"][number], target: ThemeSummary): boolean {
-    if (target.id === pair.source_theme.id) {
+    const id = pairKey(pair);
+    const { source } = selectedTerms(pair, targetOverrides, pairDirections[id] ?? "forward");
+    if (target.id === source.id) {
       setEditorNotice({ tone: "error", title: "Target must differ from source" });
       return false;
     }
-    const id = pairKey(pair);
     setTargetOverrides((current) => ({ ...current, [id]: target }));
     setPendingMerges((current) => current.map((merge) => (merge.pairId === id ? { ...merge, target } : merge)));
     return true;
@@ -211,7 +252,11 @@ export function ThemeCurationPage() {
   }
 
   async function keepBoth(pair: NearDuplicateThemeListResponse["items"][number]) {
-    const { source, target } = selectedTerms(pair, targetOverrides);
+    const { source, target } = selectedTerms(
+      pair,
+      targetOverrides,
+      pairDirections[pairKey(pair)] ?? "forward",
+    );
     if (!source.version || !target.version) {
       return;
     }
@@ -313,7 +358,11 @@ export function ThemeCurationPage() {
   }
 
   async function mergeSingle(pair: NearDuplicateThemeListResponse["items"][number]) {
-    const { source, target } = selectedTerms(pair, targetOverrides);
+    const { source, target } = selectedTerms(
+      pair,
+      targetOverrides,
+      pairDirections[pairKey(pair)] ?? "forward",
+    );
     if (!window.confirm(`Merge ${source.text} into ${target.text}?`)) {
       return;
     }
@@ -354,14 +403,14 @@ export function ThemeCurationPage() {
           <div className="stack">
             {pairs?.items.length ? pairs.items.map((pair) => {
               const id = pairKey(pair);
-              const { source, target } = selectedTerms(pair, targetOverrides);
+              const { source, target } = selectedTerms(pair, targetOverrides, pairDirections[id] ?? "forward");
               const pending = pendingMerges.some((merge) => merge.pairId === id);
               const sourcePending = pendingSourceIds.has(source.id);
               return <article className="card" key={id}>
-                <div className="panel-header"><h3>Similarity {pair.similarity_score.toFixed(2)}</h3></div>
-                <div className="field-grid"><div className="stack"><strong>Source</strong><TermCard className="subdued" term={source} /></div><div className="stack"><strong>Target</strong><TermCard className="subdued" term={target}><div className="theme-curation-target-confirmation"><ConfirmationStatusSwitch ariaLabel={`Confirmation status for ${target.text}`} disabled={mutationDisabled || !target.version} onChange={(status) => void updateTargetStatus(target, status)} value={target.confirmation_status ?? "unconfirmed"} /></div></TermCard></div></div>
+                <div className="panel-header"><h3>Similarity {pair.similarity_score.toFixed(2)}</h3>{target.confirmation_status !== "canonical" ? <button className="button button-ghost" disabled={mutationDisabled || pending} onClick={() => swapPairDirection(pair)} type="button">Swap source and target</button> : null}</div>
+                <div className="field-grid"><div className="stack"><strong>Source</strong><TermCard className="subdued" term={source} /></div><div className="stack"><strong>Target</strong><TermCard className="subdued" term={target}><div className="theme-curation-target-confirmation"><ConfirmationStatusSwitch ariaLabel={`Confirmation status for ${target.text}`} disabled={mutationDisabled || !target.version} onChange={(status) => void updateTargetStatus(target, status)} value={target.confirmation_status ?? "unconfirmed"} /><div className="button-row wrap-row theme-curation-target-actions"><button className="button button-ghost" disabled={mutationDisabled} onClick={() => startEditingTarget(pair, target)} type="button">Edit</button></div></div></TermCard></div></div>
                 <p className="muted">{source.story_count} stor{source.story_count === 1 ? "y" : "ies"} affected</p>
-                <div className="button-row wrap-row"><button className="button" disabled={mutationDisabled || pending || sourcePending} onClick={() => stageMerge(pair)} type="button">{pending ? "In merge batch" : sourcePending ? "Source already in batch" : "Add merge to batch"}</button><button className="button button-ghost" disabled={mutationDisabled || !source.version || !target.version} onClick={() => void keepBoth(pair)} type="button">Keep both</button><button className="button button-ghost" disabled={mutationDisabled} onClick={() => { setEditingPairId(id); setTargetQuery(target.text); setEditorNotice(null); }} type="button">Change target</button><button className="button button-ghost" disabled={mutationDisabled} onClick={() => void mergeSingle(pair)} type="button">Merge now</button></div>
+                <div className="button-row wrap-row"><button className="button" disabled={mutationDisabled || pending || sourcePending} onClick={() => stageMerge(pair)} type="button">{pending ? "In merge batch" : sourcePending ? "Source already in batch" : "Add merge to batch"}</button><button className="button button-ghost" disabled={mutationDisabled || !source.version || !target.version} onClick={() => void keepBoth(pair)} type="button">Keep both</button><button className="button button-ghost" disabled={mutationDisabled} onClick={() => void mergeSingle(pair)} type="button">Merge now</button></div>
               </article>;
             }) : <p className="muted">{pairs?.artifact_version === null ? "No current theme embeddings are available. Run Rebuild, then refresh this view." : "No unresolved near-duplicate theme pairs were found."}</p>}
           </div>
@@ -374,7 +423,7 @@ export function ThemeCurationPage() {
         </aside>
       </section>
 
-      {editingPair ? <div className="modal-backdrop" onClick={resetTargetEditor} role="presentation"><section aria-modal="true" className="modal-shell" onClick={(event) => event.stopPropagation()} role="dialog"><div className="panel-header"><h2>Edit merge target</h2><button className="button button-ghost" disabled={mutationDisabled} onClick={resetTargetEditor} type="button">Close</button></div>{editorNotice ? <section className={`notice ${editorNotice.tone === "error" ? "notice-error" : "notice-success"}`}><strong className="notice-title">{editorNotice.title}</strong>{editorNotice.body ? <p>{editorNotice.body}</p> : null}</section> : null}<label className="field"><span>Target theme query</span><input className="input" disabled={mutationDisabled} onChange={(event) => setTargetQuery(event.target.value)} placeholder="Type a target theme to search or create" value={targetQuery} /></label><div className="button-row wrap-row"><button className="button" disabled={mutationDisabled || !targetQuery.trim()} onClick={() => void createTarget(editingPair)} type="button">Keep typed theme</button><button className="button button-ghost" disabled={mutationDisabled} onClick={() => { setTargetOverrides((current) => { const next = { ...current }; delete next[pairKey(editingPair)]; return next; }); resetTargetEditor(); }} type="button">Reset target</button></div><div className="stack"><div className="panel-header"><h3>Similar existing themes</h3><span className="pill">{targetSearchStatus === "loading" ? "searching" : `${targetResults.length} results`}</span></div>{targetSearchStatus === "loading" ? <p className="muted">Searching themes...</p> : null}{targetQuery.trim() && targetSearchStatus === "ready" && !targetResults.length ? <p className="muted">No similar themes were returned for this query.</p> : null}<div className="modal-story-list">{targetResults.map((theme) => <TermCard key={theme.id} meta={`Similarity ${("score" in theme && typeof theme.score === "number" ? theme.score : 0).toFixed(2)}`} term={theme} actions={<button className="button button-ghost" disabled={mutationDisabled || theme.id === editingPair.source_theme.id} onClick={() => void useExistingTarget(editingPair, theme.id)} type="button">{theme.id === editingPair.source_theme.id ? "Source theme" : "Use existing theme"}</button>} />)}</div></div></section></div> : null}
+      {editingPair ? <div className="modal-backdrop" onClick={resetTargetEditor} role="presentation"><section aria-modal="true" className="modal-shell" onClick={(event) => event.stopPropagation()} role="dialog"><div className="panel-header"><h2>Edit merge target</h2><button className="button button-ghost" disabled={mutationDisabled} onClick={resetTargetEditor} type="button">Close</button></div>{editorNotice ? <section className={`notice ${editorNotice.tone === "error" ? "notice-error" : "notice-success"}`}><strong className="notice-title">{editorNotice.title}</strong>{editorNotice.body ? <p>{editorNotice.body}</p> : null}</section> : null}<label className="field"><span>Target theme query</span><input className="input" disabled={mutationDisabled} onChange={(event) => setTargetQuery(event.target.value)} placeholder="Type a target theme to search or create" value={targetQuery} /></label><div className="button-row wrap-row"><button className="button" disabled={mutationDisabled || !targetQuery.trim()} onClick={() => void createTarget(editingPair)} type="button">Keep typed theme</button><button className="button button-ghost" disabled={mutationDisabled} onClick={() => { setTargetOverrides((current) => { const next = { ...current }; delete next[pairKey(editingPair)]; return next; }); resetTargetEditor(); }} type="button">Reset target</button></div><div className="stack"><div className="panel-header"><h3>Similar existing themes</h3><span className="pill">{targetSearchStatus === "loading" ? "searching" : `${targetResults.length} results`}</span></div>{targetSearchStatus === "loading" ? <p className="muted">Searching themes...</p> : null}{targetQuery.trim() && targetSearchStatus === "ready" && !targetResults.length ? <p className="muted">No similar themes were returned for this query.</p> : null}<div className="modal-story-list">{targetResults.map((theme) => <TermCard key={theme.id} meta={`Similarity ${("score" in theme && typeof theme.score === "number" ? theme.score : 0).toFixed(2)}`} term={theme} actions={<button className="button button-ghost" disabled={mutationDisabled || theme.id === editingSelection?.source.id} onClick={() => void useExistingTarget(editingPair, theme.id)} type="button">{theme.id === editingSelection?.source.id ? "Source theme" : "Use existing theme"}</button>} />)}</div></div></section></div> : null}
     </div>
   );
 }
