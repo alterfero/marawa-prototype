@@ -571,7 +571,7 @@ export function SemanticGraphsPage() {
   const [scope, setScope] = useState<SemanticGraphScope>("all");
   const [graph, setGraph] = useState<SemanticGraphResponse | null>(null);
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
-  const [similarityThreshold, setSimilarityThreshold] = useState(0.65);
+  const [similarityThreshold, setSimilarityThreshold] = useState(0.85);
   const [loading, setLoading] = useState(true);
   const [mutating, setMutating] = useState(false);
   const [notice, setNotice] = useState<PageNotice | null>(null);
