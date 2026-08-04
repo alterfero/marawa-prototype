@@ -460,6 +460,34 @@ p {
   gap: 1rem;
 }
 
+.exploration-semantic-filter-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding-bottom: 0.9rem;
+  border-bottom: 1px solid rgba(19, 52, 59, 0.09);
+}
+
+.exploration-semantic-term-filter-builder {
+  min-width: 0;
+}
+
+.exploration-semantic-term-similarity-threshold {
+  gap: 0.45rem;
+}
+
+.exploration-add-string-matches-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: #48656c;
+  font-size: 0.9rem;
+}
+
+.exploration-add-string-matches-checkbox input {
+  accent-color: #1f7177;
+}
+
 .exploration-trope-filter-builder {
   padding-bottom: 0.9rem;
   border-bottom: 1px solid rgba(19, 52, 59, 0.09);
@@ -469,6 +497,7 @@ p {
   display: inline-flex;
   gap: 0.65rem;
   align-items: center;
+  flex-wrap: wrap;
 }
 
 .exploration-filter-set-heading h3 {
@@ -483,11 +512,34 @@ p {
   flex-shrink: 0;
 }
 
+.exploration-filter-set-color-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: #48656c;
+  font-size: 0.88rem;
+}
+
+.exploration-filter-set-color-picker input {
+  width: 2.25rem;
+  height: 1.85rem;
+  padding: 0.12rem;
+  border: 1px solid rgba(19, 52, 59, 0.2);
+  border-radius: 0.5rem;
+  background: #fffdf9;
+  cursor: pointer;
+}
+
+.exploration-filter-set-color-picker output {
+  color: #11545b;
+  font-family: "SFMono-Regular", "Menlo", "Monaco", monospace;
+}
+
 .exploration-filter-summary-pill {
   border: none;
 }
 
-.exploration-selected-trope-chip {
+.exploration-selected-term-chip {
   cursor: pointer;
   background: rgba(226, 241, 239, 0.95);
   color: #11545b;
@@ -501,7 +553,7 @@ p {
   color: #48656c;
 }
 
-.exploration-trope-filter-option-text {
+.exploration-semantic-term-filter-option-text {
   display: grid;
   gap: 0.2rem;
 }
@@ -1694,6 +1746,10 @@ p {
   .input-with-action {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .exploration-semantic-filter-grid {
+    grid-template-columns: 1fr;
   }
 
   .story-filter-actions {

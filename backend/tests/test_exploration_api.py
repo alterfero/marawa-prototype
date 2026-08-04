@@ -502,6 +502,76 @@ def test_exploration_network_builds_multiple_filter_sets_with_selected_tropes(mo
     assert body["bounds"] == [[-20.0, 165.0], [-19.0, 166.0]]
 
 
+def test_exploration_network_intersects_selected_theme_trope_and_keyword_filters(monkeypatch, tmp_path) -> None:
+    configure_auth_env(monkeypatch)
+    with build_client(tmp_path, "exploration-semantic-filter-set.db") as client:
+        authenticate_admin(client)
+        upload_dataset(
+            client,
+            [
+                make_row(
+                    title="Matching story",
+                    coord="-20.0, 165.0",
+                    themes="§§ Creation",
+                    tropes="§§ first trope",
+                    keywords="ocean",
+                ),
+                make_row(
+                    title="Wrong keyword",
+                    coord="-19.0, 166.0",
+                    themes="§§ Creation",
+                    tropes="§§ first trope",
+                    keywords="bird",
+                ),
+                make_row(
+                    title="Wrong theme",
+                    coord="-18.0, 167.0",
+                    themes="§§ Ocean",
+                    tropes="§§ first trope",
+                    keywords="ocean",
+                ),
+                make_row(
+                    title="Wrong trope",
+                    coord="-17.0, 168.0",
+                    themes="§§ Creation",
+                    tropes="§§ second trope",
+                    keywords="ocean",
+                ),
+            ],
+        )
+        request_rebuild(client)
+        process_next_job(client)
+
+        stories = client.get("/api/stories").json()["items"]
+        matching_story_id = next(item["id"] for item in stories if item["title"] == "Matching story")
+        theme = client.get(f"/api/stories/{matching_story_id}/themes").json()["items"][0]
+        trope = client.get(f"/api/stories/{matching_story_id}/tropes").json()["items"][0]
+        keyword = client.get(f"/api/stories/{matching_story_id}/keywords").json()["items"][0]
+
+        response = client.post(
+            "/api/exploration/network",
+            json={
+                "story_filter_sets": [
+                    {
+                        "id": "semantic-set",
+                        "label": "Semantic set",
+                        "color": "#1d4ed8",
+                        "selected_themes": [{"id": theme["id"], "text": theme["text"]}],
+                        "selected_tropes": [{"id": trope["id"], "text": trope["text"]}],
+                        "selected_keywords": [{"id": keyword["id"], "text": keyword["text"]}],
+                    },
+                ],
+            },
+        )
+
+    assert response.status_code == 200
+    result = response.json()["filter_set_results"][0]
+    assert [item["text"] for item in result["selected_themes"]] == ["Creation"]
+    assert [item["text"] for item in result["selected_tropes"]] == ["first trope"]
+    assert [item["text"] for item in result["selected_keywords"]] == ["ocean"]
+    assert [item["title"] for item in result["original_markers"]] == ["Matching story"]
+
+
 def test_exploration_network_builds_selected_trope_results_for_multiple_filter_sets(monkeypatch, tmp_path) -> None:
     configure_auth_env(monkeypatch)
     with build_client(tmp_path, "exploration-multi-filter-trope.db") as client:

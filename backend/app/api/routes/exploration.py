@@ -18,7 +18,7 @@ class TropeCandidateResponse(BaseModel):
     score: float
 
 
-class SelectedTropeResponse(BaseModel):
+class SelectedTermResponse(BaseModel):
     id: str
     text: str
     story_count: int
@@ -70,7 +70,7 @@ class StoryFieldFilterRequest(BaseModel):
     selected_values: list[str] = Field(default_factory=list)
 
 
-class FilterSetSelectedTropeRequest(BaseModel):
+class FilterSetSelectedTermRequest(BaseModel):
     id: str
     text: str | None = None
 
@@ -80,7 +80,9 @@ class StoryFilterSetRequest(BaseModel):
     label: str
     color: str
     filters: list[StoryFieldFilterRequest] = Field(default_factory=list)
-    selected_tropes: list[FilterSetSelectedTropeRequest] = Field(default_factory=list)
+    selected_themes: list[FilterSetSelectedTermRequest] = Field(default_factory=list)
+    selected_tropes: list[FilterSetSelectedTermRequest] = Field(default_factory=list)
+    selected_keywords: list[FilterSetSelectedTermRequest] = Field(default_factory=list)
 
 
 class ExplorationNetworkRequest(BaseModel):
@@ -98,7 +100,9 @@ class ExplorationFilterSetResultResponse(BaseModel):
     filter_set_label: str
     filter_set_color: str
     filters: list[StoryFieldFilterRequest] = Field(default_factory=list)
-    selected_tropes: list[SelectedTropeResponse] = Field(default_factory=list)
+    selected_themes: list[SelectedTermResponse] = Field(default_factory=list)
+    selected_tropes: list[SelectedTermResponse] = Field(default_factory=list)
+    selected_keywords: list[SelectedTermResponse] = Field(default_factory=list)
     related_tropes: list[TropeCandidateResponse]
     original_markers: list[ExplorationMarkerResponse]
     related_markers: list[ExplorationMarkerResponse]
@@ -109,7 +113,7 @@ class ExplorationFilterSetResultResponse(BaseModel):
 
 
 class ExplorationNetworkResponse(BaseModel):
-    selected_trope: SelectedTropeResponse | None
+    selected_trope: SelectedTermResponse | None
     selected_trope_candidates: list[TropeCandidateResponse]
     related_tropes: list[TropeCandidateResponse]
     original_markers: list[ExplorationMarkerResponse]

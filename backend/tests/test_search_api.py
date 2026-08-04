@@ -64,3 +64,42 @@ def test_search_api_returns_similar_tropes_and_keywords(monkeypatch, tmp_path) -
     keyword_body = keyword_response.json()
     assert keyword_body["items"][0]["text"] == "wolf"
     assert keyword_body["items"][1]["text"] == "moon"
+
+
+def test_search_api_returns_all_literal_string_matches_when_requested(monkeypatch, tmp_path) -> None:
+    configure_auth_env(monkeypatch)
+    db_path = tmp_path / "search-string-matches-api.db"
+    engine = build_engine(f"sqlite:///{db_path}")
+    session_factory = build_session_factory(engine)
+    app = create_app(
+        db_engine=engine,
+        session_factory=session_factory,
+        job_runner_enabled=False,
+        embedding_backend=FakeEmbeddingBackend(),
+    )
+
+    row = {column: "" for column in CSV_COLUMNS}
+    row["Story title (Eng)"] = "Story"
+    row[TROPE_FIELD] = "§§ Moon creation\n§§ Moon journey\n§§ Sun creation"
+
+    with TestClient(app) as client:
+        authenticate_admin(client)
+        upload_response = client.post(
+            "/api/dataset/upload",
+            files={"file": ("search.csv", make_csv_bytes([row]), "text/csv")},
+        )
+        assert upload_response.status_code == 201
+        rebuild_response = client.post("/api/dataset/rebuild")
+        assert rebuild_response.status_code == 200
+        assert client.app.state.job_runner.process_next_job() is True
+
+        response = client.post(
+            "/api/search/tropes",
+            json={"query": "moon", "limit": 1, "include_string_matches": True},
+        )
+
+    assert response.status_code == 200
+    assert [item["text"] for item in response.json()["string_match_items"]] == [
+        "Moon creation",
+        "Moon journey",
+    ]

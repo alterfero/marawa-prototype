@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import unicodedata
 
 from sqlalchemy import func, select
@@ -11,7 +11,16 @@ from sqlalchemy.orm import Session, selectinload
 from app.core.coordinates import parse_space_coord
 from app.core.csv_schema import THEME_FIELD
 from app.core.parsing import clean_text, split_themes
-from app.db.models import Dataset, DatasetStatus, Story, StoryTrope, TermKind, Trope
+from app.db.models import (
+    Dataset,
+    DatasetStatus,
+    Story,
+    StoryKeyword,
+    StoryTheme,
+    StoryTrope,
+    TermKind,
+    Trope,
+)
 
 
 TITLE_FIELDS = [
@@ -37,9 +46,11 @@ HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 class StoryEntry:
     story_id: str
     source_row_number: int | None
-    completeness: str
-    fields: dict[str, str]
-    tropes: list[dict]
+    completeness: str = "complete"
+    fields: dict[str, str] = field(default_factory=dict)
+    tropes: list[dict] = field(default_factory=list)
+    themes: list[dict] = field(default_factory=list)
+    keywords: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -49,7 +60,7 @@ class StoryFieldFilter:
 
 
 @dataclass
-class SelectedTropeFilter:
+class SelectedTermFilter:
     id: str
     text: str
 
@@ -60,7 +71,9 @@ class StoryFilterSet:
     label: str
     color: str
     filters: list[StoryFieldFilter]
-    selected_tropes: list[SelectedTropeFilter]
+    selected_themes: list[SelectedTermFilter]
+    selected_tropes: list[SelectedTermFilter]
+    selected_keywords: list[SelectedTermFilter]
 
 
 class ExplorationError(ValueError):
@@ -154,6 +167,8 @@ def build_exploration_response(
 
     stories = _load_active_story_entries(session, active_dataset.id)
     active_story_counts_by_trope_id = _story_counts_by_trope_id(stories)
+    active_story_counts_by_theme_id = _story_counts_by_term_id(stories, "themes")
+    active_story_counts_by_keyword_id = _story_counts_by_term_id(stories, "keywords")
 
     if normalized_story_filter_sets:
         selected_trope = None
@@ -167,7 +182,9 @@ def build_exploration_response(
             filtered_entries = _apply_story_filters(
                 stories,
                 filter_set.filters,
+                selected_themes=filter_set.selected_themes,
                 selected_tropes=filter_set.selected_tropes,
+                selected_keywords=filter_set.selected_keywords,
             )
             if selected_trope is None:
                 set_result = _filtered_story_map_response(
@@ -206,9 +223,17 @@ def build_exploration_response(
                         }
                         for story_filter in filter_set.filters
                     ],
-                    "selected_tropes": _serialize_selected_trope_filters(
+                    "selected_themes": _serialize_selected_term_filters(
+                        filter_set.selected_themes,
+                        active_story_counts_by_theme_id,
+                    ),
+                    "selected_tropes": _serialize_selected_term_filters(
                         filter_set.selected_tropes,
                         active_story_counts_by_trope_id,
+                    ),
+                    "selected_keywords": _serialize_selected_term_filters(
+                        filter_set.selected_keywords,
+                        active_story_counts_by_keyword_id,
                     ),
                     "related_tropes": set_result["related_tropes"],
                     "original_markers": set_result["original_markers"],
@@ -299,6 +324,8 @@ def _load_active_story_entries(session: Session, dataset_id: str) -> list[StoryE
         select(Story)
         .where(Story.dataset_id == dataset_id)
         .options(selectinload(Story.trope_links).selectinload(StoryTrope.trope))
+        .options(selectinload(Story.theme_links).selectinload(StoryTheme.theme))
+        .options(selectinload(Story.keyword_links).selectinload(StoryKeyword.keyword))
         .order_by(Story.source_row_number, Story.created_at, Story.id)
     ).all()
     return [
@@ -322,6 +349,38 @@ def _load_active_story_entries(session: Session, dataset_id: str) -> list[StoryE
                     ),
                 )
                 if link.trope is not None
+            ],
+            themes=[
+                {
+                    "id": link.theme.id,
+                    "text": link.theme.text,
+                }
+                for link in sorted(
+                    story.theme_links,
+                    key=lambda item: (
+                        item.position is None,
+                        item.position if item.position is not None else 0,
+                        item.created_at,
+                        item.theme.text if item.theme is not None else "",
+                    ),
+                )
+                if link.theme is not None
+            ],
+            keywords=[
+                {
+                    "id": link.keyword.id,
+                    "text": link.keyword.text,
+                }
+                for link in sorted(
+                    story.keyword_links,
+                    key=lambda item: (
+                        item.position is None,
+                        item.position if item.position is not None else 0,
+                        item.created_at,
+                        item.keyword.text if item.keyword is not None else "",
+                    ),
+                )
+                if link.keyword is not None
             ],
         )
         for story in stories
@@ -377,29 +436,31 @@ def _normalize_story_filters(story_filters: list[dict] | None) -> list[StoryFiel
     return normalized_filters
 
 
-def _normalize_selected_trope_filters(selected_tropes: list[dict] | None) -> list[SelectedTropeFilter]:
-    normalized_selected_tropes: list[SelectedTropeFilter] = []
+def _normalize_selected_term_filters(selected_terms: list[dict] | None) -> list[SelectedTermFilter]:
+    normalized_selected_terms: list[SelectedTermFilter] = []
     seen_ids: set[str] = set()
-    for item in selected_tropes or []:
-        trope_id = clean_text((item or {}).get("id", ""))
-        if not trope_id or trope_id in seen_ids:
+    for item in selected_terms or []:
+        term_id = clean_text((item or {}).get("id", ""))
+        if not term_id or term_id in seen_ids:
             continue
-        seen_ids.add(trope_id)
-        normalized_selected_tropes.append(
-            SelectedTropeFilter(
-                id=trope_id,
-                text=clean_text((item or {}).get("text", "")) or trope_id,
+        seen_ids.add(term_id)
+        normalized_selected_terms.append(
+            SelectedTermFilter(
+                id=term_id,
+                text=clean_text((item or {}).get("text", "")) or term_id,
             )
         )
-    return normalized_selected_tropes
+    return normalized_selected_terms
 
 
 def _normalize_story_filter_sets(story_filter_sets: list[dict] | None) -> list[StoryFilterSet]:
     normalized_sets: list[StoryFilterSet] = []
     for index, item in enumerate(story_filter_sets or []):
         filters = _normalize_story_filters((item or {}).get("filters", []))
-        selected_tropes = _normalize_selected_trope_filters((item or {}).get("selected_tropes", []))
-        if not filters and not selected_tropes:
+        selected_themes = _normalize_selected_term_filters((item or {}).get("selected_themes", []))
+        selected_tropes = _normalize_selected_term_filters((item or {}).get("selected_tropes", []))
+        selected_keywords = _normalize_selected_term_filters((item or {}).get("selected_keywords", []))
+        if not filters and not selected_themes and not selected_tropes and not selected_keywords:
             continue
         normalized_sets.append(
             StoryFilterSet(
@@ -407,7 +468,9 @@ def _normalize_story_filter_sets(story_filter_sets: list[dict] | None) -> list[S
                 label=clean_text((item or {}).get("label", "")) or f"Set {index + 1}",
                 color=_normalize_filter_set_color((item or {}).get("color", "")),
                 filters=filters,
+                selected_themes=selected_themes,
                 selected_tropes=selected_tropes,
+                selected_keywords=selected_keywords,
             )
         )
     return normalized_sets
@@ -423,7 +486,9 @@ def _entry_matches_story_filters(
     entry: StoryEntry,
     story_filters: list[StoryFieldFilter],
     *,
-    selected_tropes: list[SelectedTropeFilter] | None = None,
+    selected_themes: list[SelectedTermFilter] | None = None,
+    selected_tropes: list[SelectedTermFilter] | None = None,
+    selected_keywords: list[SelectedTermFilter] | None = None,
 ) -> bool:
     matches_fields = all(
         (
@@ -438,46 +503,68 @@ def _entry_matches_story_filters(
     )
     if not matches_fields:
         return False
-    if not selected_tropes:
+    return (
+        _entry_matches_selected_terms(entry.themes, selected_themes)
+        and _entry_matches_selected_terms(entry.tropes, selected_tropes)
+        and _entry_matches_selected_terms(entry.keywords, selected_keywords)
+    )
+
+
+def _entry_matches_selected_terms(
+    entry_terms: list[dict], selected_terms: list[SelectedTermFilter] | None
+) -> bool:
+    if not selected_terms:
         return True
-    selected_trope_ids = {trope.id for trope in selected_tropes}
-    return any(trope["id"] in selected_trope_ids for trope in entry.tropes)
+    selected_term_ids = {term.id for term in selected_terms}
+    return any(term["id"] in selected_term_ids for term in entry_terms)
 
 
 def _apply_story_filters(
     entries: list[StoryEntry],
     story_filters: list[StoryFieldFilter],
     *,
-    selected_tropes: list[SelectedTropeFilter] | None = None,
+    selected_themes: list[SelectedTermFilter] | None = None,
+    selected_tropes: list[SelectedTermFilter] | None = None,
+    selected_keywords: list[SelectedTermFilter] | None = None,
 ) -> list[StoryEntry]:
-    if not story_filters and not selected_tropes:
+    if not story_filters and not selected_themes and not selected_tropes and not selected_keywords:
         return entries
     return [
         entry
         for entry in entries
-        if _entry_matches_story_filters(entry, story_filters, selected_tropes=selected_tropes)
+        if _entry_matches_story_filters(
+            entry,
+            story_filters,
+            selected_themes=selected_themes,
+            selected_tropes=selected_tropes,
+            selected_keywords=selected_keywords,
+        )
     ]
 
 
 def _story_counts_by_trope_id(entries: list[StoryEntry]) -> dict[str, int]:
-    story_counts_by_trope_id: dict[str, int] = {}
+    return _story_counts_by_term_id(entries, "tropes")
+
+
+def _story_counts_by_term_id(entries: list[StoryEntry], attribute: str) -> dict[str, int]:
+    story_counts_by_term_id: dict[str, int] = {}
     for entry in entries:
-        for trope in entry.tropes:
-            story_counts_by_trope_id[trope["id"]] = story_counts_by_trope_id.get(trope["id"], 0) + 1
-    return story_counts_by_trope_id
+        for term in getattr(entry, attribute):
+            story_counts_by_term_id[term["id"]] = story_counts_by_term_id.get(term["id"], 0) + 1
+    return story_counts_by_term_id
 
 
-def _serialize_selected_trope_filters(
-    selected_tropes: list[SelectedTropeFilter],
-    story_counts_by_trope_id: dict[str, int],
+def _serialize_selected_term_filters(
+    selected_terms: list[SelectedTermFilter],
+    story_counts_by_term_id: dict[str, int],
 ) -> list[dict]:
     return [
         {
-            "id": trope.id,
-            "text": trope.text,
-            "story_count": int(story_counts_by_trope_id.get(trope.id, 0)),
+            "id": term.id,
+            "text": term.text,
+            "story_count": int(story_counts_by_term_id.get(term.id, 0)),
         }
-        for trope in selected_tropes
+        for term in selected_terms
     ]
 
 
@@ -486,7 +573,7 @@ def _filtered_story_map_response(
     *,
     min_similarity: float,
     original_color: str | None = None,
-    selected_tropes: list[SelectedTropeFilter] | None = None,
+    selected_tropes: list[SelectedTermFilter] | None = None,
     filter_set_id: str | None = None,
     filter_set_label: str | None = None,
 ) -> dict:

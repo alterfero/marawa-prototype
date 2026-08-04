@@ -919,7 +919,9 @@ export function buildExplorationNetwork(payload: {
     label: string;
     color: string;
     filters: Array<{ field: string; selected_values: string[] }>;
+    selected_themes?: Array<{ id: string; text: string }>;
     selected_tropes?: Array<{ id: string; text: string }>;
+    selected_keywords?: Array<{ id: string; text: string }>;
   }>;
   min_similarity?: number;
   related_limit?: number;
@@ -934,7 +936,11 @@ export function buildExplorationNetwork(payload: {
   });
 }
 
-export function searchTropes(payload: { query: string; limit?: number }): Promise<TropeSearchResponse> {
+export function searchTropes(payload: {
+  query: string;
+  limit?: number;
+  include_string_matches?: boolean;
+}): Promise<TropeSearchResponse> {
   return request<TropeSearchResponse>("/search/tropes", {
     method: "POST",
     headers: {
@@ -976,7 +982,11 @@ export function buildSemanticGraph(payload: {
   });
 }
 
-export function searchKeywords(payload: { query: string; limit?: number }): Promise<SearchResponse> {
+export function searchKeywords(payload: {
+  query: string;
+  limit?: number;
+  include_string_matches?: boolean;
+}): Promise<SearchResponse> {
   return request<SearchResponse>("/search/keywords", {
     method: "POST",
     headers: {
@@ -986,7 +996,11 @@ export function searchKeywords(payload: { query: string; limit?: number }): Prom
   });
 }
 
-export function searchThemes(payload: { query: string; limit?: number }): Promise<ThemeSearchResponse> {
+export function searchThemes(payload: {
+  query: string;
+  limit?: number;
+  include_string_matches?: boolean;
+}): Promise<ThemeSearchResponse> {
   return request<ThemeSearchResponse>("/search/themes", {
     method: "POST",
     headers: {

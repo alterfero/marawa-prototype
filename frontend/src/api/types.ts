@@ -480,18 +480,22 @@ export interface ExplorationAppliedFilter {
   selected_values: string[];
 }
 
-export interface ExplorationAppliedTropeFilter {
+export interface ExplorationAppliedTermFilter {
   id: string;
   text: string;
   story_count: number;
 }
+
+export type ExplorationAppliedTropeFilter = ExplorationAppliedTermFilter;
 
 export interface ExplorationFilterSetResult {
   filter_set_id: string;
   filter_set_label: string;
   filter_set_color: string;
   filters: ExplorationAppliedFilter[];
+  selected_themes: ExplorationAppliedTermFilter[];
   selected_tropes: ExplorationAppliedTropeFilter[];
+  selected_keywords: ExplorationAppliedTermFilter[];
   related_tropes: ExplorationCandidate[];
   original_markers: ExplorationMarker[];
   related_markers: ExplorationMarker[];
@@ -534,6 +538,7 @@ export interface SearchItem {
 
 export interface SearchResponse {
   items: SearchItem[];
+  string_match_items: SearchItem[];
   model_name: string;
   artifact_version: number | null;
 }

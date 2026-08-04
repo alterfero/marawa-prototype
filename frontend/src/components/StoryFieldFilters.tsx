@@ -1,7 +1,14 @@
 import { useMemo, type ReactNode } from "react";
 
-import type { StorySummary } from "../api/types";
-import { getStoryFieldLabel, KEYWORD_FIELD, LEGACY_METADATA_SECTIONS, THEME_FIELD, TROPE_FIELD } from "../constants/csv";
+import type { ExplorationAppliedTermFilter, StorySummary } from "../api/types";
+import {
+  getStoryFieldLabel,
+  KEYWORD_FIELD,
+  LEGACY_METADATA_SECTIONS,
+  splitKeywordText,
+  THEME_FIELD,
+  TROPE_FIELD,
+} from "../constants/csv";
 
 export interface StoryFieldFilter {
   id: number;
@@ -156,6 +163,37 @@ export function filterStoriesBySelectedTropes(
     return stories;
   }
   return stories.filter((story) => storyMatchesSelectedTropes(story, selectedTropes));
+}
+
+function storyMatchesSelectedTermGroup(
+  storyTerms: string[],
+  selectedTerms: ExplorationAppliedTermFilter[],
+): boolean {
+  if (selectedTerms.length === 0) {
+    return true;
+  }
+  const selectedTexts = new Set(selectedTerms.map((term) => normalizeTropeFilterValue(term.text)));
+  return storyTerms.some((term) => selectedTexts.has(normalizeTropeFilterValue(term)));
+}
+
+export function filterStoriesBySelectedSemanticTerms(
+  stories: StorySummary[],
+  selections: {
+    themes: ExplorationAppliedTermFilter[];
+    tropes: ExplorationAppliedTermFilter[];
+    keywords: ExplorationAppliedTermFilter[];
+  },
+): StorySummary[] {
+  if (selections.themes.length === 0 && selections.tropes.length === 0 && selections.keywords.length === 0) {
+    return stories;
+  }
+
+  return stories.filter(
+    (story) =>
+      storyMatchesSelectedTermGroup(splitStoryThemeValues(getStoryFilterValue(story, THEME_FIELD)), selections.themes) &&
+      storyMatchesSelectedTermGroup(splitStoryTropeValues(getStoryFilterValue(story, TROPE_FIELD)), selections.tropes) &&
+      storyMatchesSelectedTermGroup(splitKeywordText(getStoryFilterValue(story, KEYWORD_FIELD)), selections.keywords),
+  );
 }
 
 export function summarizeFilterValue(value: string): string {

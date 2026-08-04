@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db_session, require_minimum_role
@@ -9,6 +9,7 @@ from app.db.models import TermKind, UserRole
 class SearchRequest(BaseModel):
     query: str
     limit: int = 10
+    include_string_matches: bool = False
 
 
 class SearchExplanationResponse(BaseModel):
@@ -31,6 +32,7 @@ class SearchItemResponse(BaseModel):
 
 class SearchResponse(BaseModel):
     items: list[SearchItemResponse]
+    string_match_items: list[SearchItemResponse] = Field(default_factory=list)
     model_name: str
     artifact_version: int | None
 
@@ -49,7 +51,15 @@ def search_tropes(
     session: Session = Depends(get_db_session),
     search_service=Depends(get_search_service),
 ) -> SearchResponse:
-    return SearchResponse(**search_service.search_terms(session, TermKind.TROPE, payload.query, limit=payload.limit))
+    return SearchResponse(
+        **search_service.search_terms(
+            session,
+            TermKind.TROPE,
+            payload.query,
+            limit=payload.limit,
+            include_string_matches=payload.include_string_matches,
+        )
+    )
 
 
 @router.post("/keywords", response_model=SearchResponse)
@@ -59,7 +69,15 @@ def search_keywords(
     session: Session = Depends(get_db_session),
     search_service=Depends(get_search_service),
 ) -> SearchResponse:
-    return SearchResponse(**search_service.search_terms(session, TermKind.KEYWORD, payload.query, limit=payload.limit))
+    return SearchResponse(
+        **search_service.search_terms(
+            session,
+            TermKind.KEYWORD,
+            payload.query,
+            limit=payload.limit,
+            include_string_matches=payload.include_string_matches,
+        )
+    )
 
 
 @router.post("/themes", response_model=SearchResponse)
@@ -69,4 +87,12 @@ def search_themes(
     session: Session = Depends(get_db_session),
     search_service=Depends(get_search_service),
 ) -> SearchResponse:
-    return SearchResponse(**search_service.search_terms(session, TermKind.THEME, payload.query, limit=payload.limit))
+    return SearchResponse(
+        **search_service.search_terms(
+            session,
+            TermKind.THEME,
+            payload.query,
+            limit=payload.limit,
+            include_string_matches=payload.include_string_matches,
+        )
+    )

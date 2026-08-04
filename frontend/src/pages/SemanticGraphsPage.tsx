@@ -176,9 +176,12 @@ function SemanticForceGraph({
   const nodeDragOffsetRef = useRef({ x: 0, y: 0 });
   const nodeWasDraggedRef = useRef(false);
   const panDragRef = useRef<PanDrag | null>(null);
+  const lastGraphPointerRef = useRef<{ clientX: number; clientY: number } | null>(null);
   const [layoutRevision, setLayoutRevision] = useState(0);
   const [pan, setPan] = useState<PanState>({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
+  const panRef = useRef<PanState>(pan);
+  const zoomRef = useRef(zoom);
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
   const graphTopologyKey = [
@@ -284,8 +287,8 @@ function SemanticForceGraph({
     }
     const rect = svg.getBoundingClientRect();
     return {
-      x: (event.clientX - rect.left - pan.x) / zoom,
-      y: (event.clientY - rect.top - pan.y) / zoom,
+      x: (event.clientX - rect.left - panRef.current.x) / zoomRef.current,
+      y: (event.clientY - rect.top - panRef.current.y) / zoomRef.current,
     };
   }
 
@@ -312,7 +315,7 @@ function SemanticForceGraph({
       pointerId: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
-      startPan: pan,
+      startPan: panRef.current,
     };
     event.currentTarget.setPointerCapture(event.pointerId);
   }
@@ -339,7 +342,33 @@ function SemanticForceGraph({
     event.currentTarget.setPointerCapture(event.pointerId);
   }
 
+  function zoomAtPointer(scaleFactor: number, pointer?: { clientX: number; clientY: number }) {
+    const svg = svgRef.current;
+    if (!svg) {
+      return;
+    }
+    const rect = svg.getBoundingClientRect();
+    const focusPointer = pointer ?? lastGraphPointerRef.current;
+    const screenX = focusPointer ? clamp(focusPointer.clientX - rect.left, 0, rect.width) : rect.width / 2;
+    const screenY = focusPointer ? clamp(focusPointer.clientY - rect.top, 0, rect.height) : rect.height / 2;
+    const currentPan = panRef.current;
+    const currentZoom = zoomRef.current;
+    const nextZoom = clamp(currentZoom * scaleFactor, 0.15, 2.5);
+    const graphX = (screenX - currentPan.x) / currentZoom;
+    const graphY = (screenY - currentPan.y) / currentZoom;
+    const nextPan = {
+      x: screenX - graphX * nextZoom,
+      y: screenY - graphY * nextZoom,
+    };
+
+    panRef.current = nextPan;
+    zoomRef.current = nextZoom;
+    setPan(nextPan);
+    setZoom(nextZoom);
+  }
+
   function handlePointerMove(event: PointerEvent<SVGSVGElement>) {
+    lastGraphPointerRef.current = { clientX: event.clientX, clientY: event.clientY };
     const draggingNodeId = draggingNodeIdRef.current;
     if (draggingNodeId) {
       const point = graphPoint(event);
@@ -371,10 +400,12 @@ function SemanticForceGraph({
 
     const panDrag = panDragRef.current;
     if (panDrag && panDrag.pointerId === event.pointerId) {
-      setPan({
+      const nextPan = {
         x: panDrag.startPan.x + event.clientX - panDrag.startX,
         y: panDrag.startPan.y + event.clientY - panDrag.startY,
-      });
+      };
+      panRef.current = nextPan;
+      setPan(nextPan);
     }
   }
 
@@ -410,8 +441,8 @@ function SemanticForceGraph({
 
   function handleWheel(event: WheelEvent<SVGSVGElement>) {
     event.preventDefault();
-    const nextZoom = clamp(zoom * (event.deltaY > 0 ? 0.9 : 1.11), 0.15, 2.5);
-    setZoom(nextZoom);
+    lastGraphPointerRef.current = { clientX: event.clientX, clientY: event.clientY };
+    zoomAtPointer(event.deltaY > 0 ? 0.9 : 1.11, event);
   }
 
   const tooltipPoint = hoveredNode ? screenPoint(hoveredNode, pan, zoom) : null;
@@ -514,7 +545,7 @@ function SemanticForceGraph({
           aria-label="Zoom in"
           className="semantic-graph-zoom-button"
           disabled={disabled}
-          onClick={() => setZoom((currentZoom) => clamp(currentZoom * 1.2, 0.15, 2.5))}
+          onClick={() => zoomAtPointer(1.2)}
           title="Zoom in"
           type="button"
         >
@@ -524,7 +555,7 @@ function SemanticForceGraph({
           aria-label="Zoom out"
           className="semantic-graph-zoom-button"
           disabled={disabled}
-          onClick={() => setZoom((currentZoom) => clamp(currentZoom / 1.2, 0.15, 2.5))}
+          onClick={() => zoomAtPointer(1 / 1.2)}
           title="Zoom out"
           type="button"
         >

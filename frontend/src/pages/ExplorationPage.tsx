@@ -2,10 +2,13 @@ import L from "leaflet";
 import { Component, type ReactNode, FormEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { buildExplorationNetwork, getErrorMessage, getStories } from "../api/client";
-import { ExplorationFilterSetTropePicker } from "../components/ExplorationFilterSetTropePicker";
+import {
+  ExplorationFilterSetTermPicker,
+  type ExplorationSemanticTermKind,
+} from "../components/ExplorationFilterSetTermPicker";
 import {
   createEmptyStoryFieldFilter,
-  filterStoriesBySelectedTropes,
+  filterStoriesBySelectedSemanticTerms,
   normalizeStoryFieldFilters,
   serializeStoryFieldFilters,
   storyFieldFiltersAreComplete,
@@ -16,6 +19,7 @@ import { roleAtLeast, useAuth } from "../auth";
 import { TropeCard } from "../components/TropeCard";
 import type {
   ExplorationAppliedFilter,
+  ExplorationAppliedTermFilter,
   ExplorationAppliedTropeFilter,
   ExplorationCandidate,
   ExplorationConnection,
@@ -47,9 +51,15 @@ type ExplorationFilterSetState = {
   color: string;
   draftFilters: StoryFieldFilter[];
   appliedFilters: StoryFieldFilter[];
+  themeQuery: string;
   tropeQuery: string;
+  keywordQuery: string;
+  draftSelectedThemes: ExplorationAppliedTermFilter[];
   draftSelectedTropes: ExplorationAppliedTropeFilter[];
+  draftSelectedKeywords: ExplorationAppliedTermFilter[];
+  appliedSelectedThemes: ExplorationAppliedTermFilter[];
   appliedSelectedTropes: ExplorationAppliedTropeFilter[];
+  appliedSelectedKeywords: ExplorationAppliedTermFilter[];
 };
 type FilterSetLegend = {
   id: string;
@@ -145,6 +155,10 @@ function colorToRgb(color: string): [number, number, number] {
 function colorWithAlpha(color: string, alpha: number): string {
   const [red, green, blue] = colorToRgb(color);
   return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+}
+
+function formatHexColor(color: string): string {
+  return color.toUpperCase();
 }
 
 class ExplorationResultBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
@@ -585,12 +599,21 @@ function storyFiltersPayload(filters: StoryFieldFilter[]) {
   }));
 }
 
-function serializeSelectedTropeFilters(tropes: ExplorationAppliedTropeFilter[]): string {
+function serializeSelectedTermFilters(terms: ExplorationAppliedTermFilter[]): string {
   return JSON.stringify(
-    tropes
-      .map((trope) => trope.id)
+    terms
+      .map((term) => term.id)
       .sort((left, right) => left.localeCompare(right)),
   );
+}
+
+function toggleSelectedTerms(
+  selectedTerms: ExplorationAppliedTermFilter[],
+  term: ExplorationAppliedTermFilter,
+): ExplorationAppliedTermFilter[] {
+  return selectedTerms.some((item) => item.id === term.id)
+    ? selectedTerms.filter((item) => item.id !== term.id)
+    : [...selectedTerms, term];
 }
 
 function createExplorationFilterSet(nextId: number): ExplorationFilterSetState {
@@ -599,9 +622,15 @@ function createExplorationFilterSet(nextId: number): ExplorationFilterSetState {
     color: FILTER_SET_PALETTE[(nextId - 1) % FILTER_SET_PALETTE.length],
     draftFilters: [],
     appliedFilters: [],
+    themeQuery: "",
     tropeQuery: "",
+    keywordQuery: "",
+    draftSelectedThemes: [],
     draftSelectedTropes: [],
+    draftSelectedKeywords: [],
+    appliedSelectedThemes: [],
     appliedSelectedTropes: [],
+    appliedSelectedKeywords: [],
   };
 }
 
@@ -612,8 +641,12 @@ function serializeExplorationFilterSets(filterSets: ExplorationFilterSetState[])
       color: filterSet.color,
       draftFilters: JSON.parse(serializeStoryFieldFilters(filterSet.draftFilters)),
       appliedFilters: JSON.parse(serializeStoryFieldFilters(filterSet.appliedFilters)),
-      draftSelectedTropes: JSON.parse(serializeSelectedTropeFilters(filterSet.draftSelectedTropes)),
-      appliedSelectedTropes: JSON.parse(serializeSelectedTropeFilters(filterSet.appliedSelectedTropes)),
+      draftSelectedThemes: JSON.parse(serializeSelectedTermFilters(filterSet.draftSelectedThemes)),
+      draftSelectedTropes: JSON.parse(serializeSelectedTermFilters(filterSet.draftSelectedTropes)),
+      draftSelectedKeywords: JSON.parse(serializeSelectedTermFilters(filterSet.draftSelectedKeywords)),
+      appliedSelectedThemes: JSON.parse(serializeSelectedTermFilters(filterSet.appliedSelectedThemes)),
+      appliedSelectedTropes: JSON.parse(serializeSelectedTermFilters(filterSet.appliedSelectedTropes)),
+      appliedSelectedKeywords: JSON.parse(serializeSelectedTermFilters(filterSet.appliedSelectedKeywords)),
     })),
   );
 }
@@ -621,13 +654,22 @@ function serializeExplorationFilterSets(filterSets: ExplorationFilterSetState[])
 function filterSetHasPendingChanges(filterSet: ExplorationFilterSetState): boolean {
   return (
     serializeStoryFieldFilters(filterSet.draftFilters) !== serializeStoryFieldFilters(filterSet.appliedFilters) ||
-    serializeSelectedTropeFilters(filterSet.draftSelectedTropes) !==
-      serializeSelectedTropeFilters(filterSet.appliedSelectedTropes)
+    serializeSelectedTermFilters(filterSet.draftSelectedThemes) !==
+      serializeSelectedTermFilters(filterSet.appliedSelectedThemes) ||
+    serializeSelectedTermFilters(filterSet.draftSelectedTropes) !==
+      serializeSelectedTermFilters(filterSet.appliedSelectedTropes) ||
+    serializeSelectedTermFilters(filterSet.draftSelectedKeywords) !==
+      serializeSelectedTermFilters(filterSet.appliedSelectedKeywords)
   );
 }
 
 function filterSetHasAppliedCriteria(filterSet: ExplorationFilterSetState): boolean {
-  return filterSet.appliedFilters.length > 0 || filterSet.appliedSelectedTropes.length > 0;
+  return (
+    filterSet.appliedFilters.length > 0 ||
+    filterSet.appliedSelectedThemes.length > 0 ||
+    filterSet.appliedSelectedTropes.length > 0 ||
+    filterSet.appliedSelectedKeywords.length > 0
+  );
 }
 
 function buildFilterSetLabel(index: number): string {
@@ -642,9 +684,17 @@ function buildStoryFilterSetsPayload(filterSets: ExplorationFilterSetState[]) {
       label: buildFilterSetLabel(index),
       color: filterSet.color,
       filters: storyFiltersPayload(filterSet.appliedFilters),
+      selected_themes: filterSet.appliedSelectedThemes.map((theme) => ({
+        id: theme.id,
+        text: theme.text,
+      })),
       selected_tropes: filterSet.appliedSelectedTropes.map((trope) => ({
         id: trope.id,
         text: trope.text,
+      })),
+      selected_keywords: filterSet.appliedSelectedKeywords.map((keyword) => ({
+        id: keyword.id,
+        text: keyword.text,
       })),
     }));
 }
@@ -936,7 +986,9 @@ export function ExplorationPage() {
       label: string;
       color: string;
       filters: Array<{ field: string; selected_values: string[] }>;
+      selected_themes?: Array<{ id: string; text: string }>;
       selected_tropes?: Array<{ id: string; text: string }>;
+      selected_keywords?: Array<{ id: string; text: string }>;
     }>;
     min_similarity?: number;
   }) {
@@ -1012,7 +1064,11 @@ export function ExplorationPage() {
       ...filterSet,
       draftFilters: normalizeStoryFieldFilters(
         filterSet.draftFilters,
-        filterStoriesBySelectedTropes(stories, filterSet.draftSelectedTropes),
+        filterStoriesBySelectedSemanticTerms(stories, {
+          themes: filterSet.draftSelectedThemes,
+          tropes: filterSet.draftSelectedTropes,
+          keywords: filterSet.draftSelectedKeywords,
+        }),
       ),
     }));
     if (serializeExplorationFilterSets(normalizedFilterSets) !== serializeExplorationFilterSets(filterSets)) {
@@ -1074,31 +1130,51 @@ export function ExplorationPage() {
     setFilterSets((current) => current.filter((filterSet) => filterSet.id !== filterSetId));
   }
 
-  function updateFilterSetTropeQuery(filterSetId: number, tropeQuery: string) {
+  function updateFilterSetColor(filterSetId: number, color: string) {
+    setFilterSets((current) =>
+      current.map((filterSet) => (filterSet.id === filterSetId ? { ...filterSet, color } : filterSet)),
+    );
+  }
+
+  function updateFilterSetTermQuery(filterSetId: number, kind: ExplorationSemanticTermKind, query: string) {
     setFilterSets((current) =>
       current.map((filterSet) =>
-        filterSet.id === filterSetId
-          ? {
-              ...filterSet,
-              tropeQuery,
-            }
-          : filterSet,
+        filterSet.id !== filterSetId
+          ? filterSet
+          : kind === "theme"
+            ? { ...filterSet, themeQuery: query }
+            : kind === "trope"
+              ? { ...filterSet, tropeQuery: query }
+              : { ...filterSet, keywordQuery: query },
       ),
     );
   }
 
-  function toggleFilterSetSelectedTrope(filterSetId: number, trope: ExplorationAppliedTropeFilter) {
+  function toggleFilterSetSelectedTerm(
+    filterSetId: number,
+    kind: ExplorationSemanticTermKind,
+    term: ExplorationAppliedTermFilter,
+  ) {
     setFilterSets((current) =>
       current.map((filterSet) => {
         if (filterSet.id !== filterSetId) {
           return filterSet;
         }
-        const alreadySelected = filterSet.draftSelectedTropes.some((item) => item.id === trope.id);
+        if (kind === "theme") {
+          return {
+            ...filterSet,
+            draftSelectedThemes: toggleSelectedTerms(filterSet.draftSelectedThemes, term),
+          };
+        }
+        if (kind === "trope") {
+          return {
+            ...filterSet,
+            draftSelectedTropes: toggleSelectedTerms(filterSet.draftSelectedTropes, term),
+          };
+        }
         return {
           ...filterSet,
-          draftSelectedTropes: alreadySelected
-            ? filterSet.draftSelectedTropes.filter((item) => item.id !== trope.id)
-            : [...filterSet.draftSelectedTropes, trope],
+          draftSelectedKeywords: toggleSelectedTerms(filterSet.draftSelectedKeywords, term),
         };
       }),
     );
@@ -1185,8 +1261,14 @@ export function ExplorationPage() {
             ...filter,
             selectedValues: [...filter.selectedValues],
           })),
+          appliedSelectedThemes: filterSet.draftSelectedThemes.map((theme) => ({
+            ...theme,
+          })),
           appliedSelectedTropes: filterSet.draftSelectedTropes.map((trope) => ({
             ...trope,
+          })),
+          appliedSelectedKeywords: filterSet.draftSelectedKeywords.map((keyword) => ({
+            ...keyword,
           })),
         };
       }),
@@ -1201,9 +1283,15 @@ export function ExplorationPage() {
               ...filterSet,
               draftFilters: [],
               appliedFilters: [],
+              themeQuery: "",
               tropeQuery: "",
+              keywordQuery: "",
+              draftSelectedThemes: [],
               draftSelectedTropes: [],
+              draftSelectedKeywords: [],
+              appliedSelectedThemes: [],
               appliedSelectedTropes: [],
+              appliedSelectedKeywords: [],
             }
           : filterSet,
       ),
@@ -1327,20 +1415,39 @@ export function ExplorationPage() {
           <div className="panel-header">
             <div>
               <h1>Filter Sets</h1>
-              <p className="muted">Build trope-aware story sets and compare them on the map.</p>
+              <p className="muted">Build theme-, trope-, and keyword-aware story sets and compare them on the map.</p>
             </div>
           </div>
           <div className="stack">
             <strong>Filter sets</strong>
             <div className="stack">
               {filterSets.map((filterSet, index) => {
-                const storiesMatchingSelectedTropes = filterStoriesBySelectedTropes(stories, filterSet.draftSelectedTropes);
+                const storiesMatchingSelectedTerms = filterStoriesBySelectedSemanticTerms(stories, {
+                  themes: filterSet.draftSelectedThemes,
+                  tropes: filterSet.draftSelectedTropes,
+                  keywords: filterSet.draftSelectedKeywords,
+                });
+                const hasDraftSemanticTerms =
+                  filterSet.draftSelectedThemes.length > 0 ||
+                  filterSet.draftSelectedTropes.length > 0 ||
+                  filterSet.draftSelectedKeywords.length > 0;
                 return (
                   <article className="panel exploration-filter-set-panel" key={filterSet.id}>
                     <div className="card-row">
                       <div className="exploration-filter-set-heading">
                         <span className="exploration-filter-set-swatch" style={{ backgroundColor: filterSet.color }} />
                         <strong>{buildFilterSetLabel(index)}</strong>
+                        <label className="exploration-filter-set-color-picker">
+                          <span>Color</span>
+                          <input
+                            aria-label={`Color for ${buildFilterSetLabel(index)}`}
+                            disabled={busy || storiesLoading}
+                            onChange={(event) => updateFilterSetColor(filterSet.id, event.target.value)}
+                            type="color"
+                            value={filterSet.color}
+                          />
+                          <output>{formatHexColor(filterSet.color)}</output>
+                        </label>
                       </div>
                       <button
                         className="button button-ghost"
@@ -1352,14 +1459,25 @@ export function ExplorationPage() {
                       </button>
                     </div>
                     <StoryFieldFilterBuilder
-                      activeCount={filterSet.appliedFilters.length + filterSet.appliedSelectedTropes.length}
+                      activeCount={
+                        filterSet.appliedFilters.length +
+                        filterSet.appliedSelectedThemes.length +
+                        filterSet.appliedSelectedTropes.length +
+                        filterSet.appliedSelectedKeywords.length
+                      }
                       appliedFilters={filterSet.appliedFilters}
                       clearDisabled={
                         filterSet.draftFilters.length === 0 &&
                         filterSet.appliedFilters.length === 0 &&
+                        filterSet.draftSelectedThemes.length === 0 &&
+                        filterSet.appliedSelectedThemes.length === 0 &&
                         filterSet.draftSelectedTropes.length === 0 &&
                         filterSet.appliedSelectedTropes.length === 0 &&
-                        !filterSet.tropeQuery.trim()
+                        filterSet.draftSelectedKeywords.length === 0 &&
+                        filterSet.appliedSelectedKeywords.length === 0 &&
+                        !filterSet.themeQuery.trim() &&
+                        !filterSet.tropeQuery.trim() &&
+                        !filterSet.keywordQuery.trim()
                       }
                       draftFilters={filterSet.draftFilters}
                       hasPendingChanges={filterSetHasPendingChanges(filterSet)}
@@ -1372,20 +1490,39 @@ export function ExplorationPage() {
                       onUpdateFilterValues={(filterId, selectedValues) =>
                         updateDraftFilterValues(filterSet.id, filterId, selectedValues)
                       }
-                      stories={storiesMatchingSelectedTropes}
+                      stories={storiesMatchingSelectedTerms}
                     >
                       {canUseFilterSets ? (
                         <div className="stack">
-                          <ExplorationFilterSetTropePicker
-                            loading={storiesLoading || busy}
-                            onQueryChange={(value) => updateFilterSetTropeQuery(filterSet.id, value)}
-                            onToggleTrope={(trope) => toggleFilterSetSelectedTrope(filterSet.id, trope)}
-                            query={filterSet.tropeQuery}
-                            selectedTropes={filterSet.draftSelectedTropes}
-                          />
-                          {filterSet.draftSelectedTropes.length > 0 && storiesMatchingSelectedTropes.length === 0 ? (
+                          <div className="exploration-semantic-filter-grid">
+                            <ExplorationFilterSetTermPicker
+                              kind="theme"
+                              loading={storiesLoading || busy}
+                              onQueryChange={(value) => updateFilterSetTermQuery(filterSet.id, "theme", value)}
+                              onToggleTerm={(theme) => toggleFilterSetSelectedTerm(filterSet.id, "theme", theme)}
+                              query={filterSet.themeQuery}
+                              selectedTerms={filterSet.draftSelectedThemes}
+                            />
+                            <ExplorationFilterSetTermPicker
+                              kind="trope"
+                              loading={storiesLoading || busy}
+                              onQueryChange={(value) => updateFilterSetTermQuery(filterSet.id, "trope", value)}
+                              onToggleTerm={(trope) => toggleFilterSetSelectedTerm(filterSet.id, "trope", trope)}
+                              query={filterSet.tropeQuery}
+                              selectedTerms={filterSet.draftSelectedTropes}
+                            />
+                            <ExplorationFilterSetTermPicker
+                              kind="keyword"
+                              loading={storiesLoading || busy}
+                              onQueryChange={(value) => updateFilterSetTermQuery(filterSet.id, "keyword", value)}
+                              onToggleTerm={(keyword) => toggleFilterSetSelectedTerm(filterSet.id, "keyword", keyword)}
+                              query={filterSet.keywordQuery}
+                              selectedTerms={filterSet.draftSelectedKeywords}
+                            />
+                          </div>
+                          {hasDraftSemanticTerms && storiesMatchingSelectedTerms.length === 0 ? (
                             <p className="muted">
-                              No stories match the selected tropes yet, so no hard filters are available for this set.
+                              No stories match the selected themes, tropes, and keywords yet, so no hard filters are available for this set.
                             </p>
                           ) : null}
                         </div>
@@ -1509,18 +1646,25 @@ export function ExplorationPage() {
                       <p className="muted">No hard field filters applied.</p>
                     )}
                   </div>
-                  {result.selected_tropes.length > 0 ? (
-                    <div className="stack">
-                      <strong>Selected tropes</strong>
-                      <div className="tag-list">
-                        {result.selected_tropes.map((trope) => (
-                          <span className="pill exploration-filter-summary-pill" key={`${result.filter_set_id}-${trope.id}`}>
-                            {trope.text}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
+                  {[
+                    { label: "Selected themes", terms: result.selected_themes },
+                    { label: "Selected tropes", terms: result.selected_tropes },
+                    { label: "Selected keywords", terms: result.selected_keywords },
+                  ].map(
+                    ({ label, terms }) =>
+                      terms.length > 0 ? (
+                        <div className="stack" key={label}>
+                          <strong>{label}</strong>
+                          <div className="tag-list">
+                            {terms.map((term) => (
+                              <span className="pill exploration-filter-summary-pill" key={`${result.filter_set_id}-${term.id}`}>
+                                {term.text}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null,
+                  )}
                   <div className="stats-grid">
                     <article className="stat-card">
                       <span className="stat-label">Original</span>

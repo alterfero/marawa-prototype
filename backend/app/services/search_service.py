@@ -39,6 +39,10 @@ class SearchTermRecord:
     story_count: int
 
 
+def _term_matches_query_string(term: SearchTermRecord, query_marker: str) -> bool:
+    return bool(query_marker) and query_marker in term.normalized_text
+
+
 class SearchService:
     def __init__(
         self,
@@ -127,7 +131,15 @@ class SearchService:
             "near_duplicate_keyword_pairs": keyword_cache_summary["pair_count"],
         }
 
-    def search_terms(self, session: Session, term_kind: TermKind, query: str, *, limit: int = 10) -> dict[str, Any]:
+    def search_terms(
+        self,
+        session: Session,
+        term_kind: TermKind,
+        query: str,
+        *,
+        limit: int = 10,
+        include_string_matches: bool = False,
+    ) -> dict[str, Any]:
         active_terms = self._load_active_terms(session, term_kind)
         if not active_terms:
             return {
@@ -153,14 +165,24 @@ class SearchService:
             ).all()
         )
         if not embeddings:
-            return self._lexical_fallback_result(active_terms, query, limit=limit)
+            return self._lexical_fallback_result(
+                active_terms,
+                query,
+                limit=limit,
+                include_string_matches=include_string_matches,
+            )
 
         latest_artifact_version = max(embedding.artifact_version for embedding in embeddings)
         latest_embeddings = [
             embedding for embedding in embeddings if embedding.artifact_version == latest_artifact_version
         ]
         if not latest_embeddings:
-            return self._lexical_fallback_result(active_terms, query, limit=limit)
+            return self._lexical_fallback_result(
+                active_terms,
+                query,
+                limit=limit,
+                include_string_matches=include_string_matches,
+            )
 
         embedding_by_term_id = {
             self._embedding_term_id(embedding, term_kind): embedding
@@ -169,7 +191,12 @@ class SearchService:
         }
         ordered_terms = [term for term in active_terms if term.id in embedding_by_term_id]
         if not ordered_terms:
-            return self._lexical_fallback_result(active_terms, query, limit=limit)
+            return self._lexical_fallback_result(
+                active_terms,
+                query,
+                limit=limit,
+                include_string_matches=include_string_matches,
+            )
 
         matrix = np.vstack(
             [
@@ -183,9 +210,19 @@ class SearchService:
         try:
             query_vector = self.embedding_backend.encode_texts([query])
         except Exception:
-            return self._lexical_fallback_result(active_terms, query, limit=limit)
+            return self._lexical_fallback_result(
+                active_terms,
+                query,
+                limit=limit,
+                include_string_matches=include_string_matches,
+            )
         if query_vector.size == 0:
-            return self._lexical_fallback_result(active_terms, query, limit=limit)
+            return self._lexical_fallback_result(
+                active_terms,
+                query,
+                limit=limit,
+                include_string_matches=include_string_matches,
+            )
 
         scores = cosine_similarity(query_vector[0], matrix)
         top_indices = np.argsort(scores)[::-1][:limit]
@@ -204,34 +241,64 @@ class SearchService:
             ).all()
             cache_map = {entry.target_term_id: entry for entry in cache_entries}
 
-        items = []
-        for index in top_indices.tolist():
+        def serialize_item(index: int) -> dict[str, Any]:
             term = ordered_terms[index]
             embedding = embedding_by_term_id[term.id]
             cache_entry = cache_map.get(term.id)
-            items.append(
-                {
-                    "id": term.id,
-                    "text": term.text,
-                    "story_count": term.story_count,
-                    "score": float(scores[index]),
-                    "explanation": {
-                        "method": "cosine_similarity",
-                        "model_name": self.model_name,
-                        "artifact_version": latest_artifact_version,
-                        "vector_dimension": embedding.vector_dimensions,
-                        "cache_hit": cache_entry is not None,
-                        "matched_query_exactly": exact_term is not None and term.id == exact_term.id,
-                        "near_duplicate": cache_entry is not None,
-                    },
-                }
-            )
+            return {
+                "id": term.id,
+                "text": term.text,
+                "story_count": term.story_count,
+                "score": float(scores[index]),
+                "explanation": {
+                    "method": "cosine_similarity",
+                    "model_name": self.model_name,
+                    "artifact_version": latest_artifact_version,
+                    "vector_dimension": embedding.vector_dimensions,
+                    "cache_hit": cache_entry is not None,
+                    "matched_query_exactly": exact_term is not None and term.id == exact_term.id,
+                    "near_duplicate": cache_entry is not None,
+                },
+            }
 
-        return {
-            "items": items,
+        result = {
+            "items": [serialize_item(index) for index in top_indices.tolist()],
             "model_name": self.model_name,
             "artifact_version": latest_artifact_version,
         }
+        if include_string_matches:
+            indexed_positions = {term.id: index for index, term in enumerate(ordered_terms)}
+            query_tokens = set(query_marker.split())
+
+            def serialize_string_match(term: SearchTermRecord) -> dict[str, Any]:
+                indexed_position = indexed_positions.get(term.id)
+                if indexed_position is not None:
+                    return serialize_item(indexed_position)
+                return {
+                    "id": term.id,
+                    "text": term.text,
+                    "story_count": term.story_count,
+                    "score": float(self._lexical_score(query_marker, query_tokens, term)),
+                    "explanation": {
+                        "method": "string_match",
+                        "model_name": self.model_name,
+                        "artifact_version": latest_artifact_version,
+                        "vector_dimension": None,
+                        "cache_hit": False,
+                        "matched_query_exactly": term.normalized_text == query_marker,
+                        "near_duplicate": False,
+                    },
+                }
+
+            result["string_match_items"] = sorted(
+                (
+                    serialize_string_match(term)
+                    for term in active_terms
+                    if _term_matches_query_string(term, query_marker)
+                ),
+                key=lambda item: (item["text"].lower(), item["id"]),
+            )
+        return result
 
     def get_trope_pairwise_similarities(
         self,
@@ -530,6 +597,7 @@ class SearchService:
         query: str,
         *,
         limit: int,
+        include_string_matches: bool = False,
     ) -> dict[str, Any]:
         query_marker = normalize_text(query)
         if not query_marker:
@@ -540,42 +608,50 @@ class SearchService:
             }
 
         query_tokens = set(query_marker.split())
-        items = []
+        items: list[tuple[SearchTermRecord, dict[str, Any]]] = []
         for term in terms:
             score = self._lexical_score(query_marker, query_tokens, term)
             if score <= 0:
                 continue
             items.append(
-                {
-                    "id": term.id,
-                    "text": term.text,
-                    "story_count": term.story_count,
-                    "score": float(score),
-                    "explanation": {
-                        "method": "lexical_fallback",
-                        "model_name": self.model_name,
-                        "artifact_version": 0,
-                        "vector_dimension": None,
-                        "cache_hit": False,
-                        "matched_query_exactly": term.normalized_text == query_marker,
-                        "near_duplicate": False,
+                (
+                    term,
+                    {
+                        "id": term.id,
+                        "text": term.text,
+                        "story_count": term.story_count,
+                        "score": float(score),
+                        "explanation": {
+                            "method": "lexical_fallback",
+                            "model_name": self.model_name,
+                            "artifact_version": 0,
+                            "vector_dimension": None,
+                            "cache_hit": False,
+                            "matched_query_exactly": term.normalized_text == query_marker,
+                            "near_duplicate": False,
+                        },
                     },
-                }
+                )
             )
 
         items.sort(
             key=lambda item: (
-                -item["score"],
-                -item["story_count"],
-                item["text"].lower(),
-                item["id"],
+                -item[1]["score"],
+                -item[1]["story_count"],
+                item[1]["text"].lower(),
+                item[1]["id"],
             )
         )
-        return {
-            "items": items[:limit],
+        result = {
+            "items": [item for _, item in items[:limit]],
             "model_name": self.model_name,
             "artifact_version": None,
         }
+        if include_string_matches:
+            result["string_match_items"] = [
+                item for term, item in items if _term_matches_query_string(term, query_marker)
+            ]
+        return result
 
     def _lexical_score(
         self,
