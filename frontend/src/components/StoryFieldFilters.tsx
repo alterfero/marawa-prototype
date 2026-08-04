@@ -170,7 +170,7 @@ function storyMatchesSelectedTermGroup(
   selectedTerms: ExplorationAppliedTermFilter[],
 ): boolean {
   if (selectedTerms.length === 0) {
-    return true;
+    return false;
   }
   const selectedTexts = new Set(selectedTerms.map((term) => normalizeTropeFilterValue(term.text)));
   return storyTerms.some((term) => selectedTexts.has(normalizeTropeFilterValue(term)));
@@ -190,8 +190,8 @@ export function filterStoriesBySelectedSemanticTerms(
 
   return stories.filter(
     (story) =>
-      storyMatchesSelectedTermGroup(splitStoryThemeValues(getStoryFilterValue(story, THEME_FIELD)), selections.themes) &&
-      storyMatchesSelectedTermGroup(splitStoryTropeValues(getStoryFilterValue(story, TROPE_FIELD)), selections.tropes) &&
+      storyMatchesSelectedTermGroup(splitStoryThemeValues(getStoryFilterValue(story, THEME_FIELD)), selections.themes) ||
+      storyMatchesSelectedTermGroup(splitStoryTropeValues(getStoryFilterValue(story, TROPE_FIELD)), selections.tropes) ||
       storyMatchesSelectedTermGroup(splitKeywordText(getStoryFilterValue(story, KEYWORD_FIELD)), selections.keywords),
   );
 }

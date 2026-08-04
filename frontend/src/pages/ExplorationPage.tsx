@@ -1542,6 +1542,7 @@ export function ExplorationPage() {
                               onQueryChange={(value) => updateFilterSetTermQuery(filterSet.id, "theme", value)}
                               onToggleTerm={(theme) => toggleFilterSetSelectedTerm(filterSet.id, "theme", theme)}
                               query={filterSet.themeQuery}
+                              selectedTermsScrollable={filterSet.appliedSelectedThemes.length > 0}
                               selectedTerms={filterSet.draftSelectedThemes}
                             />
                             <ExplorationFilterSetTermPicker
@@ -1551,6 +1552,7 @@ export function ExplorationPage() {
                               onQueryChange={(value) => updateFilterSetTermQuery(filterSet.id, "trope", value)}
                               onToggleTerm={(trope) => toggleFilterSetSelectedTerm(filterSet.id, "trope", trope)}
                               query={filterSet.tropeQuery}
+                              selectedTermsScrollable={filterSet.appliedSelectedTropes.length > 0}
                               selectedTerms={filterSet.draftSelectedTropes}
                             />
                             <ExplorationFilterSetTermPicker
@@ -1560,6 +1562,7 @@ export function ExplorationPage() {
                               onQueryChange={(value) => updateFilterSetTermQuery(filterSet.id, "keyword", value)}
                               onToggleTerm={(keyword) => toggleFilterSetSelectedTerm(filterSet.id, "keyword", keyword)}
                               query={filterSet.keywordQuery}
+                              selectedTermsScrollable={filterSet.appliedSelectedKeywords.length > 0}
                               selectedTerms={filterSet.draftSelectedKeywords}
                             />
                           </div>
@@ -1698,9 +1701,13 @@ export function ExplorationPage() {
                       terms.length > 0 ? (
                         <div className="stack" key={label}>
                           <strong>{label}</strong>
-                          <div className="tag-list">
+                          <div className="exploration-selected-term-list">
                             {terms.map((term) => (
-                              <span className="pill exploration-filter-summary-pill" key={`${result.filter_set_id}-${term.id}`}>
+                              <span
+                                className="pill exploration-filter-summary-pill"
+                                key={`${result.filter_set_id}-${term.id}`}
+                                title={term.text}
+                              >
                                 {term.text}
                               </span>
                             ))}

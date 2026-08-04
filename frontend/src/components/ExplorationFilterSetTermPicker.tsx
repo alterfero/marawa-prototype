@@ -94,6 +94,7 @@ export function ExplorationFilterSetTermPicker({
   query,
   selectedTerms,
   allowMultipleQueries = false,
+  selectedTermsScrollable = false,
   showSimilarityThreshold = true,
   onQueryChange,
   onToggleTerm,
@@ -103,6 +104,7 @@ export function ExplorationFilterSetTermPicker({
   query: string;
   selectedTerms: ExplorationAppliedTermFilter[];
   allowMultipleQueries?: boolean;
+  selectedTermsScrollable?: boolean;
   showSimilarityThreshold?: boolean;
   onQueryChange: (value: string) => void;
   onToggleTerm: (term: ExplorationAppliedTermFilter) => void;
@@ -206,6 +208,7 @@ export function ExplorationFilterSetTermPicker({
           <label htmlFor={queryInputId}>Semantic {config.label.toLowerCase()} filter</label>
           <InstructionPopin label={`${config.label} filter instructions`}>
             <span>Search the vectorized {config.pluralLabel} index, then select values to include in this set.</span>
+            <span>Selections across themes, tropes, and keywords are combined additively.</span>
             {allowMultipleQueries ? (
               <span>Separate additive searches with commas; spaces around each search are ignored.</span>
             ) : null}
@@ -254,13 +257,14 @@ export function ExplorationFilterSetTermPicker({
       {selectedTerms.length > 0 ? (
         <div className="stack">
           <strong>Selected {config.pluralLabel}</strong>
-          <div className="tag-list">
+          <div className={selectedTermsScrollable ? "exploration-selected-term-list" : "tag-list"}>
             {selectedTerms.map((term) => (
               <button
                 className="pill exploration-selected-term-chip"
                 disabled={loading}
                 key={term.id}
                 onClick={() => onToggleTerm(term)}
+                title={term.text}
                 type="button"
               >
                 {term.text}

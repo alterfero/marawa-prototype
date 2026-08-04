@@ -502,7 +502,7 @@ def test_exploration_network_builds_multiple_filter_sets_with_selected_tropes(mo
     assert body["bounds"] == [[-20.0, 165.0], [-19.0, 166.0]]
 
 
-def test_exploration_network_intersects_selected_theme_trope_and_keyword_filters(monkeypatch, tmp_path) -> None:
+def test_exploration_network_adds_selected_theme_trope_and_keyword_filters(monkeypatch, tmp_path) -> None:
     configure_auth_env(monkeypatch)
     with build_client(tmp_path, "exploration-semantic-filter-set.db") as client:
         authenticate_admin(client)
@@ -569,7 +569,12 @@ def test_exploration_network_intersects_selected_theme_trope_and_keyword_filters
     assert [item["text"] for item in result["selected_themes"]] == ["Creation"]
     assert [item["text"] for item in result["selected_tropes"]] == ["first trope"]
     assert [item["text"] for item in result["selected_keywords"]] == ["ocean"]
-    assert [item["title"] for item in result["original_markers"]] == ["Matching story"]
+    assert [item["title"] for item in result["original_markers"]] == [
+        "Matching story",
+        "Wrong keyword",
+        "Wrong theme",
+        "Wrong trope",
+    ]
 
 
 def test_exploration_network_builds_selected_trope_results_for_multiple_filter_sets(monkeypatch, tmp_path) -> None:

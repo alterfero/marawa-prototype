@@ -503,10 +503,21 @@ def _entry_matches_story_filters(
     )
     if not matches_fields:
         return False
-    return (
-        _entry_matches_selected_terms(entry.themes, selected_themes)
-        and _entry_matches_selected_terms(entry.tropes, selected_tropes)
-        and _entry_matches_selected_terms(entry.keywords, selected_keywords)
+    selected_term_groups = (
+        (entry.themes, selected_themes),
+        (entry.tropes, selected_tropes),
+        (entry.keywords, selected_keywords),
+    )
+    active_selected_term_groups = [
+        (entry_terms, selected_terms)
+        for entry_terms, selected_terms in selected_term_groups
+        if selected_terms
+    ]
+    if not active_selected_term_groups:
+        return True
+    return any(
+        _entry_matches_selected_terms(entry_terms, selected_terms)
+        for entry_terms, selected_terms in active_selected_term_groups
     )
 
 
@@ -514,7 +525,7 @@ def _entry_matches_selected_terms(
     entry_terms: list[dict], selected_terms: list[SelectedTermFilter] | None
 ) -> bool:
     if not selected_terms:
-        return True
+        return False
     selected_term_ids = {term.id for term in selected_terms}
     return any(term["id"] in selected_term_ids for term in entry_terms)
 
