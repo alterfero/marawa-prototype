@@ -50,3 +50,32 @@ export function toViewportCoordinates([latitude, longitude]: CoordinatePair, vie
     normalizedLongitude < viewport.longitudeStart ? normalizedLongitude + 360 : normalizedLongitude,
   ];
 }
+
+/**
+ * Places a coordinate in the copy of the wrapped map nearest a reference
+ * longitude. Leaflet repeats map tiles horizontally, but vector overlays do
+ * not repeat automatically.
+ */
+export function toNearestWorldCoordinates(
+  [latitude, longitude]: CoordinatePair,
+  referenceLongitude: number,
+): CoordinatePair {
+  const normalizedLongitude = normalizeLongitude(longitude);
+  return [
+    latitude,
+    normalizedLongitude + 360 * Math.round((referenceLongitude - normalizedLongitude) / 360),
+  ];
+}
+
+/**
+ * Keeps a connection in the world copy nearest the map while preserving its
+ * shortest path across the antimeridian.
+ */
+export function toNearestWorldConnectionCoordinates(
+  source: CoordinatePair,
+  target: CoordinatePair,
+  referenceLongitude: number,
+): [CoordinatePair, CoordinatePair] {
+  const sourceCoordinates = toNearestWorldCoordinates(source, referenceLongitude);
+  return [sourceCoordinates, toNearestWorldCoordinates(target, sourceCoordinates[1])];
+}

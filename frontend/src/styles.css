@@ -472,6 +472,60 @@ p {
   min-width: 0;
 }
 
+.exploration-semantic-term-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.exploration-instruction-popin {
+  position: relative;
+  display: inline-flex;
+}
+
+.exploration-instruction-popin-trigger {
+  width: 1.25rem;
+  height: 1.25rem;
+  padding: 0;
+  border: 1px solid rgba(19, 52, 59, 0.24);
+  border-radius: 999px;
+  background: #fffdf9;
+  color: #11545b;
+  cursor: help;
+  font-size: 0.8rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.exploration-instruction-popin-content {
+  position: absolute;
+  z-index: 8;
+  top: calc(100% + 0.45rem);
+  left: 0;
+  display: none;
+  width: min(18rem, calc(100vw - 2rem));
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border: 1px solid rgba(19, 52, 59, 0.18);
+  border-radius: 0.7rem;
+  background: #fffdf9;
+  box-shadow: 0 0.7rem 1.4rem rgba(19, 52, 59, 0.15);
+  color: #48656c;
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.exploration-instruction-popin:hover .exploration-instruction-popin-content,
+.exploration-instruction-popin:focus-within .exploration-instruction-popin-content {
+  display: grid;
+}
+
+.exploration-instruction-popin-trigger:hover,
+.exploration-instruction-popin-trigger:focus-visible {
+  border-color: rgba(17, 84, 91, 0.55);
+  outline: none;
+}
+
 .exploration-semantic-term-similarity-threshold {
   gap: 0.45rem;
 }
@@ -502,6 +556,18 @@ p {
 
 .exploration-filter-set-heading h3 {
   margin: 0;
+}
+
+.exploration-filter-set-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: #48656c;
+  font-size: 0.88rem;
+}
+
+.exploration-filter-set-name .input {
+  width: min(16rem, 45vw);
 }
 
 .exploration-filter-set-swatch {

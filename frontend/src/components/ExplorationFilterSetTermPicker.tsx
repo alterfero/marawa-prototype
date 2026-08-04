@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
 
 import { getErrorMessage, searchKeywords, searchThemes, searchTropes } from "../api/client";
 import type { ExplorationAppliedTermFilter, SearchItem } from "../api/types";
@@ -47,11 +47,53 @@ function selectedTermForCandidate(candidate: SearchItem): ExplorationAppliedTerm
   };
 }
 
+function splitSimilarityQueries(value: string): string[] {
+  const seen = new Set<string>();
+  return value
+    .split(",")
+    .map((item) => item.normalize("NFC").replace(/\s+/g, " ").trim())
+    .filter((item) => {
+      const marker = item.toLocaleLowerCase();
+      if (!marker || seen.has(marker)) {
+        return false;
+      }
+      seen.add(marker);
+      return true;
+    });
+}
+
+function mergeSearchItems(itemGroups: SearchItem[][]): SearchItem[] {
+  const itemsById = new Map<string, SearchItem>();
+  itemGroups.flat().forEach((item) => {
+    const existing = itemsById.get(item.id);
+    if (!existing || item.score > existing.score) {
+      itemsById.set(item.id, item);
+    }
+  });
+  return [...itemsById.values()].sort(
+    (left, right) => right.score - left.score || left.text.localeCompare(right.text) || left.id.localeCompare(right.id),
+  );
+}
+
+function InstructionPopin({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <span className="exploration-instruction-popin">
+      <button aria-label={label} className="exploration-instruction-popin-trigger" type="button">
+        ?
+      </button>
+      <span className="exploration-instruction-popin-content" role="tooltip">
+        {children}
+      </span>
+    </span>
+  );
+}
+
 export function ExplorationFilterSetTermPicker({
   kind,
   loading,
   query,
   selectedTerms,
+  allowMultipleQueries = false,
   showSimilarityThreshold = true,
   onQueryChange,
   onToggleTerm,
@@ -60,6 +102,7 @@ export function ExplorationFilterSetTermPicker({
   loading: boolean;
   query: string;
   selectedTerms: ExplorationAppliedTermFilter[];
+  allowMultipleQueries?: boolean;
   showSimilarityThreshold?: boolean;
   onQueryChange: (value: string) => void;
   onToggleTerm: (term: ExplorationAppliedTermFilter) => void;
@@ -70,9 +113,17 @@ export function ExplorationFilterSetTermPicker({
   const [searchError, setSearchError] = useState<string | null>(null);
   const [similarityThreshold, setSimilarityThreshold] = useState(0.6);
   const [alsoAddAllItemsWithString, setAlsoAddAllItemsWithString] = useState(false);
+  const queryInputId = useId();
   const config = TERM_CONFIG[kind];
   const selectedTermIds = useMemo(() => new Set(selectedTerms.map((term) => term.id)), [selectedTerms]);
-  const trimmedQuery = query.trim();
+  const similarityQueries = useMemo(() => {
+    if (allowMultipleQueries) {
+      return splitSimilarityQueries(query);
+    }
+    const normalizedQuery = query.normalize("NFC").replace(/\s+/g, " ").trim();
+    return normalizedQuery ? [normalizedQuery] : [];
+  }, [allowMultipleQueries, query]);
+  const similarityQueryKey = similarityQueries.join("\u0000");
   const resultsMeetingThreshold = useMemo(
     () => results.filter((candidate) => candidate.score >= similarityThreshold),
     [results, similarityThreshold],
@@ -95,7 +146,7 @@ export function ExplorationFilterSetTermPicker({
   );
 
   useEffect(() => {
-    if (!trimmedQuery) {
+    if (similarityQueries.length === 0) {
       setResults([]);
       setStringMatchResults([]);
       setSearchStatus("idle");
@@ -109,16 +160,20 @@ export function ExplorationFilterSetTermPicker({
         try {
           setSearchStatus("loading");
           setSearchError(null);
-          const result = await config.search({
-            query: trimmedQuery,
-            limit: 8,
-            include_string_matches: alsoAddAllItemsWithString,
-          });
+          const searchResults = await Promise.all(
+            similarityQueries.map((similarityQuery) =>
+              config.search({
+                query: similarityQuery,
+                limit: 8,
+                include_string_matches: alsoAddAllItemsWithString,
+              }),
+            ),
+          );
           if (cancelled) {
             return;
           }
-          setResults(result.items);
-          setStringMatchResults(result.string_match_items);
+          setResults(mergeSearchItems(searchResults.map((result) => result.items)));
+          setStringMatchResults(mergeSearchItems(searchResults.map((result) => result.string_match_items)));
           setSearchStatus("ready");
         } catch (caughtError) {
           if (cancelled) {
@@ -136,7 +191,7 @@ export function ExplorationFilterSetTermPicker({
       cancelled = true;
       window.clearTimeout(timeoutId);
     };
-  }, [alsoAddAllItemsWithString, config, trimmedQuery]);
+  }, [alsoAddAllItemsWithString, config, similarityQueries, similarityQueryKey]);
 
   function handleSelectAllTerms() {
     unselectedResults.forEach((candidate) => {
@@ -146,19 +201,26 @@ export function ExplorationFilterSetTermPicker({
 
   return (
     <section className="stack exploration-semantic-term-filter-builder">
-      <label className="field">
-        <span>Semantic {config.label.toLowerCase()} filter</span>
+      <div className="field">
+        <div className="exploration-semantic-term-label">
+          <label htmlFor={queryInputId}>Semantic {config.label.toLowerCase()} filter</label>
+          <InstructionPopin label={`${config.label} filter instructions`}>
+            <span>Search the vectorized {config.pluralLabel} index, then select values to include in this set.</span>
+            {allowMultipleQueries ? (
+              <span>Separate additive searches with commas; spaces around each search are ignored.</span>
+            ) : null}
+          </InstructionPopin>
+        </div>
         <input
           className="input"
           disabled={loading}
+          id={queryInputId}
           onChange={(event) => onQueryChange(event.target.value)}
+          onBlur={allowMultipleQueries ? () => onQueryChange(similarityQueries.join(", ")) : undefined}
           placeholder={config.placeholder}
           value={query}
         />
-      </label>
-      <p className="muted">
-        Search the vectorized {config.pluralLabel} index, then select values to include in this set.
-      </p>
+      </div>
       {showSimilarityThreshold ? (
         <label className="field exploration-semantic-term-similarity-threshold">
           <div className="card-row">
@@ -181,7 +243,7 @@ export function ExplorationFilterSetTermPicker({
         <label className="exploration-add-string-matches-checkbox">
           <input
             checked={alsoAddAllItemsWithString}
-            disabled={loading || !trimmedQuery}
+            disabled={loading || similarityQueries.length === 0}
             onChange={(event) => setAlsoAddAllItemsWithString(event.target.checked)}
             type="checkbox"
           />
@@ -208,7 +270,7 @@ export function ExplorationFilterSetTermPicker({
         </div>
       ) : null}
 
-      {trimmedQuery ? (
+      {similarityQueries.length > 0 ? (
         <div className="story-filter-value-panel">
           <div className="card-row">
             <div className="story-filter-value-summary">

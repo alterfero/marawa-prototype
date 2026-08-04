@@ -31,7 +31,13 @@ import type {
   StorySummary,
 } from "../api/types";
 import { getStoryFieldLabel } from "../constants/csv";
-import { createAntimeridianAwareViewport, toViewportCoordinates, type MapViewport } from "../map/antimeridian";
+import {
+  createAntimeridianAwareViewport,
+  toNearestWorldConnectionCoordinates,
+  toNearestWorldCoordinates,
+  toViewportCoordinates,
+  type MapViewport,
+} from "../map/antimeridian";
 import { routeHref, useHashSearch } from "../router";
 
 const DEFAULT_CENTER: [number, number] = [-15, 180];
@@ -48,6 +54,7 @@ type CoordinatePair = [number, number];
 type MapRenderMode = "markers" | "density";
 type ExplorationFilterSetState = {
   id: number;
+  label: string;
   color: string;
   draftFilters: StoryFieldFilter[];
   appliedFilters: StoryFieldFilter[];
@@ -479,7 +486,9 @@ class ExplorationDensityLayer extends L.Layer {
 
     this.groups.forEach((group) => {
       group.points.forEach((point) => {
-        const pixelPoint = map.latLngToContainerPoint(point.coordinates);
+        const pixelPoint = map.latLngToContainerPoint(
+          toNearestWorldCoordinates(point.coordinates, map.getCenter().lng),
+        );
 
         const strength = clamp(0.16 * point.weight, 0.09, 0.24);
         const gradient = context.createRadialGradient(pixelPoint.x, pixelPoint.y, 0, pixelPoint.x, pixelPoint.y, radius);
@@ -619,6 +628,7 @@ function toggleSelectedTerms(
 function createExplorationFilterSet(nextId: number): ExplorationFilterSetState {
   return {
     id: nextId,
+    label: `Set ${nextId}`,
     color: FILTER_SET_PALETTE[(nextId - 1) % FILTER_SET_PALETTE.length],
     draftFilters: [],
     appliedFilters: [],
@@ -638,6 +648,7 @@ function serializeExplorationFilterSets(filterSets: ExplorationFilterSetState[])
   return JSON.stringify(
     filterSets.map((filterSet) => ({
       id: filterSet.id,
+      label: filterSet.label,
       color: filterSet.color,
       draftFilters: JSON.parse(serializeStoryFieldFilters(filterSet.draftFilters)),
       appliedFilters: JSON.parse(serializeStoryFieldFilters(filterSet.appliedFilters)),
@@ -672,16 +683,16 @@ function filterSetHasAppliedCriteria(filterSet: ExplorationFilterSetState): bool
   );
 }
 
-function buildFilterSetLabel(index: number): string {
-  return `Set ${index + 1}`;
+function normalizedFilterSetLabel(filterSet: Pick<ExplorationFilterSetState, "id" | "label">): string {
+  return filterSet.label.trim() || `Set ${filterSet.id}`;
 }
 
 function buildStoryFilterSetsPayload(filterSets: ExplorationFilterSetState[]) {
   return filterSets
     .filter(filterSetHasAppliedCriteria)
-    .map((filterSet, index) => ({
+    .map((filterSet) => ({
       id: `filter-set-${filterSet.id}`,
-      label: buildFilterSetLabel(index),
+      label: normalizedFilterSetLabel(filterSet),
       color: filterSet.color,
       filters: storyFiltersPayload(filterSet.appliedFilters),
       selected_themes: filterSet.appliedSelectedThemes.map((theme) => ({
@@ -795,32 +806,34 @@ function ExplorationMap({
     if (!map || !overlayLayer || !densityLayer) {
       return;
     }
+    const activeMap = map;
+    const activeOverlayLayer = overlayLayer;
 
-    overlayLayer.clearLayers();
+    function renderMarkerOverlay() {
+      activeOverlayLayer.clearLayers();
 
-    if (renderMode === "markers") {
+      if (renderMode !== "markers") {
+        return;
+      }
+
+      const mapCenterLongitude = activeMap.getCenter().lng;
       connections.forEach((connection) => {
-        if (!viewport) {
-          return;
-        }
         L.polyline(
-          [
-            toViewportCoordinates(connection.source_coordinates, viewport),
-            toViewportCoordinates(connection.target_coordinates, viewport),
-          ],
+          toNearestWorldConnectionCoordinates(
+            connection.source_coordinates,
+            connection.target_coordinates,
+            mapCenterLongitude,
+          ),
           {
             color: connection.color,
             opacity: 0.62,
             weight: 2,
           },
-        ).addTo(overlayLayer);
+        ).addTo(activeOverlayLayer);
       });
 
       markers.forEach((marker) => {
-        if (!viewport) {
-          return;
-        }
-        L.circleMarker(toViewportCoordinates(marker.coordinates, viewport), {
+        L.circleMarker(toNearestWorldCoordinates(marker.coordinates, mapCenterLongitude), {
           color: marker.color,
           fillColor: marker.color,
           fillOpacity: marker.kind === "original" ? 0.88 : 0.62,
@@ -835,9 +848,12 @@ function ExplorationMap({
           .bindPopup(markerPopupHtml(marker), {
             maxWidth: 320,
           })
-          .addTo(overlayLayer);
+          .addTo(activeOverlayLayer);
       });
     }
+
+    renderMarkerOverlay();
+    map.on("moveend", renderMarkerOverlay);
 
     densityLayer.setGroups(densityGroups);
     densityLayer.setVisible(renderMode === "density");
@@ -858,6 +874,10 @@ function ExplorationMap({
     window.requestAnimationFrame(() => {
       map.invalidateSize();
     });
+
+    return () => {
+      map.off("moveend", renderMarkerOverlay);
+    };
   }, [dataSignature, densitySignature, renderMode, viewport]);
 
   if (!markers.length && !connections.length) {
@@ -924,7 +944,6 @@ function ExplorationMap({
                 {legend.label}
               </span>
             ))}
-            <span className="legend-item">Solid markers are selected stories. Lighter markers and lines are related stories.</span>
           </>
         ) : (
           <>
@@ -1133,6 +1152,12 @@ export function ExplorationPage() {
   function updateFilterSetColor(filterSetId: number, color: string) {
     setFilterSets((current) =>
       current.map((filterSet) => (filterSet.id === filterSetId ? { ...filterSet, color } : filterSet)),
+    );
+  }
+
+  function updateFilterSetLabel(filterSetId: number, label: string) {
+    setFilterSets((current) =>
+      current.map((filterSet) => (filterSet.id === filterSetId ? { ...filterSet, label } : filterSet)),
     );
   }
 
@@ -1421,7 +1446,7 @@ export function ExplorationPage() {
           <div className="stack">
             <strong>Filter sets</strong>
             <div className="stack">
-              {filterSets.map((filterSet, index) => {
+              {filterSets.map((filterSet) => {
                 const storiesMatchingSelectedTerms = filterStoriesBySelectedSemanticTerms(stories, {
                   themes: filterSet.draftSelectedThemes,
                   tropes: filterSet.draftSelectedTropes,
@@ -1436,11 +1461,26 @@ export function ExplorationPage() {
                     <div className="card-row">
                       <div className="exploration-filter-set-heading">
                         <span className="exploration-filter-set-swatch" style={{ backgroundColor: filterSet.color }} />
-                        <strong>{buildFilterSetLabel(index)}</strong>
+                        <label className="exploration-filter-set-name">
+                          <span>Set name</span>
+                          <input
+                            aria-label={`Name for Set ${filterSet.id}`}
+                            className="input"
+                            disabled={busy || storiesLoading}
+                            onBlur={(event) =>
+                              updateFilterSetLabel(
+                                filterSet.id,
+                                event.target.value.trim() || `Set ${filterSet.id}`,
+                              )
+                            }
+                            onChange={(event) => updateFilterSetLabel(filterSet.id, event.target.value)}
+                            value={filterSet.label}
+                          />
+                        </label>
                         <label className="exploration-filter-set-color-picker">
                           <span>Color</span>
                           <input
-                            aria-label={`Color for ${buildFilterSetLabel(index)}`}
+                            aria-label={`Color for ${normalizedFilterSetLabel(filterSet)}`}
                             disabled={busy || storiesLoading}
                             onChange={(event) => updateFilterSetColor(filterSet.id, event.target.value)}
                             type="color"
@@ -1496,6 +1536,7 @@ export function ExplorationPage() {
                         <div className="stack">
                           <div className="exploration-semantic-filter-grid">
                             <ExplorationFilterSetTermPicker
+                              allowMultipleQueries
                               kind="theme"
                               loading={storiesLoading || busy}
                               onQueryChange={(value) => updateFilterSetTermQuery(filterSet.id, "theme", value)}
@@ -1504,6 +1545,7 @@ export function ExplorationPage() {
                               selectedTerms={filterSet.draftSelectedThemes}
                             />
                             <ExplorationFilterSetTermPicker
+                              allowMultipleQueries
                               kind="trope"
                               loading={storiesLoading || busy}
                               onQueryChange={(value) => updateFilterSetTermQuery(filterSet.id, "trope", value)}
@@ -1512,6 +1554,7 @@ export function ExplorationPage() {
                               selectedTerms={filterSet.draftSelectedTropes}
                             />
                             <ExplorationFilterSetTermPicker
+                              allowMultipleQueries
                               kind="keyword"
                               loading={storiesLoading || busy}
                               onQueryChange={(value) => updateFilterSetTermQuery(filterSet.id, "keyword", value)}
