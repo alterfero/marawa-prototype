@@ -58,6 +58,7 @@ export function ThemeManagementView() {
   const maintenance = useDatasetMaintenance();
   const hashSearch = useHashSearch();
   const [themes, setThemes] = useState<CanonicalThemeListItem[]>([]);
+  const [themeQuery, setThemeQuery] = useState("");
   const [stories, setStories] = useState<StorySummary[]>([]);
   const [selectedThemeId, setSelectedThemeId] = useState<string | null>(null);
   const [selectedThemeDetail, setSelectedThemeDetail] = useState<ThemeDetail | null>(null);
@@ -83,6 +84,10 @@ export function ThemeManagementView() {
     () => themes.filter((theme) => theme.confirmation_status === "canonical"),
     [themes],
   );
+  const filteredThemes = useMemo(() => {
+    const query = themeQuery.trim().toLocaleLowerCase();
+    return query ? themes.filter((theme) => theme.text.toLocaleLowerCase().includes(query)) : themes;
+  }, [themeQuery, themes]);
   const storiesById = useMemo(() => new Map(stories.map((story) => [story.id, story])), [stories]);
   const selectedThemeStories = useMemo(
     () =>
@@ -537,17 +542,28 @@ export function ThemeManagementView() {
           <div className="panel-header">
             <h2>Themes</h2>
             <div className="button-row">
-              <span className="pill">{themes.length}</span>
+              <span className="pill">{filteredThemes.length}</span>
               <button className="button button-ghost" disabled={loading || busy} onClick={() => void refresh()} type="button">
                 Refresh
               </button>
             </div>
           </div>
 
+          <label className="field">
+            <span>Filter themes</span>
+            <input
+              className="input"
+              onChange={(event) => setThemeQuery(event.target.value)}
+              placeholder="Enter text to filter themes"
+              value={themeQuery}
+            />
+          </label>
+
           <div className="list story-browser-list">
             {loading ? <p className="muted">Loading themes...</p> : null}
             {!loading && themes.length === 0 ? <p className="muted">No themes are available in the active dataset.</p> : null}
-            {themes.map((theme) => {
+            {!loading && themes.length > 0 && filteredThemes.length === 0 ? <p className="muted">No themes match the current filter.</p> : null}
+            {filteredThemes.map((theme) => {
               const isEditing = editingThemeId === theme.id;
               const isMerging = mergingThemeId === theme.id;
               const mergeTargets = canonicalThemes.filter((candidate) => candidate.id !== theme.id);

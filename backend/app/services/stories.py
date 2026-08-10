@@ -92,6 +92,10 @@ class StoryCompletenessPermissionError(StoryServiceError):
     """Raised when a user cannot set the requested story completeness."""
 
 
+class ThemeCreationPermissionError(StoryServiceError):
+    """Raised when a non-admin user attempts to create a canonical theme."""
+
+
 class ActiveDatasetNotFoundError(StoryServiceError):
     """Raised when a mutation requires an active dataset but none exists."""
 
@@ -241,6 +245,7 @@ def create_story(
             story=story,
             value=story.fields_json.get(THEME_FIELD, ""),
             actor_user_id=actor_user_id,
+            actor_role=actor_role,
         )
     )
 
@@ -365,6 +370,7 @@ def update_story(
                 story=story,
                 value=field_updates[THEME_FIELD],
                 actor_user_id=actor_user_id,
+                actor_role=actor_role,
             )
             for theme_id in affected_theme_ids:
                 _refresh_theme_cached_story_count(session, active_dataset.id, theme_id)
@@ -586,6 +592,7 @@ def add_story_theme(
     theme_id: str | None = None,
     text: str | None = None,
     actor_user_id: str | None = None,
+    actor_role: UserRole | None = None,
 ) -> tuple[Story, Dataset, StoryTheme, object]:
     active_dataset, story = _get_active_story(session, story_id)
     _assert_story_version(story, expected_story_version)
@@ -596,6 +603,7 @@ def add_story_theme(
         theme_id=theme_id,
         text=text,
         actor_user_id=actor_user_id,
+        actor_role=actor_role,
     )
     if any(link.theme_id == theme.id for link in story.theme_links):
         raise StoryMutationValidationError("Story already has this theme assignment.")
@@ -1237,6 +1245,7 @@ def _resolve_theme(
     theme_id: str | None = None,
     text: str | None = None,
     actor_user_id: str | None = None,
+    actor_role: UserRole | None = None,
 ) -> tuple[Theme, bool]:
     has_theme_id = bool(clean_text(theme_id))
     has_text = bool(clean_text(text))
@@ -1268,6 +1277,9 @@ def _resolve_theme(
     if theme is not None:
         return theme, False
 
+    if actor_role != UserRole.ADMIN:
+        raise ThemeCreationPermissionError("Only admins can create themes.")
+
     theme = Theme(
         dataset_id=dataset_id,
         text=theme_text,
@@ -1286,6 +1298,7 @@ def _replace_story_themes_from_text(
     story: Story,
     value: object,
     actor_user_id: str | None = None,
+    actor_role: UserRole | None = None,
 ) -> set[str]:
     previous_theme_ids = {link.theme_id for link in story.theme_links}
     theme_texts = split_themes(clean_text(value))
@@ -1298,6 +1311,7 @@ def _replace_story_themes_from_text(
             dataset_id,
             text=theme_text,
             actor_user_id=actor_user_id,
+            actor_role=actor_role,
         )
         resolved_themes.append(theme)
         next_theme_ids.add(theme.id)

@@ -76,6 +76,7 @@ Base path:
 - Contributor-created and contributor-edited content may be reviewed later by admins.
 - Normal read models do not need to expose review-state markers to non-admin users.
 - Admin review endpoints may expose review state and resolution metadata.
+- Only admins can create or edit canonical themes. Contributors may assign an existing theme to a story, but cannot introduce a new one through a story mutation.
 
 ### Error Shape
 

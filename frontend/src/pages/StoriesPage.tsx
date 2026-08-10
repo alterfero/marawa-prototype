@@ -8,7 +8,7 @@ import {
   createStory,
   deleteStoryKeyword,
   deleteStoryTheme,
-  deleteTrope,
+  deleteStoryTrope,
   getDatasetStatus,
   getErrorMessage,
   getStories,
@@ -856,55 +856,58 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
     );
   }
 
-  async function handleDeleteCanonicalTrope(trope: StoryTrope) {
-    const shouldDelete = window.confirm(
-      trope.story_count > 0
-        ? `Delete trope "${trope.text}" from all ${trope.story_count} stor${trope.story_count === 1 ? "y" : "ies"} and remove the canonical trope?`
-        : `Delete unused trope "${trope.text}"?`,
-    );
-    if (!shouldDelete) {
+  async function handleRemoveStoryTrope(trope: StoryTrope) {
+    if (!detail) {
       return;
     }
 
-    await runCanonicalTropeMutation(
-      () => deleteTrope(trope.id, trope.story_count > 0),
+    await runStoryMutation(
+      detail.id,
+      () => deleteStoryTrope(detail.id, trope.id, detail.version),
       {
         tone: "success",
-        title: "Trope deleted",
-        body:
-          trope.story_count > 0
-            ? `Deleted the canonical trope and removed it from ${trope.story_count} stor${trope.story_count === 1 ? "y" : "ies"}.`
-            : "Deleted the unused canonical trope.",
+        title: "Trope removed",
+        body: "The trope was removed from this story.",
       },
     );
   }
 
-  function renderStoryTropeAdminActions(trope: StoryTrope) {
+  function renderStoryTropeActions(trope: StoryTrope) {
+    if (!canManageTropes && !canEdit) {
+      return undefined;
+    }
+
     return (
       <div className="trope-card-admin-actions">
-        <ConfirmationStatusSwitch
-          ariaLabel="Trope confirmation status"
-          disabled={interactionDisabled}
-          onChange={(nextStatus) => void handleUpdateTropeConfirmationStatus(trope, nextStatus)}
-          value={trope.confirmation_status}
-        />
+        {canManageTropes ? (
+          <ConfirmationStatusSwitch
+            ariaLabel="Trope confirmation status"
+            disabled={interactionDisabled}
+            onChange={(nextStatus) => void handleUpdateTropeConfirmationStatus(trope, nextStatus)}
+            value={trope.confirmation_status}
+          />
+        ) : null}
         <div className="button-row">
-          <button
-            className="button button-ghost"
-            disabled={interactionDisabled}
-            onClick={() => void handleEditCanonicalTrope(trope)}
-            type="button"
-          >
-            Edit
-          </button>
-          <button
-            className="button button-danger"
-            disabled={interactionDisabled}
-            onClick={() => void handleDeleteCanonicalTrope(trope)}
-            type="button"
-          >
-            Delete
-          </button>
+          {canManageTropes ? (
+            <button
+              className="button button-ghost"
+              disabled={interactionDisabled}
+              onClick={() => void handleEditCanonicalTrope(trope)}
+              type="button"
+            >
+              Edit
+            </button>
+          ) : null}
+          {canEdit ? (
+            <button
+              className="button button-danger"
+              disabled={interactionDisabled}
+              onClick={() => void handleRemoveStoryTrope(trope)}
+              type="button"
+            >
+              Remove from story
+            </button>
+          ) : null}
         </div>
       </div>
     );
@@ -977,7 +980,7 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
     );
   }
 
-  async function handleDeleteStoryTheme(theme: StoryTheme) {
+  async function handleRemoveStoryTheme(theme: StoryTheme) {
     if (!detail) {
       return;
     }
@@ -1021,10 +1024,10 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
             <button
               className="button button-danger"
               disabled={interactionDisabled}
-              onClick={() => void handleDeleteStoryTheme(theme)}
+              onClick={() => void handleRemoveStoryTheme(theme)}
               type="button"
             >
-              Delete
+              Remove from story
             </button>
           ) : null}
         </div>
@@ -1115,7 +1118,7 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
     );
   }
 
-  async function handleDeleteKeyword(keywordId: string) {
+  async function handleRemoveStoryKeyword(keywordId: string) {
     if (!detail) {
       return;
     }
@@ -1125,7 +1128,7 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
       {
         tone: "success",
         title: "Keyword removed",
-        body: "The story-keyword assignment was hard-deleted.",
+        body: "The keyword was removed from this story.",
       },
     );
   }
@@ -1378,10 +1381,10 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
                           <button
                             className="button button-danger"
                             disabled={interactionDisabled}
-                            onClick={() => void handleDeleteKeyword(keyword.id)}
+                            onClick={() => void handleRemoveStoryKeyword(keyword.id)}
                             type="button"
                           >
-                            Delete
+                            Remove from story
                           </button>
                         </>
                       ) : undefined
@@ -1548,7 +1551,7 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
                       window.location.hash = routeHref("/trope-management", { selected_trope_id: trope.id });
                     }}
                     trope={trope}
-                    actions={canManageTropes ? renderStoryTropeAdminActions(trope) : undefined}
+                    actions={renderStoryTropeActions(trope)}
                   />
                 ))
               ) : (
@@ -1594,7 +1597,7 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
                   className="input"
                   disabled={interactionDisabled}
                   onChange={(event) => setThemeText(event.target.value)}
-                  placeholder="Search existing themes or type a new one"
+                  placeholder={canManageThemes ? "Search existing themes or type a new one" : "Search existing themes"}
                   value={themeText}
                 />
               </label>
@@ -1632,22 +1635,24 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
                 })}
               </div>
 
-              <div className="card subdued">
-                <div className="card-row">
-                  <div>
-                    <h3>Keep typed theme</h3>
-                    <p className="muted">Use this when none of the similar existing themes is the right fit.</p>
+              {canManageThemes ? (
+                <div className="card subdued">
+                  <div className="card-row">
+                    <div>
+                      <h3>Keep typed theme</h3>
+                      <p className="muted">Use this when none of the similar existing themes is the right fit.</p>
+                    </div>
+                    <button
+                      className="button"
+                      disabled={!detail || interactionDisabled || !themeText.trim()}
+                      onClick={() => void handleKeepTypedTheme()}
+                      type="button"
+                    >
+                      Create and add theme
+                    </button>
                   </div>
-                  <button
-                    className="button"
-                    disabled={!detail || interactionDisabled || !themeText.trim()}
-                    onClick={() => void handleKeepTypedTheme()}
-                    type="button"
-                  >
-                    Create and add theme
-                  </button>
                 </div>
-              </div>
+              ) : null}
             </section>
           ) : null}
 

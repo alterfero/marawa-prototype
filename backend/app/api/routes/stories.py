@@ -17,6 +17,7 @@ from app.services.stories import (
     DatasetVersionConflictError,
     KeywordNotFoundError,
     StoryCompletenessPermissionError,
+    ThemeCreationPermissionError,
     StoryMutationValidationError,
     StoryKeywordNotFoundError,
     StoryNotFoundError,
@@ -278,6 +279,8 @@ def _raise_story_service_error(exc: Exception) -> None:
         raise api_error(400, "story_mutation_invalid", str(exc)) from exc
     if isinstance(exc, StoryCompletenessPermissionError):
         raise api_error(403, "story_completeness_forbidden", str(exc)) from exc
+    if isinstance(exc, ThemeCreationPermissionError):
+        raise api_error(403, "theme_creation_forbidden", str(exc)) from exc
     raise exc
 
 
@@ -477,6 +480,7 @@ def create_story_theme(
             theme_id=payload.theme_id,
             text=payload.text,
             actor_user_id=auth_context.user.id,
+            actor_role=auth_context.user.role,
         )
     except Exception as exc:
         _raise_story_service_error(exc)

@@ -112,7 +112,7 @@ def read_themes(
 @router.post("", response_model=CreateThemeResponse)
 def create_canonical_theme(
     payload: CreateThemeRequest,
-    auth_context: AuthSessionContext = Depends(require_minimum_role_with_csrf(UserRole.CONTRIBUTOR)),
+    auth_context: AuthSessionContext = Depends(require_minimum_role_with_csrf(UserRole.ADMIN)),
     session: Session = Depends(get_db_session),
 ) -> CreateThemeResponse:
     try:

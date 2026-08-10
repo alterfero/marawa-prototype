@@ -48,6 +48,7 @@ export function KeywordManagementView() {
   const maintenance = useDatasetMaintenance();
   const hashSearch = useHashSearch();
   const [keywords, setKeywords] = useState<CanonicalKeywordListItem[]>([]);
+  const [keywordQuery, setKeywordQuery] = useState("");
   const [stories, setStories] = useState<StorySummary[]>([]);
   const [selectedKeywordId, setSelectedKeywordId] = useState<string | null>(null);
   const [selectedKeywordDetail, setSelectedKeywordDetail] = useState<KeywordDetail | null>(null);
@@ -71,6 +72,10 @@ export function KeywordManagementView() {
     () => keywords.filter((keyword) => keyword.confirmation_status === "canonical"),
     [keywords],
   );
+  const filteredKeywords = useMemo(() => {
+    const query = keywordQuery.trim().toLocaleLowerCase();
+    return query ? keywords.filter((keyword) => keyword.text.toLocaleLowerCase().includes(query)) : keywords;
+  }, [keywordQuery, keywords]);
   const storiesById = useMemo(() => new Map(stories.map((story) => [story.id, story])), [stories]);
   const selectedKeywordStories = useMemo(
     () =>
@@ -407,17 +412,28 @@ export function KeywordManagementView() {
           <div className="panel-header">
             <h2>Keywords</h2>
             <div className="button-row">
-              <span className="pill">{keywords.length}</span>
+              <span className="pill">{filteredKeywords.length}</span>
               <button className="button button-ghost" disabled={loading || busy} onClick={() => void refresh()} type="button">
                 Refresh
               </button>
             </div>
           </div>
 
+          <label className="field">
+            <span>Filter keywords</span>
+            <input
+              className="input"
+              onChange={(event) => setKeywordQuery(event.target.value)}
+              placeholder="Enter text to filter keywords"
+              value={keywordQuery}
+            />
+          </label>
+
           <div className="list story-browser-list">
             {loading ? <p className="muted">Loading keywords...</p> : null}
             {!loading && keywords.length === 0 ? <p className="muted">No keywords are available in the active dataset.</p> : null}
-            {keywords.map((keyword) => {
+            {!loading && keywords.length > 0 && filteredKeywords.length === 0 ? <p className="muted">No keywords match the current filter.</p> : null}
+            {filteredKeywords.map((keyword) => {
               const isEditing = editingKeywordId === keyword.id;
               const isMerging = mergingKeywordId === keyword.id;
               const mergeTargets = canonicalKeywords.filter((candidate) => candidate.id !== keyword.id);

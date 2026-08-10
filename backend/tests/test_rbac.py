@@ -5,7 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from app.core.csv_schema import CSV_COLUMNS, KEYWORD_FIELD, TROPE_FIELD
+from app.core.csv_schema import CSV_COLUMNS, KEYWORD_FIELD, THEME_FIELD, TROPE_FIELD
 from app.db import Dataset, DatasetStatus, UserRole, build_engine, build_session_factory
 from app.main import create_app
 from tests.auth_helpers import authenticate_admin, authenticate_role, configure_auth_env
@@ -217,3 +217,61 @@ def test_story_completeness_role_rules(monkeypatch, tmp_path) -> None:
     assert admin_response.status_code == 200
     assert admin_response.json()["story"]["completeness"] == "complete"
     assert admin_response.json()["story"]["version"] == 3
+
+
+def test_only_admins_can_create_themes(monkeypatch, tmp_path) -> None:
+    configure_auth_env(monkeypatch)
+    app = build_app(tmp_path, "rbac-theme-creation.db")
+
+    with TestClient(app) as admin_client, TestClient(app) as contributor_client:
+        authenticate_admin(admin_client)
+        upload_dataset(admin_client, [make_row(title="Story One")])
+        authenticate_role(
+            admin_client,
+            contributor_client,
+            email="contributor@example.com",
+            display_name="Contributor User",
+            role=UserRole.CONTRIBUTOR,
+            password="contributor-password",
+        )
+
+        story = contributor_client.get("/api/stories").json()["items"][0]
+        direct_creation = contributor_client.post("/api/themes", json={"text": "Contributor theme"})
+        story_creation = contributor_client.post(
+            "/api/stories",
+            json={
+                "expected_dataset_version": 1,
+                "fields": {"Story title (Eng)": "Blocked story", THEME_FIELD: "§§ Contributor theme"},
+                "tropes": [],
+                "keywords": [],
+            },
+        )
+        story_field_update = contributor_client.patch(
+            f"/api/stories/{story['id']}",
+            json={
+                "expected_story_version": story["version"],
+                "fields": {THEME_FIELD: "§§ Contributor theme"},
+            },
+        )
+        story_assignment_creation = contributor_client.post(
+            f"/api/stories/{story['id']}/themes",
+            json={
+                "expected_story_version": story["version"],
+                "text": "Contributor theme",
+            },
+        )
+
+        admin_creation = admin_client.post("/api/themes", json={"text": "Admin theme"})
+        assert admin_creation.status_code == 200
+        existing_assignment = contributor_client.post(
+            f"/api/stories/{story['id']}/themes",
+            json={
+                "expected_story_version": story["version"],
+                "theme_id": admin_creation.json()["theme"]["id"],
+            },
+        )
+
+    for response in (direct_creation, story_creation, story_field_update, story_assignment_creation):
+        assert response.status_code == 403
+        assert response.json()["code"] in {"forbidden", "theme_creation_forbidden"}
+    assert existing_assignment.status_code == 201
