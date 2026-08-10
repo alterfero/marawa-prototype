@@ -69,12 +69,17 @@ The deployed app is expected to read these environment variables:
 - `BOOTSTRAP_ADMIN_EMAIL`: bootstrap admin email used on startup.
 - `BOOTSTRAP_ADMIN_PASSWORD`: bootstrap admin password used on startup.
 - `BOOTSTRAP_ADMIN_DISPLAY_NAME`: optional bootstrap admin display name.
+- `SNAPSHOT_STORAGE_BACKEND`: `filesystem` for local development, `s3` for Railway production.
+- `SNAPSHOT_RETENTION_COUNT`: number of Time Machine checkpoints to retain; defaults to `50`.
+- `SNAPSHOT_BUCKET_PREFIX`: object-key prefix for Time Machine archives.
+- `SNAPSHOT_S3_*`: optional explicit S3 credentials. Railway Bucket auto-injected `AWS_*` values are also supported.
 
 The backend stores:
 
 - relational state in PostgreSQL;
 - sentence-transformers cache under `DATA_DIR/model-cache`;
 - a persistent `DATA_DIR` for runtime artifacts and temporary CSV handling.
+- compressed Time Machine snapshots in the configured filesystem or S3-compatible object store.
 
 ## Railway Deployment
 
@@ -109,6 +114,9 @@ Railpack's Python runtime also expects a root [requirements.txt](/Users/sebastie
 10. Leave `PORT` unset unless you have a special reason; Railway injects it.
 11. Set `MODEL_NAME` only if you want to override the default embedding model.
 12. Keep the web service at a single replica.
+13. Create a private Railway Bucket and Auto-inject its credentials into the web service.
+14. Set `SNAPSHOT_STORAGE_BACKEND=s3`, `SNAPSHOT_RETENTION_COUNT=50`, and `SNAPSHOT_BUCKET_PREFIX=time-machine/production`.
+15. Enable PostgreSQL Point-in-Time Recovery separately; Time Machine is the admin dataset-recovery workflow, while PITR is the infrastructure-recovery workflow.
 
 ### Public domain
 

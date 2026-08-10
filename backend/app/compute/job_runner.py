@@ -238,7 +238,7 @@ class JobRunner:
                 job = session.get(Job, job_id)
                 if job is None:
                     return
-                if job.job_type == "full_rebuild" and job.dataset_id is not None:
+                if job.job_type in {"full_rebuild", "restore_snapshot"} and job.dataset_id is not None:
                     dataset = session.get(Dataset, job.dataset_id)
                     if dataset is not None and dataset.status == DatasetStatus.STAGED:
                         dataset.status = DatasetStatus.FAILED

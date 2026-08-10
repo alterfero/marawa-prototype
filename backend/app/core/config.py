@@ -69,6 +69,15 @@ class Settings(BaseModel):
     bootstrap_admin_email: str | None = None
     bootstrap_admin_password: str | None = None
     bootstrap_admin_display_name: str = "Bootstrap Admin"
+    snapshot_retention_count: int = 50
+    snapshot_bucket_prefix: str = "time-machine/local"
+    snapshot_storage_backend: str = "filesystem"
+    snapshot_s3_endpoint: str | None = None
+    snapshot_s3_bucket: str | None = None
+    snapshot_s3_access_key_id: str | None = None
+    snapshot_s3_secret_access_key: str | None = None
+    snapshot_s3_region: str = "auto"
+    snapshot_s3_url_style: str = "virtual"
 
     @classmethod
     def from_environment(cls) -> "Settings":
@@ -132,6 +141,25 @@ class Settings(BaseModel):
             bootstrap_admin_email=clean_text(os.getenv("BOOTSTRAP_ADMIN_EMAIL", "")) or None,
             bootstrap_admin_password=os.getenv("BOOTSTRAP_ADMIN_PASSWORD"),
             bootstrap_admin_display_name=clean_text(os.getenv("BOOTSTRAP_ADMIN_DISPLAY_NAME", "Bootstrap Admin")),
+            snapshot_retention_count=max(1, int(os.getenv("SNAPSHOT_RETENTION_COUNT", "50"))),
+            snapshot_bucket_prefix=clean_text(os.getenv("SNAPSHOT_BUCKET_PREFIX", "time-machine/local")).strip("/"),
+            snapshot_storage_backend=clean_text(os.getenv("SNAPSHOT_STORAGE_BACKEND", "filesystem")).lower()
+            or "filesystem",
+            snapshot_s3_endpoint=clean_text(os.getenv("SNAPSHOT_S3_ENDPOINT", os.getenv("AWS_ENDPOINT_URL", ""))) or None,
+            snapshot_s3_bucket=clean_text(os.getenv("SNAPSHOT_S3_BUCKET", os.getenv("AWS_S3_BUCKET_NAME", ""))) or None,
+            snapshot_s3_access_key_id=clean_text(
+                os.getenv("SNAPSHOT_S3_ACCESS_KEY_ID", os.getenv("AWS_ACCESS_KEY_ID", ""))
+            )
+            or None,
+            snapshot_s3_secret_access_key=clean_text(
+                os.getenv("SNAPSHOT_S3_SECRET_ACCESS_KEY", os.getenv("AWS_SECRET_ACCESS_KEY", ""))
+            )
+            or None,
+            snapshot_s3_region=clean_text(os.getenv("SNAPSHOT_S3_REGION", os.getenv("AWS_DEFAULT_REGION", "auto"))) or "auto",
+            snapshot_s3_url_style=clean_text(
+                os.getenv("SNAPSHOT_S3_URL_STYLE", os.getenv("AWS_S3_URL_STYLE", "virtual"))
+            ).lower()
+            or "virtual",
         )
 
     def ensure_runtime_directories(self) -> None:

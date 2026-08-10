@@ -86,6 +86,9 @@ Use PostgreSQL in university deployment. Do not rely on the SQLite fallback.
 | `DATA_DIR` | Yes | Mounted persistent runtime directory. Must be writable by the app user. |
 | `SESSION_SECRET` | Yes | Must be a strong non-default secret. Never use `dev-session-secret` in deployment. |
 | `SESSION_COOKIE_SECURE` | Yes | Set to `true` for HTTPS deployment. |
+| `SNAPSHOT_STORAGE_BACKEND` | Yes for a deployed Time Machine | Set to `s3`; local development uses `filesystem`. |
+| `SNAPSHOT_RETENTION_COUNT` | Recommended | Number of successful-rebuild checkpoints to retain; default `50`. |
+| `SNAPSHOT_BUCKET_PREFIX` | Recommended | Environment-specific S3 object-key prefix, such as `time-machine/production`. |
 | `BOOTSTRAP_ADMIN_EMAIL` | Recommended on first deploy | Creates the first admin if missing. |
 | `BOOTSTRAP_ADMIN_PASSWORD` | Recommended on first deploy | Used when the bootstrap admin is first created. |
 | `CORS_ALLOWED_ORIGINS` | Only if frontend is on a separate origin | Comma-separated list of exact allowed origins. |
@@ -100,6 +103,8 @@ Useful optional settings:
 - `PORT`
 - `SESSION_TTL_HOURS`
 - `INVITE_RESET_TTL_HOURS`
+- `SNAPSHOT_S3_ENDPOINT`, `SNAPSHOT_S3_BUCKET`, `SNAPSHOT_S3_ACCESS_KEY_ID`, `SNAPSHOT_S3_SECRET_ACCESS_KEY`, `SNAPSHOT_S3_REGION`, and `SNAPSHOT_S3_URL_STYLE`
+- Railway Bucket's auto-injected `AWS_ENDPOINT_URL`, `AWS_S3_BUCKET_NAME`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`, and `AWS_S3_URL_STYLE` are accepted in place of the corresponding `SNAPSHOT_S3_*` settings.
 
 Defaults are defined in `backend/app/core/config.py`.
 

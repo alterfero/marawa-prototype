@@ -95,6 +95,42 @@ export interface DatasetRebuildResponse {
   queued_job: JobSummary;
 }
 
+export interface TimeMachineSnapshotCounts {
+  stories: number;
+  tropes: number;
+  themes: number;
+  keywords: number;
+}
+
+export interface TimeMachineSnapshotDifference {
+  current_dataset_version: number | null;
+  story_count_delta: number | null;
+  trope_count_delta: number | null;
+  theme_count_delta: number | null;
+  keyword_count_delta: number | null;
+}
+
+export interface TimeMachineSnapshot {
+  id: string;
+  sequence: number;
+  status: string;
+  reason: string;
+  source_job_id: string | null;
+  source_dataset_version: number | null;
+  source_filename: string | null;
+  created_at: string;
+  content_length: number | null;
+  counts: TimeMachineSnapshotCounts;
+  difference_from_current: TimeMachineSnapshotDifference | null;
+}
+
+export interface RestoreSnapshotResponse {
+  snapshot: TimeMachineSnapshot;
+  safety_snapshot: TimeMachineSnapshot;
+  job_id: string;
+  job_status: string;
+}
+
 export interface StorySummary {
   id: string;
   dataset_id: string;

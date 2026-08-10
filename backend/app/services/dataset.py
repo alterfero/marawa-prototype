@@ -331,6 +331,7 @@ def request_dataset_rebuild(
             payload={
                 "reason": "manual_rebuild",
                 "dataset_status": dataset.status.value,
+                "actor_user_id": actor_user_id,
             },
         )
 

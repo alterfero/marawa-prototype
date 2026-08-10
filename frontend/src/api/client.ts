@@ -52,6 +52,8 @@ import type {
   TropeConfirmationStatus,
   ThemeConfirmationStatus,
   ThemeDetail,
+  TimeMachineSnapshot,
+  RestoreSnapshotResponse,
   MergeThemeResponse,
   UserLifecycleResponse,
   UpdateTropeResponse,
@@ -182,6 +184,20 @@ export function getErrorMessage(error: unknown): string {
 
 export function getDatasetStatus(): Promise<DatasetStatus> {
   return request<DatasetStatus>("/dataset/status");
+}
+
+export function getTimeMachineSnapshots(): Promise<TimeMachineSnapshot[]> {
+  return request<TimeMachineSnapshot[]>("/time-machine");
+}
+
+export function getTimeMachineSnapshot(snapshotId: string): Promise<TimeMachineSnapshot> {
+  return request<TimeMachineSnapshot>(`/time-machine/${snapshotId}`);
+}
+
+export function restoreTimeMachineSnapshot(snapshotId: string): Promise<RestoreSnapshotResponse> {
+  return request<RestoreSnapshotResponse>(`/time-machine/${snapshotId}/restore`, {
+    method: "POST",
+  });
 }
 
 export async function login(payload: { email: string; password: string }): Promise<AuthSessionResponse> {

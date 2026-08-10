@@ -26,6 +26,7 @@ def test_postgres_smoke_migrations_and_job_runner() -> None:
         "audit_events",
         "alembic_version",
         "datasets",
+        "dataset_snapshots",
         "invite_reset_tokens",
         "jobs",
         "keywords",
@@ -42,7 +43,7 @@ def test_postgres_smoke_migrations_and_job_runner() -> None:
 
     with engine.connect() as connection:
         version = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-    assert version == "20260729_0009"
+    assert version == "20260810_0015"
 
     SessionLocal = build_session_factory(engine)
 

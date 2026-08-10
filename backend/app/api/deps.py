@@ -107,6 +107,7 @@ _DATASET_MUTATION_PREFIXES = (
     "/themes",
     "/curation",
     "/review",
+    "/time-machine",
 )
 
 

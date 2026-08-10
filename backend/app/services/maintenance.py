@@ -24,7 +24,7 @@ def get_dataset_maintenance_status(session: Session) -> dict:
     active_rebuild = session.scalar(
         select(Job)
         .where(
-            Job.job_type == "full_rebuild",
+            Job.job_type.in_(("full_rebuild", "restore_snapshot")),
             Job.status.in_((JobStatus.QUEUED, JobStatus.RUNNING)),
         )
         .order_by(
@@ -36,10 +36,11 @@ def get_dataset_maintenance_status(session: Session) -> dict:
     if active_rebuild is not None:
         target_dataset = session.get(Dataset, active_rebuild.dataset_id) if active_rebuild.dataset_id else None
         state = active_rebuild.status.value
+        action = "Dataset recovery" if active_rebuild.job_type == "restore_snapshot" else "Dataset rebuild"
         return {
             "active": True,
             "state": state,
-            "message": f"Dataset rebuild is {state}; dataset changes are temporarily paused.",
+            "message": f"{action} is {state}; dataset changes are temporarily paused.",
             "job": _job_summary(active_rebuild),
             "target_dataset_version": target_dataset.version if target_dataset is not None else None,
         }

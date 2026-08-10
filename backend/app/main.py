@@ -23,6 +23,8 @@ from app.db.session import SessionLocal, engine
 from app.services.auth import ensure_bootstrap_admin
 from app.services.jobs import requeue_stale_running_jobs
 from app.services.search_service import SearchService
+from app.services.snapshot_storage import SnapshotStore, build_snapshot_store
+from app.services.snapshots import DatasetSnapshotService
 
 
 @asynccontextmanager
@@ -54,6 +56,7 @@ def create_app(
     job_handlers: dict | None = None,
     embedding_backend: EmbeddingBackend | None = None,
     frontend_dist_dir: Path | None = None,
+    snapshot_store: SnapshotStore | None = None,
 ) -> FastAPI:
     settings = get_settings()
     app = FastAPI(title=settings.app_name, lifespan=lifespan)
@@ -66,14 +69,25 @@ def create_app(
     )
     app.state.db_engine = db_engine or engine
     app.state.session_factory = session_factory or SessionLocal
+    app.state.snapshot_service = DatasetSnapshotService(
+        storage=snapshot_store or build_snapshot_store(settings),
+        retention_count=settings.snapshot_retention_count,
+        bucket_prefix=settings.snapshot_bucket_prefix,
+    )
     app.state.search_service = SearchService(
         embedding_backend=embedding_backend,
         model_name=settings.model_name,
         embedding_cache_dir=str(settings.model_cache_dir),
+        snapshot_service=app.state.snapshot_service,
     )
     app.state.job_runner_enabled = job_runner_enabled
     configured_handlers = {
         "full_rebuild": app.state.search_service.handle_full_rebuild_job,
+        "restore_snapshot": lambda session, job: app.state.snapshot_service.handle_restore_job(
+            session,
+            job,
+            rebuild_dataset=app.state.search_service.handle_full_rebuild_job,
+        ),
     }
     if job_handlers:
         configured_handlers.update(job_handlers)

@@ -659,10 +659,15 @@ def _full_story_metadata(story: Story, trope_links: list[StoryTrope]) -> dict[st
     }
 
 
-def export_active_dataset_to_csv_bytes(session: Session, *, include_marawa_metadata: bool = False) -> bytes:
-    dataset = session.scalar(select(Dataset).where(Dataset.status == DatasetStatus.ACTIVE))
+def export_dataset_to_csv_bytes(
+    session: Session,
+    *,
+    dataset_id: str,
+    include_marawa_metadata: bool = False,
+) -> bytes:
+    dataset = session.get(Dataset, dataset_id)
     if dataset is None:
-        raise CSVImportValidationError("No active dataset is available to export.")
+        raise CSVImportValidationError("The requested dataset is no longer available to export.")
 
     stories = session.scalars(
         select(Story)
@@ -707,3 +712,14 @@ def export_active_dataset_to_csv_bytes(session: Session, *, include_marawa_metad
         writer.writerow(row)
 
     return buffer.getvalue().encode("utf-8-sig")
+
+
+def export_active_dataset_to_csv_bytes(session: Session, *, include_marawa_metadata: bool = False) -> bytes:
+    dataset = session.scalar(select(Dataset).where(Dataset.status == DatasetStatus.ACTIVE))
+    if dataset is None:
+        raise CSVImportValidationError("No active dataset is available to export.")
+    return export_dataset_to_csv_bytes(
+        session,
+        dataset_id=dataset.id,
+        include_marawa_metadata=include_marawa_metadata,
+    )

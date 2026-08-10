@@ -26,6 +26,7 @@ from app.db.models import (
     Theme,
     Trope,
 )
+from app.services.snapshots import DatasetSnapshotService
 
 
 NEAR_DUPLICATE_THRESHOLD = 0.9
@@ -51,6 +52,7 @@ class SearchService:
         model_name: str = DEFAULT_EMBEDDING_MODEL_NAME,
         embedding_cache_dir: str | None = None,
         near_duplicate_threshold: float = NEAR_DUPLICATE_THRESHOLD,
+        snapshot_service: DatasetSnapshotService | None = None,
     ) -> None:
         self.embedding_backend = embedding_backend or get_default_embedding_backend(
             model_name,
@@ -58,11 +60,25 @@ class SearchService:
         )
         self.model_name = getattr(self.embedding_backend, "model_name", model_name)
         self.near_duplicate_threshold = near_duplicate_threshold
+        self.snapshot_service = snapshot_service
 
     def handle_full_rebuild_job(self, session: Session, job: Job) -> dict[str, Any]:
         dataset = self._resolve_target_dataset(session, job.dataset_id)
         result = self.rebuild_embeddings(session, dataset_id=dataset.id)
         self._promote_dataset_after_successful_rebuild(session, dataset)
+        if self.snapshot_service is not None:
+            actor_user_id = (job.payload_json or {}).get("actor_user_id")
+            snapshot = self.snapshot_service.capture(
+                session,
+                dataset=dataset,
+                source_job=job,
+                created_by_user_id=actor_user_id if isinstance(actor_user_id, str) else None,
+            )
+            result = {
+                **result,
+                "snapshot_id": snapshot.id,
+                "snapshot_sequence": snapshot.sequence,
+            }
         return result
 
     def rebuild_embeddings(self, session: Session, *, dataset_id: str | None = None) -> dict[str, Any]:
@@ -986,5 +1002,9 @@ class SearchService:
         )
         if current_active is not None:
             current_active.status = DatasetStatus.ARCHIVED
+            # The partial unique index permits only one active dataset. Flush
+            # the outgoing revision before activating the replacement so both
+            # SQLite and PostgreSQL observe the transition in that order.
+            session.flush()
         dataset.status = DatasetStatus.ACTIVE
         dataset.activated_at = datetime.now(timezone.utc)

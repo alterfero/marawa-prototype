@@ -10,6 +10,7 @@ import {
 } from "../api/client";
 import type { DatasetStatus, JobDetail, JobSummary } from "../api/types";
 import { useDatasetMaintenance } from "../maintenance";
+import { TimeMachinePanel } from "./TimeMachinePage";
 
 const TERMINAL_JOB_STATUSES = new Set(["succeeded", "failed", "cancelled"]);
 const JOB_POLL_INTERVAL_MS = 2000;
@@ -337,6 +338,7 @@ export function DatasetPage({ canManageDataset }: { canManageDataset: boolean })
           </section>
 
           {jobError ? <p className="notice-inline">Could not refresh rebuild status: {jobError}</p> : null}
+          <TimeMachinePanel />
         </>
       ) : (
         <section className="panel">

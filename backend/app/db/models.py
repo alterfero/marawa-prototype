@@ -109,6 +109,13 @@ class JobStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
+class DatasetSnapshotStatus(str, Enum):
+    CREATING = "creating"
+    READY = "ready"
+    FAILED = "failed"
+    DELETING = "deleting"
+
+
 class TermKind(str, Enum):
     TROPE = "trope"
     THEME = "theme"
@@ -269,6 +276,7 @@ class Dataset(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     keywords: Mapped[list["Keyword"]] = relationship(back_populates="dataset")
     review_items: Mapped[list["ReviewItem"]] = relationship(back_populates="dataset")
     audit_events: Mapped[list["AuditEvent"]] = relationship(back_populates="dataset")
+    snapshots: Mapped[list["DatasetSnapshot"]] = relationship(back_populates="dataset")
 
 
 class Story(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -524,6 +532,48 @@ class Job(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     error_message: Mapped[str | None] = mapped_column(Text)
 
     dataset: Mapped["Dataset | None"] = relationship(back_populates="jobs")
+
+
+class DatasetSnapshot(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """An immutable full Marawa export captured at a rebuild boundary."""
+
+    __tablename__ = "dataset_snapshots"
+    __table_args__ = (
+        UniqueConstraint("sequence", name="uq_dataset_snapshots_sequence"),
+        UniqueConstraint("source_job_id", name="uq_dataset_snapshots_source_job_id"),
+    )
+
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    status: Mapped[DatasetSnapshotStatus] = mapped_column(
+        SqlEnum(
+            DatasetSnapshotStatus,
+            native_enum=False,
+            validate_strings=True,
+            values_callable=enum_values,
+        ),
+        default=DatasetSnapshotStatus.CREATING,
+        nullable=False,
+        index=True,
+    )
+    reason: Mapped[str] = mapped_column(String(100), default="full_rebuild", nullable=False)
+    dataset_id: Mapped[str | None] = mapped_column(ForeignKey("datasets.id", ondelete="SET NULL"), index=True)
+    source_job_id: Mapped[str | None] = mapped_column(ForeignKey("jobs.id", ondelete="SET NULL"), index=True)
+    created_by_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    source_dataset_version: Mapped[int | None] = mapped_column(Integer)
+    source_filename: Mapped[str | None] = mapped_column(String(512))
+    object_key: Mapped[str] = mapped_column(String(1024), nullable=False, unique=True)
+    content_sha256: Mapped[str | None] = mapped_column(String(64))
+    content_length: Mapped[int | None] = mapped_column(Integer)
+    content_format: Mapped[str] = mapped_column(String(100), default="marawa_full_csv_gzip", nullable=False)
+    schema_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    story_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    trope_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    theme_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    keyword_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    dataset: Mapped["Dataset | None"] = relationship(back_populates="snapshots", foreign_keys=[dataset_id])
+    source_job: Mapped["Job | None"] = relationship(foreign_keys=[source_job_id])
+    created_by_user: Mapped["User | None"] = relationship(foreign_keys=[created_by_user_id])
 
 
 class ReviewItem(UUIDPrimaryKeyMixin, TimestampMixin, Base):

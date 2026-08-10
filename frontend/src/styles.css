@@ -66,6 +66,91 @@ p {
   gap: 1rem;
 }
 
+.time-machine-layout {
+  display: grid;
+  grid-template-columns: minmax(250px, 0.8fr) minmax(0, 1.2fr);
+  align-items: start;
+  gap: 1rem;
+}
+
+.snapshot-list {
+  display: grid;
+  gap: 0.45rem;
+  max-height: 38rem;
+  overflow: auto;
+}
+
+.snapshot-list-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.7rem;
+  width: 100%;
+  padding: 0.75rem;
+  border: 1px solid rgba(19, 52, 59, 0.14);
+  border-radius: 0.75rem;
+  color: inherit;
+  text-align: left;
+  background: rgba(255, 255, 255, 0.52);
+  cursor: pointer;
+}
+
+.snapshot-list-item > span {
+  display: grid;
+  gap: 0.1rem;
+}
+
+.snapshot-list-item small,
+.snapshot-details,
+.snapshot-diff {
+  color: #527078;
+}
+
+.snapshot-list-item-active {
+  border-color: rgba(29, 104, 87, 0.7);
+  background: rgba(96, 168, 146, 0.16);
+}
+
+.time-machine-heading,
+.snapshot-details,
+.snapshot-diff,
+.time-machine-job {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.time-machine-counts {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.snapshot-details,
+.snapshot-diff {
+  flex-wrap: wrap;
+  font-size: 0.9rem;
+}
+
+.snapshot-diff {
+  padding: 0.75rem;
+  border-radius: 0.75rem;
+  background: rgba(19, 52, 59, 0.06);
+}
+
+.snapshot-status {
+  padding: 0.25rem 0.55rem;
+  border-radius: 999px;
+  text-transform: capitalize;
+  font-size: 0.8rem;
+  font-weight: 700;
+  background: rgba(19, 52, 59, 0.12);
+}
+
+.snapshot-status-ready {
+  color: #1d6857;
+  background: rgba(53, 133, 118, 0.16);
+}
+
 .sidebar-status-card {
   display: grid;
   gap: 0.45rem;
@@ -1795,7 +1880,8 @@ p {
   .split-panel,
   .two-column-layout,
   .experimental-layout,
-  .location-picker-layout {
+  .location-picker-layout,
+  .time-machine-layout {
     grid-template-columns: 1fr;
   }
 }
@@ -1828,9 +1914,15 @@ p {
   .card-row,
   .button-row,
   .inline-form,
-  .input-with-action {
+  .input-with-action,
+  .time-machine-heading,
+  .time-machine-job {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .time-machine-counts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .exploration-semantic-filter-grid {
