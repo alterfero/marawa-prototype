@@ -108,6 +108,24 @@ export interface TimeMachineSnapshotDifference {
   trope_count_delta: number | null;
   theme_count_delta: number | null;
   keyword_count_delta: number | null;
+  changes: TimeMachineSnapshotContentDifference | null;
+}
+
+export interface TimeMachineSnapshotDifferenceItem {
+  text: string;
+  count: number;
+}
+
+export interface TimeMachineSnapshotValueDifference {
+  current_only: TimeMachineSnapshotDifferenceItem[];
+  checkpoint_only: TimeMachineSnapshotDifferenceItem[];
+}
+
+export interface TimeMachineSnapshotContentDifference {
+  stories: TimeMachineSnapshotValueDifference;
+  tropes: TimeMachineSnapshotValueDifference;
+  themes: TimeMachineSnapshotValueDifference;
+  keywords: TimeMachineSnapshotValueDifference;
 }
 
 export interface TimeMachineSnapshot {

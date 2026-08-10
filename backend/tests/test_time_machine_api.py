@@ -6,18 +6,19 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.core.config import get_settings
-from app.core.csv_schema import CSV_COLUMNS, KEYWORD_FIELD, TROPE_FIELD
+from app.core.csv_schema import CSV_COLUMNS, KEYWORD_FIELD, THEME_FIELD, TROPE_FIELD
 from app.db import Dataset, DatasetStatus, Story, build_engine, build_session_factory
 from app.main import create_app
 from tests.auth_helpers import authenticate_admin, configure_auth_env
 from tests.search_fakes import FakeEmbeddingBackend
 
 
-def make_csv_bytes(*, title: str, trope: str, keyword: str) -> bytes:
+def make_csv_bytes(*, title: str, trope: str, keyword: str, theme: str = "") -> bytes:
     row = {column: "" for column in CSV_COLUMNS}
     row["Story title (Eng)"] = title
     row[TROPE_FIELD] = trope
     row[KEYWORD_FIELD] = keyword
+    row[THEME_FIELD] = theme
     buffer = io.StringIO(newline="")
     writer = csv.DictWriter(buffer, fieldnames=CSV_COLUMNS, lineterminator="\n")
     writer.writeheader()
@@ -44,10 +45,10 @@ def client(monkeypatch, tmp_path) -> TestClient:
         yield test_client
 
 
-def upload_and_rebuild(client: TestClient, *, title: str, trope: str, keyword: str) -> None:
+def upload_and_rebuild(client: TestClient, *, title: str, trope: str, keyword: str, theme: str = "") -> None:
     upload = client.post(
         "/api/dataset/upload",
-        files={"file": ("stories.csv", make_csv_bytes(title=title, trope=trope, keyword=keyword), "text/csv")},
+        files={"file": ("stories.csv", make_csv_bytes(title=title, trope=trope, keyword=keyword, theme=theme), "text/csv")},
     )
     assert upload.status_code == 201
     rebuild = client.post("/api/dataset/rebuild")
@@ -79,6 +80,53 @@ def test_successful_rebuild_creates_admin_visible_logical_snapshot(client: TestC
         "trope_count_delta": 0,
         "theme_count_delta": 0,
         "keyword_count_delta": 0,
+        "changes": {
+            "stories": {"current_only": [], "checkpoint_only": []},
+            "tropes": {"current_only": [], "checkpoint_only": []},
+            "themes": {"current_only": [], "checkpoint_only": []},
+            "keywords": {"current_only": [], "checkpoint_only": []},
+        },
+    }
+
+
+def test_checkpoint_preview_lists_terms_and_story_titles_that_would_change(client: TestClient) -> None:
+    upload_and_rebuild(
+        client,
+        title="Checkpoint story",
+        trope="§§ Checkpoint trope",
+        keyword="checkpoint keyword",
+        theme="§§ Checkpoint theme",
+    )
+    snapshot = client.get("/api/time-machine").json()[0]
+
+    upload_and_rebuild(
+        client,
+        title="Current story",
+        trope="§§ Current trope",
+        keyword="current keyword",
+        theme="§§ Current theme",
+    )
+
+    detail = client.get(f"/api/time-machine/{snapshot['id']}")
+
+    assert detail.status_code == 200
+    assert detail.json()["difference_from_current"]["changes"] == {
+        "stories": {
+            "current_only": [{"text": "Current story", "count": 1}],
+            "checkpoint_only": [{"text": "Checkpoint story", "count": 1}],
+        },
+        "tropes": {
+            "current_only": [{"text": "Current trope", "count": 1}],
+            "checkpoint_only": [{"text": "Checkpoint trope", "count": 1}],
+        },
+        "themes": {
+            "current_only": [{"text": "Current theme", "count": 1}],
+            "checkpoint_only": [{"text": "Checkpoint theme", "count": 1}],
+        },
+        "keywords": {
+            "current_only": [{"text": "current keyword", "count": 1}],
+            "checkpoint_only": [{"text": "checkpoint keyword", "count": 1}],
+        },
     }
 
 

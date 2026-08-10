@@ -70,6 +70,16 @@ class _CSVImportRow:
     term_catalog: dict[str, Any] | None
 
 
+@dataclass(frozen=True)
+class DatasetComparisonValues:
+    """The user-facing values needed to compare a full dataset export."""
+
+    story_titles: tuple[str, ...]
+    tropes: tuple[str, ...]
+    themes: tuple[str, ...]
+    keywords: tuple[str, ...]
+
+
 def _normalize_header(fieldnames: list[str | None]) -> list[str]:
     return [clean_text(name) for name in fieldnames if name is not None]
 
@@ -289,6 +299,46 @@ def _parse_full_export_catalog(rows: list[_CSVImportRow]) -> dict[str, dict[str,
             parsed_catalog[collection][marker] = parsed_item
 
     return parsed_catalog
+
+
+def extract_dataset_comparison_values(csv_bytes: bytes) -> DatasetComparisonValues:
+    """Read comparable values from either a legacy CSV or a full Marawa export.
+
+    Time Machine archives are full exports, so their term catalog includes terms
+    with no current story assignment.  The legacy branch makes this utility
+    useful for ordinary CSV exports as well, while deriving its terms from the
+    story cells.
+    """
+
+    rows, is_full_export = _load_csv_rows(csv_bytes)
+    if is_full_export:
+        catalog = _parse_full_export_catalog(rows)
+        tropes = tuple(item["text"] for item in catalog["tropes"].values())
+        themes = tuple(item["text"] for item in catalog["themes"].values())
+        keywords = tuple(item["text"] for item in catalog["keywords"].values())
+    else:
+        tropes = tuple(
+            trope
+            for row in rows
+            for trope in split_tropes(row.fields.get(TROPE_FIELD, ""))
+        )
+        themes = tuple(
+            theme
+            for row in rows
+            for theme in split_themes(row.fields.get(THEME_FIELD, ""))
+        )
+        keywords = tuple(
+            keyword
+            for row in rows
+            for keyword in split_keywords(row.fields.get(KEYWORD_FIELD, ""))
+        )
+
+    return DatasetComparisonValues(
+        story_titles=tuple(clean_text(row.fields.get("Story title (Eng)", "")) for row in rows),
+        tropes=tropes,
+        themes=themes,
+        keywords=keywords,
+    )
 
 
 def _parse_full_story_metadata(

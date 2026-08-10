@@ -137,6 +137,52 @@ p {
   background: rgba(19, 52, 59, 0.06);
 }
 
+.snapshot-changes {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.snapshot-changes h3,
+.snapshot-change-card h4 {
+  margin: 0;
+}
+
+.snapshot-change-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.snapshot-change-card,
+.snapshot-change-group {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.snapshot-change-card {
+  min-width: 0;
+  padding: 0.8rem;
+  border: 1px solid rgba(19, 52, 59, 0.12);
+  border-radius: 0.75rem;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.snapshot-change-group > strong {
+  color: #365e65;
+  font-size: 0.78rem;
+}
+
+.snapshot-change-list {
+  display: grid;
+  gap: 0.25rem;
+  max-height: 12rem;
+  margin: 0;
+  padding-left: 1.2rem;
+  overflow: auto;
+  color: #527078;
+  font-size: 0.88rem;
+}
+
 .snapshot-status {
   padding: 0.25rem 0.55rem;
   border-radius: 999px;
@@ -1923,6 +1969,10 @@ p {
 
   .time-machine-counts {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .snapshot-change-grid {
+    grid-template-columns: 1fr;
   }
 
   .exploration-semantic-filter-grid {

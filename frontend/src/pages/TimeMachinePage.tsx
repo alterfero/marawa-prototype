@@ -7,7 +7,7 @@ import {
   getTimeMachineSnapshots,
   restoreTimeMachineSnapshot,
 } from "../api/client";
-import type { JobDetail, TimeMachineSnapshot } from "../api/types";
+import type { JobDetail, TimeMachineSnapshot, TimeMachineSnapshotValueDifference } from "../api/types";
 import { useDatasetMaintenance } from "../maintenance";
 
 const TERMINAL_JOB_STATUSES = new Set(["succeeded", "failed", "cancelled"]);
@@ -42,6 +42,34 @@ function deltaLabel(value: number | null): string {
 
 function reasonLabel(reason: string): string {
   return reason === "pre_restore" ? "Automatic safety checkpoint" : "Successful rebuild";
+}
+
+function ChangeList({ difference, title }: { difference: TimeMachineSnapshotValueDifference; title: string }) {
+  const hasChanges = difference.current_only.length > 0 || difference.checkpoint_only.length > 0;
+  const itemLabel = (text: string, count: number) => (count > 1 ? `${text} ×${count}` : text);
+
+  return (
+    <article className="snapshot-change-card">
+      <h4>{title}</h4>
+      {!hasChanges ? <p className="muted">No changes.</p> : null}
+      {difference.current_only.length > 0 ? (
+        <div className="snapshot-change-group">
+          <strong>Current only — will be removed</strong>
+          <ul className="snapshot-change-list">
+            {difference.current_only.map((item) => <li key={`current-${item.text}`}>{itemLabel(item.text, item.count)}</li>)}
+          </ul>
+        </div>
+      ) : null}
+      {difference.checkpoint_only.length > 0 ? (
+        <div className="snapshot-change-group">
+          <strong>Checkpoint only — will be restored</strong>
+          <ul className="snapshot-change-list">
+            {difference.checkpoint_only.map((item) => <li key={`checkpoint-${item.text}`}>{itemLabel(item.text, item.count)}</li>)}
+          </ul>
+        </div>
+      ) : null}
+    </article>
+  );
 }
 
 export function TimeMachinePanel() {
@@ -268,6 +296,20 @@ export function TimeMachinePanel() {
                   <span>Themes {deltaLabel(difference.theme_count_delta)}</span>
                   <span>Keywords {deltaLabel(difference.keyword_count_delta)}</span>
                 </div>
+              ) : null}
+              {difference?.changes ? (
+                <section className="snapshot-changes" aria-label="Detailed checkpoint differences">
+                  <div>
+                    <h3>Detailed differences</h3>
+                    <p className="muted">These names describe what would change if this checkpoint is recovered.</p>
+                  </div>
+                  <div className="snapshot-change-grid">
+                    <ChangeList difference={difference.changes.stories} title="Stories" />
+                    <ChangeList difference={difference.changes.tropes} title="Tropes" />
+                    <ChangeList difference={difference.changes.themes} title="Themes" />
+                    <ChangeList difference={difference.changes.keywords} title="Keywords" />
+                  </div>
+                </section>
               ) : null}
               <button
                 className="button button-danger"

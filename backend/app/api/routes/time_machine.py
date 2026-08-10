@@ -7,6 +7,7 @@ from app.api.errors import api_error
 from app.db.models import DatasetSnapshot, UserRole
 from app.services.auth import AuthSessionContext
 from app.services.snapshots import (
+    DatasetSnapshotComparisonUnavailableError,
     DatasetSnapshotNotFoundError,
     DatasetSnapshotRestoreUnavailableError,
 )
@@ -19,12 +20,30 @@ class SnapshotCountsResponse(BaseModel):
     keywords: int
 
 
+class SnapshotDifferenceItemResponse(BaseModel):
+    text: str
+    count: int
+
+
+class SnapshotValueDifferenceResponse(BaseModel):
+    current_only: list[SnapshotDifferenceItemResponse]
+    checkpoint_only: list[SnapshotDifferenceItemResponse]
+
+
+class SnapshotContentDifferenceResponse(BaseModel):
+    stories: SnapshotValueDifferenceResponse
+    tropes: SnapshotValueDifferenceResponse
+    themes: SnapshotValueDifferenceResponse
+    keywords: SnapshotValueDifferenceResponse
+
+
 class SnapshotDifferenceResponse(BaseModel):
     current_dataset_version: int | None
     story_count_delta: int | None
     trope_count_delta: int | None
     theme_count_delta: int | None
     keyword_count_delta: int | None
+    changes: SnapshotContentDifferenceResponse | None
 
 
 class TimeMachineSnapshotResponse(BaseModel):
@@ -94,7 +113,11 @@ def read_time_machine_snapshot(
         snapshot = service.get_snapshot(session, snapshot_id)
     except DatasetSnapshotNotFoundError as exc:
         raise api_error(404, "snapshot_not_found", str(exc)) from exc
-    return _serialize_snapshot(snapshot, difference=service.current_difference(session, snapshot))
+    try:
+        difference = service.current_difference(session, snapshot)
+    except DatasetSnapshotComparisonUnavailableError as exc:
+        raise api_error(409, "snapshot_comparison_unavailable", str(exc)) from exc
+    return _serialize_snapshot(snapshot, difference=difference)
 
 
 @router.post("/{snapshot_id}/restore", response_model=RestoreSnapshotResponse, status_code=202)

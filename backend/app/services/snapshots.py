@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import gzip
 import hashlib
+from collections import Counter
 from collections.abc import Callable, Iterable
 from typing import Any
 
@@ -22,8 +23,15 @@ from app.db.models import (
     Theme,
     Trope,
 )
+from app.core.parsing import clean_text, normalize_text
 from app.services.audit import record_audit_event
-from app.services.csv_io import CSVImportValidationError, export_dataset_to_csv_bytes, import_csv_bytes
+from app.services.csv_io import (
+    CSVImportValidationError,
+    DatasetComparisonValues,
+    export_dataset_to_csv_bytes,
+    extract_dataset_comparison_values,
+    import_csv_bytes,
+)
 from app.services.jobs import queue_job
 from app.services.snapshot_storage import SnapshotStore, SnapshotStorageError
 
@@ -36,12 +44,72 @@ class DatasetSnapshotRestoreUnavailableError(ValueError):
     """Raised when a snapshot cannot safely be restored."""
 
 
+class DatasetSnapshotComparisonUnavailableError(ValueError):
+    """Raised when a snapshot cannot be loaded for its checkpoint preview."""
+
+
 def _snapshot_counts(session: Session, dataset_id: str) -> dict[str, int]:
     return {
         "story_count": int(session.scalar(select(func.count(Story.id)).where(Story.dataset_id == dataset_id)) or 0),
         "trope_count": int(session.scalar(select(func.count(Trope.id)).where(Trope.dataset_id == dataset_id)) or 0),
         "theme_count": int(session.scalar(select(func.count(Theme.id)).where(Theme.dataset_id == dataset_id)) or 0),
         "keyword_count": int(session.scalar(select(func.count(Keyword.id)).where(Keyword.dataset_id == dataset_id)) or 0),
+    }
+
+
+def _current_dataset_comparison_values(session: Session, dataset_id: str) -> DatasetComparisonValues:
+    stories = session.scalars(select(Story).where(Story.dataset_id == dataset_id)).all()
+    tropes = session.scalars(select(Trope).where(Trope.dataset_id == dataset_id)).all()
+    themes = session.scalars(select(Theme).where(Theme.dataset_id == dataset_id)).all()
+    keywords = session.scalars(select(Keyword).where(Keyword.dataset_id == dataset_id)).all()
+    return DatasetComparisonValues(
+        story_titles=tuple(clean_text(story.fields_json.get("Story title (Eng)", "")) for story in stories),
+        tropes=tuple(trope.text for trope in tropes),
+        themes=tuple(theme.text for theme in themes),
+        keywords=tuple(keyword.text for keyword in keywords),
+    )
+
+
+def _named_difference(
+    checkpoint_values: Iterable[str],
+    current_values: Iterable[str],
+    *,
+    unnamed_label: str = "Untitled story",
+) -> dict[str, list[dict[str, int | str]]]:
+    """Return normalized value differences while retaining the human label.
+
+    Story titles are allowed to repeat.  Keeping an occurrence count makes a
+    duplicate addition or removal visible instead of silently collapsing it.
+    """
+
+    def index(values: Iterable[str]) -> tuple[Counter[str], dict[str, str]]:
+        counts: Counter[str] = Counter()
+        labels: dict[str, str] = {}
+        for value in values:
+            text = clean_text(value)
+            marker = normalize_text(text)
+            counts[marker] += 1
+            labels.setdefault(marker, text or unnamed_label)
+        return counts, labels
+
+    checkpoint_counts, checkpoint_labels = index(checkpoint_values)
+    current_counts, current_labels = index(current_values)
+
+    def differences(
+        source: Counter[str],
+        other: Counter[str],
+        labels: dict[str, str],
+    ) -> list[dict[str, int | str]]:
+        result = [
+            {"text": labels[marker], "count": source[marker] - other.get(marker, 0)}
+            for marker in source
+            if source[marker] > other.get(marker, 0)
+        ]
+        return sorted(result, key=lambda item: (str(item["text"]).casefold(), int(item["count"])))
+
+    return {
+        "current_only": differences(current_counts, checkpoint_counts, current_labels),
+        "checkpoint_only": differences(checkpoint_counts, current_counts, checkpoint_labels),
     }
 
 
@@ -121,7 +189,7 @@ class DatasetSnapshotService:
             raise DatasetSnapshotNotFoundError("Time Machine snapshot not found.")
         return snapshot
 
-    def current_difference(self, session: Session, snapshot: DatasetSnapshot) -> dict[str, int | None]:
+    def current_difference(self, session: Session, snapshot: DatasetSnapshot) -> dict[str, Any]:
         active_dataset = session.scalar(select(Dataset).where(Dataset.status == DatasetStatus.ACTIVE))
         if active_dataset is None:
             return {
@@ -130,14 +198,23 @@ class DatasetSnapshotService:
                 "trope_count_delta": None,
                 "theme_count_delta": None,
                 "keyword_count_delta": None,
+                "changes": None,
             }
         counts = _snapshot_counts(session, active_dataset.id)
+        comparison_values = self._comparison_values_from_snapshot(snapshot)
+        current_values = _current_dataset_comparison_values(session, active_dataset.id)
         return {
             "current_dataset_version": active_dataset.version,
             "story_count_delta": counts["story_count"] - snapshot.story_count,
             "trope_count_delta": counts["trope_count"] - snapshot.trope_count,
             "theme_count_delta": counts["theme_count"] - snapshot.theme_count,
             "keyword_count_delta": counts["keyword_count"] - snapshot.keyword_count,
+            "changes": {
+                "stories": _named_difference(comparison_values.story_titles, current_values.story_titles),
+                "tropes": _named_difference(comparison_values.tropes, current_values.tropes),
+                "themes": _named_difference(comparison_values.themes, current_values.themes),
+                "keywords": _named_difference(comparison_values.keywords, current_values.keywords),
+            },
         }
 
     def request_restore(
@@ -269,6 +346,21 @@ class DatasetSnapshotService:
     def _object_key(self, snapshot: DatasetSnapshot) -> str:
         filename = f"snapshot-{snapshot.sequence:08d}-{snapshot.id}.csv.gz"
         return f"{self.bucket_prefix}/{filename}" if self.bucket_prefix else filename
+
+    def _comparison_values_from_snapshot(self, snapshot: DatasetSnapshot) -> DatasetComparisonValues:
+        if snapshot.status != DatasetSnapshotStatus.READY:
+            raise DatasetSnapshotComparisonUnavailableError("This checkpoint is not ready to inspect.")
+        try:
+            compressed_bytes = self.storage.get(snapshot.object_key)
+            if snapshot.content_sha256 and hashlib.sha256(compressed_bytes).hexdigest() != snapshot.content_sha256:
+                raise DatasetSnapshotComparisonUnavailableError("The selected checkpoint failed its integrity check.")
+            return extract_dataset_comparison_values(gzip.decompress(compressed_bytes))
+        except DatasetSnapshotComparisonUnavailableError:
+            raise
+        except (SnapshotStorageError, OSError, CSVImportValidationError) as exc:
+            raise DatasetSnapshotComparisonUnavailableError(
+                "The selected checkpoint cannot be read for comparison."
+            ) from exc
 
     def _enforce_retention(self, session: Session, *, protected_snapshot_ids: set[str]) -> None:
         # The application's sessions deliberately disable autoflush, so make
