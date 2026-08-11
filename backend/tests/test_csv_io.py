@@ -524,6 +524,38 @@ def test_full_export_round_trips_story_and_term_metadata(tmp_path) -> None:
     }
 
 
+def test_time_machine_import_uses_full_metadata_when_a_trope_has_a_legacy_delimiter(tmp_path) -> None:
+    row = {column: "" for column in CSV_COLUMNS}
+    row["Story title (Eng)"] = "Delimited trope story"
+    row[TROPE_FIELD] = "§§ sun"
+
+    with make_session(tmp_path, "delimiter-source.db") as session:
+        dataset = import_csv_bytes(session, make_csv_bytes([row]), source_filename="source.csv")
+        activate_dataset(session, dataset)
+        trope = session.scalar(select(Trope).where(Trope.dataset_id == dataset.id))
+        assert trope is not None
+        trope.text = "sun §§ moon"
+        session.commit()
+        exported = export_active_dataset_to_csv_bytes(session, include_marawa_metadata=True)
+
+    with make_session(tmp_path, "delimiter-strict-target.db") as session:
+        with pytest.raises(CSVImportValidationError, match="does not match Motifs"):
+            import_csv_bytes(session, exported, source_filename="full.csv")
+
+    with make_session(tmp_path, "delimiter-time-machine-target.db") as session:
+        imported_dataset = import_csv_bytes(
+            session,
+            exported,
+            source_filename="time-machine-snapshot.csv",
+            use_full_export_trope_metadata_on_mismatch=True,
+        )
+        imported_story = session.scalar(select(Story).where(Story.dataset_id == imported_dataset.id))
+        assert imported_story is not None
+        imported_trope_texts = [link.trope.text for link in imported_story.trope_links]
+
+    assert imported_trope_texts == ["sun §§ moon"]
+
+
 def test_import_export_round_trip_preserves_story_order_and_canonical_term_serialization(tmp_path) -> None:
     first_row = {column: "" for column in CSV_COLUMNS}
     first_row["Story title (Eng)"] = "Story A"

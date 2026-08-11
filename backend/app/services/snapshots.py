@@ -309,6 +309,7 @@ class DatasetSnapshotService:
                 session,
                 csv_bytes,
                 source_filename=f"time-machine-snapshot-{snapshot.sequence}.csv",
+                use_full_export_trope_metadata_on_mismatch=True,
             )
         except CSVImportValidationError as exc:
             raise DatasetSnapshotRestoreUnavailableError(

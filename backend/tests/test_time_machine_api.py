@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from app.core.config import get_settings
 from app.core.csv_schema import CSV_COLUMNS, KEYWORD_FIELD, THEME_FIELD, TROPE_FIELD
-from app.db import Dataset, DatasetStatus, Story, build_engine, build_session_factory
+from app.db import Dataset, DatasetStatus, Story, Trope, build_engine, build_session_factory
 from app.main import create_app
 from app.services.csv_io import CSVImportValidationError
 import app.services.snapshots as snapshot_service_module
@@ -151,6 +151,36 @@ def test_restore_job_reports_the_snapshot_validation_detail(client: TestClient, 
         "The selected snapshot cannot be read by this version of Marawa: "
         "The Marawa term catalog has an unsupported schema version."
     )
+
+
+def test_restore_uses_snapshot_metadata_when_a_trope_has_a_legacy_delimiter(client: TestClient) -> None:
+    upload_and_rebuild(client, title="Delimited trope story", trope="§§ sun", keyword="sun")
+
+    with client.app.state.session_factory() as session:
+        active_dataset = session.scalar(select(Dataset).where(Dataset.status == DatasetStatus.ACTIVE))
+        assert active_dataset is not None
+        trope = session.scalar(select(Trope).where(Trope.dataset_id == active_dataset.id))
+        assert trope is not None
+        trope.text = "sun §§ moon"
+        session.commit()
+        snapshot = client.app.state.snapshot_service.capture(session, dataset=active_dataset, reason="test")
+        session.commit()
+        snapshot_id = snapshot.id
+
+    restore = client.post(f"/api/time-machine/{snapshot_id}/restore")
+
+    assert restore.status_code == 202
+    assert client.app.state.job_runner.process_next_job() is True
+    job = client.get(f"/api/jobs/{restore.json()['job_id']}")
+    assert job.status_code == 200
+    assert job.json()["status"] == "succeeded", job.json()
+
+    with client.app.state.session_factory() as session:
+        active_dataset = session.scalar(select(Dataset).where(Dataset.status == DatasetStatus.ACTIVE))
+        assert active_dataset is not None
+        active_trope = session.scalar(select(Trope).where(Trope.dataset_id == active_dataset.id))
+        assert active_trope is not None
+        assert active_trope.text == "sun §§ moon"
 
 
 def test_restore_stages_and_promotes_snapshot_without_deleting_current_revision(client: TestClient) -> None:
