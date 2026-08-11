@@ -9,6 +9,8 @@ from app.core.config import get_settings
 from app.core.csv_schema import CSV_COLUMNS, KEYWORD_FIELD, THEME_FIELD, TROPE_FIELD
 from app.db import Dataset, DatasetStatus, Story, build_engine, build_session_factory
 from app.main import create_app
+from app.services.csv_io import CSVImportValidationError
+import app.services.snapshots as snapshot_service_module
 from tests.auth_helpers import authenticate_admin, configure_auth_env
 from tests.search_fakes import FakeEmbeddingBackend
 
@@ -128,6 +130,27 @@ def test_checkpoint_preview_lists_terms_and_story_titles_that_would_change(clien
             "checkpoint_only": [{"text": "checkpoint keyword", "count": 1}],
         },
     }
+
+
+def test_restore_job_reports_the_snapshot_validation_detail(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    upload_and_rebuild(client, title="First story", trope="§§ First trope", keyword="first")
+    snapshot = client.get("/api/time-machine").json()[0]
+
+    def reject_snapshot(*_args, **_kwargs):
+        raise CSVImportValidationError("The Marawa term catalog has an unsupported schema version.")
+
+    monkeypatch.setattr(snapshot_service_module, "import_csv_bytes", reject_snapshot)
+    restore = client.post(f"/api/time-machine/{snapshot['id']}/restore")
+
+    assert restore.status_code == 202
+    assert client.app.state.job_runner.process_next_job() is True
+    job = client.get(f"/api/jobs/{restore.json()['job_id']}")
+    assert job.status_code == 200
+    assert job.json()["status"] == "failed"
+    assert job.json()["error_message"] == (
+        "The selected snapshot cannot be read by this version of Marawa: "
+        "The Marawa term catalog has an unsupported schema version."
+    )
 
 
 def test_restore_stages_and_promotes_snapshot_without_deleting_current_revision(client: TestClient) -> None:

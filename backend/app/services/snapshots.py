@@ -312,7 +312,7 @@ class DatasetSnapshotService:
             )
         except CSVImportValidationError as exc:
             raise DatasetSnapshotRestoreUnavailableError(
-                "The selected snapshot cannot be read by this version of Marawa."
+                "The selected snapshot cannot be read by this version of Marawa: " + str(exc)
             ) from exc
 
         # ``import_csv_bytes`` commits the staged dataset. Persist the link now
