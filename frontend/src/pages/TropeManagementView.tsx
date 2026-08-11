@@ -36,6 +36,7 @@ import type {
 import { normalizeDraftText } from "../constants/csv";
 import { routeHref, useHashSearch } from "../router";
 import { useDatasetMaintenance } from "../maintenance";
+import { useStoryPin } from "../storyPinning";
 
 interface PageNotice {
   tone: "error" | "success";
@@ -101,6 +102,7 @@ export function TropeManagementView() {
   const selectedTropeParam = new URLSearchParams(hashSearch).get("selected_trope_id");
   const editingTrope = tropes.find((trope) => trope.id === editingTropeId) ?? null;
   const mutationDisabled = busy || maintenance.active;
+  const { pinnedStoryId, togglePinnedStory } = useStoryPin(stories);
 
   function resetTropeEditor() {
     setEditingTropeId(null);
@@ -842,6 +844,8 @@ export function TropeManagementView() {
                     onClick={() => {
                       window.location.hash = routeHref("/stories", { selected_story_id: story.id });
                     }}
+                    onPinToggle={() => togglePinnedStory(story)}
+                    pinned={story.id === pinnedStoryId}
                     story={story}
                   />
                 ))}

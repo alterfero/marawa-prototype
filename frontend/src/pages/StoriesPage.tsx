@@ -60,6 +60,7 @@ import type {
 import { DATE_OF_RECORDING_FIELD, LEGACY_METADATA_SECTIONS, normalizeDraftText } from "../constants/csv";
 import { routeHref, useHashSearch } from "../router";
 import { useDatasetMaintenance } from "../maintenance";
+import { useStoryPin } from "../storyPinning";
 
 interface PageNotice {
   tone: "error" | "success";
@@ -68,7 +69,6 @@ interface PageNotice {
 }
 
 const ALL_COMPLETENESS_OPTIONS: StoryCompleteness[] = ["incomplete", "pending review", "complete"];
-
 function completenessBadgeClassName(completeness: StoryCompleteness): string {
   return `story-completeness-${completeness.replace(/\s+/g, "-")}`;
 }
@@ -181,10 +181,16 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<PageNotice | null>(null);
   const selectedStoryParam = new URLSearchParams(hashSearch).get("selected_story_id");
+  const { pinnedStoryId, togglePinnedStory } = useStoryPin(stories);
 
-  const filteredStories = stories.filter(
+  const matchingStories = stories.filter(
     (story) => storyMatchesQuery(story, storyQuery) && storyMatchesFieldFilters(story, appliedFilters),
   );
+  const pinnedStory = stories.find((story) => story.id === pinnedStoryId) ?? null;
+  const filteredStories = [
+    ...(pinnedStory ? [pinnedStory] : []),
+    ...matchingStories.filter((story) => story.id !== pinnedStoryId),
+  ];
   const assignedTropeIds = new Set(detail?.tropes.map((trope) => trope.id) ?? []);
   const assignedKeywordIds = new Set(detail?.keywords.map((keyword) => keyword.id) ?? []);
   const assignedThemeIds = new Set(detail?.themes.map((theme) => theme.id) ?? []);
@@ -1201,6 +1207,8 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
                   window.location.hash = routeHref("/stories", { selected_story_id: story.id });
                 }}
                 key={story.id}
+                onPinToggle={() => togglePinnedStory(story)}
+                pinned={story.id === pinnedStoryId}
                 story={story}
               />
             ))}

@@ -514,8 +514,67 @@ p {
 }
 
 .story-browser-row {
+  position: relative;
   min-height: var(--story-browser-row-height);
-  align-content: start;
+  padding: 0;
+}
+
+.story-browser-card-select {
+  display: grid;
+  width: 100%;
+  min-height: calc(var(--story-browser-row-height) - 2px);
+  gap: 0.25rem;
+  padding: 0.9rem 3.75rem 0.9rem 1rem;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.story-browser-card-select:disabled {
+  cursor: default;
+}
+
+.story-browser-card-select:focus-visible,
+.story-pin-button:focus-visible {
+  outline: 3px solid rgba(26, 103, 109, 0.45);
+  outline-offset: -3px;
+}
+
+.story-pin-button {
+  position: absolute;
+  top: 0.7rem;
+  right: 0.7rem;
+  display: inline-flex;
+  width: 2rem;
+  height: 2rem;
+  align-items: center;
+  justify-content: center;
+  padding: 0.35rem;
+  border: 1px solid transparent;
+  border-radius: 0.6rem;
+  background: transparent;
+  color: #53737a;
+  cursor: pointer;
+}
+
+.story-pin-button:hover:not(:disabled),
+.story-pin-button-active {
+  border-color: rgba(26, 103, 109, 0.22);
+  background: rgba(226, 241, 239, 0.95);
+  color: #1a676d;
+}
+
+.story-pin-button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.story-pin-button svg {
+  width: 1.15rem;
+  height: 1.15rem;
 }
 
 .story-filter-builder {

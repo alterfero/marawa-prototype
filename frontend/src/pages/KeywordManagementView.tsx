@@ -24,6 +24,7 @@ import type {
 } from "../api/types";
 import { routeHref, useHashSearch } from "../router";
 import { useDatasetMaintenance } from "../maintenance";
+import { useStoryPin } from "../storyPinning";
 
 interface PageNotice {
   tone: "error" | "success";
@@ -66,6 +67,7 @@ export function KeywordManagementView() {
   const [notice, setNotice] = useState<PageNotice | null>(null);
   const mutationDisabled = busy || maintenance.active;
   const selectedKeywordParam = new URLSearchParams(hashSearch).get("selected_keyword_id");
+  const { pinnedStoryId, togglePinnedStory } = useStoryPin(stories);
 
   const selectedKeyword = keywords.find((keyword) => keyword.id === selectedKeywordId) ?? null;
   const canonicalKeywords = useMemo(
@@ -634,6 +636,8 @@ export function KeywordManagementView() {
                     onClick={() => {
                       window.location.hash = routeHref("/stories", { selected_story_id: story.id });
                     }}
+                    onPinToggle={() => togglePinnedStory(story)}
+                    pinned={story.id === pinnedStoryId}
                     story={story}
                   />
                 ))}

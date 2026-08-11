@@ -27,6 +27,7 @@ import type {
 } from "../api/types";
 import { routeHref, useHashSearch } from "../router";
 import { useDatasetMaintenance } from "../maintenance";
+import { useStoryPin } from "../storyPinning";
 
 
 interface PageNotice {
@@ -78,6 +79,7 @@ export function ThemeManagementView() {
   const [notice, setNotice] = useState<PageNotice | null>(null);
   const mutationDisabled = busy || maintenance.active;
   const selectedThemeParam = new URLSearchParams(hashSearch).get("selected_theme_id");
+  const { pinnedStoryId, togglePinnedStory } = useStoryPin(stories);
 
   const selectedTheme = themes.find((theme) => theme.id === selectedThemeId) ?? null;
   const canonicalThemes = useMemo(
@@ -791,6 +793,8 @@ export function ThemeManagementView() {
                     onClick={() => {
                       window.location.hash = routeHref("/stories", { selected_story_id: story.id });
                     }}
+                    onPinToggle={() => togglePinnedStory(story)}
+                    pinned={story.id === pinnedStoryId}
                     story={story}
                   />
                 ))}
