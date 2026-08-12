@@ -284,6 +284,7 @@ export function StoryFieldFilterBuilder({
   hasPendingChanges,
   clearDisabled,
   activeCount,
+  addFilterLabel = "Add filter",
 }: {
   stories: StorySummary[];
   draftFilters: StoryFieldFilter[];
@@ -299,6 +300,7 @@ export function StoryFieldFilterBuilder({
   hasPendingChanges?: boolean;
   clearDisabled?: boolean;
   activeCount?: number;
+  addFilterLabel?: string;
 }) {
   const appliedCount = activeCount ?? appliedFilters.length;
   const hasAppliedFilters = appliedCount > 0;
@@ -391,7 +393,7 @@ export function StoryFieldFilterBuilder({
 
         <div className="button-row wrap-row">
           <button className="button button-ghost" disabled={loading} onClick={onAddFilter} type="button">
-            Add filter
+            {addFilterLabel}
           </button>
           <button
             className="button"

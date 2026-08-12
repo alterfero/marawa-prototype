@@ -934,10 +934,12 @@ export function buildExplorationNetwork(payload: {
     id: string;
     label: string;
     color: string;
-    filters: Array<{ field: string; selected_values: string[] }>;
-    selected_themes?: Array<{ id: string; text: string }>;
-    selected_tropes?: Array<{ id: string; text: string }>;
-    selected_keywords?: Array<{ id: string; text: string }>;
+    filter_groups: Array<{
+      filters: Array<{ field: string; selected_values: string[] }>;
+      selected_themes?: Array<{ id: string; text: string }>;
+      selected_tropes?: Array<{ id: string; text: string }>;
+      selected_keywords?: Array<{ id: string; text: string }>;
+    }>;
   }>;
   min_similarity?: number;
   related_limit?: number;

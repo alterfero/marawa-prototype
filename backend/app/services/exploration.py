@@ -66,14 +66,35 @@ class SelectedTermFilter:
 
 
 @dataclass
-class StoryFilterSet:
-    id: str
-    label: str
-    color: str
+class StoryFilterGroup:
     filters: list[StoryFieldFilter]
     selected_themes: list[SelectedTermFilter]
     selected_tropes: list[SelectedTermFilter]
     selected_keywords: list[SelectedTermFilter]
+
+
+@dataclass
+class StoryFilterSet:
+    id: str
+    label: str
+    color: str
+    filter_groups: list[StoryFilterGroup]
+
+    @property
+    def filters(self) -> list[StoryFieldFilter]:
+        return [filter for group in self.filter_groups for filter in group.filters]
+
+    @property
+    def selected_themes(self) -> list[SelectedTermFilter]:
+        return _unique_selected_terms(group.selected_themes for group in self.filter_groups)
+
+    @property
+    def selected_tropes(self) -> list[SelectedTermFilter]:
+        return _unique_selected_terms(group.selected_tropes for group in self.filter_groups)
+
+    @property
+    def selected_keywords(self) -> list[SelectedTermFilter]:
+        return _unique_selected_terms(group.selected_keywords for group in self.filter_groups)
 
 
 class ExplorationError(ValueError):
@@ -179,13 +200,7 @@ def build_exploration_response(
 
         filter_set_results = []
         for filter_set in normalized_story_filter_sets:
-            filtered_entries = _apply_story_filters(
-                stories,
-                filter_set.filters,
-                selected_themes=filter_set.selected_themes,
-                selected_tropes=filter_set.selected_tropes,
-                selected_keywords=filter_set.selected_keywords,
-            )
+            filtered_entries = _apply_story_filter_groups(stories, filter_set.filter_groups)
             if selected_trope is None:
                 set_result = _filtered_story_map_response(
                     filtered_entries,
@@ -456,21 +471,30 @@ def _normalize_selected_term_filters(selected_terms: list[dict] | None) -> list[
 def _normalize_story_filter_sets(story_filter_sets: list[dict] | None) -> list[StoryFilterSet]:
     normalized_sets: list[StoryFilterSet] = []
     for index, item in enumerate(story_filter_sets or []):
-        filters = _normalize_story_filters((item or {}).get("filters", []))
-        selected_themes = _normalize_selected_term_filters((item or {}).get("selected_themes", []))
-        selected_tropes = _normalize_selected_term_filters((item or {}).get("selected_tropes", []))
-        selected_keywords = _normalize_selected_term_filters((item or {}).get("selected_keywords", []))
-        if not filters and not selected_themes and not selected_tropes and not selected_keywords:
+        raw_groups = (item or {}).get("filter_groups") or [item or {}]
+        filter_groups = [
+            StoryFilterGroup(
+                filters=_normalize_story_filters(group.get("filters", [])),
+                selected_themes=_normalize_selected_term_filters(group.get("selected_themes", [])),
+                selected_tropes=_normalize_selected_term_filters(group.get("selected_tropes", [])),
+                selected_keywords=_normalize_selected_term_filters(group.get("selected_keywords", [])),
+            )
+            for group in raw_groups
+            if group
+        ]
+        filter_groups = [
+            group
+            for group in filter_groups
+            if group.filters or group.selected_themes or group.selected_tropes or group.selected_keywords
+        ]
+        if not filter_groups:
             continue
         normalized_sets.append(
             StoryFilterSet(
                 id=clean_text((item or {}).get("id", "")) or f"set-{index + 1}",
                 label=clean_text((item or {}).get("label", "")) or f"Set {index + 1}",
                 color=_normalize_filter_set_color((item or {}).get("color", "")),
-                filters=filters,
-                selected_themes=selected_themes,
-                selected_tropes=selected_tropes,
-                selected_keywords=selected_keywords,
+                filter_groups=filter_groups,
             )
         )
     return normalized_sets
@@ -551,6 +575,32 @@ def _apply_story_filters(
             selected_keywords=selected_keywords,
         )
     ]
+
+
+def _apply_story_filter_groups(entries: list[StoryEntry], filter_groups: list[StoryFilterGroup]) -> list[StoryEntry]:
+    """Intersect filter groups while keeping terms within each group additive."""
+    return [
+        entry
+        for entry in entries
+        if all(
+            _entry_matches_story_filters(
+                entry,
+                group.filters,
+                selected_themes=group.selected_themes,
+                selected_tropes=group.selected_tropes,
+                selected_keywords=group.selected_keywords,
+            )
+            for group in filter_groups
+        )
+    ]
+
+
+def _unique_selected_terms(term_groups) -> list[SelectedTermFilter]:
+    terms_by_id: dict[str, SelectedTermFilter] = {}
+    for terms in term_groups:
+        for term in terms:
+            terms_by_id.setdefault(term.id, term)
+    return list(terms_by_id.values())
 
 
 def _story_counts_by_trope_id(entries: list[StoryEntry]) -> dict[str, int]:

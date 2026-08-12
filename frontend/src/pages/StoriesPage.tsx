@@ -154,6 +154,7 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
   const maintenance = useDatasetMaintenance();
   const hashSearch = useHashSearch();
   const nextFilterIdRef = useRef(1);
+  const addTropeSectionRef = useRef<HTMLElement | null>(null);
   const [stories, setStories] = useState<StorySummary[]>([]);
   const [selectedStoryId, setSelectedStoryId] = useState<string | null>(null);
   const [detail, setDetail] = useState<StoryDetail | null>(null);
@@ -720,7 +721,14 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
         title: "Trope assigned",
         body: "The existing canonical trope was added to the story.",
       },
+      keepAddTropeSectionInView,
     );
+  }
+
+  function keepAddTropeSectionInView() {
+    window.requestAnimationFrame(() => {
+      addTropeSectionRef.current?.scrollIntoView({ block: "nearest" });
+    });
   }
 
   async function handleKeepTypedTrope() {
@@ -743,6 +751,7 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
         setTropeQuery("");
         setTropeResults([]);
         setTropeSearchStatus("idle");
+        keepAddTropeSectionInView();
       },
     );
   }
@@ -1665,7 +1674,7 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
           ) : null}
 
           {canEdit ? (
-            <section className="panel">
+            <section className="panel" ref={addTropeSectionRef}>
               <div className="panel-header">
                 <h2>Add trope</h2>
               </div>

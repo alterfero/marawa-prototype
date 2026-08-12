@@ -1,7 +1,8 @@
 import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
 
 import { getErrorMessage, searchKeywords, searchThemes, searchTropes } from "../api/client";
-import type { ExplorationAppliedTermFilter, SearchItem } from "../api/types";
+import type { ExplorationAppliedTermFilter, SearchItem, StorySummary } from "../api/types";
+import { filterStoriesBySelectedSemanticTerms } from "./StoryFieldFilters";
 
 type SearchStatus = "idle" | "loading" | "ready";
 export type ExplorationSemanticTermKind = "theme" | "trope" | "keyword";
@@ -93,6 +94,7 @@ export function ExplorationFilterSetTermPicker({
   loading,
   query,
   selectedTerms,
+  availableStories,
   allowMultipleQueries = false,
   selectedTermsScrollable = false,
   showSimilarityThreshold = true,
@@ -103,6 +105,7 @@ export function ExplorationFilterSetTermPicker({
   loading: boolean;
   query: string;
   selectedTerms: ExplorationAppliedTermFilter[];
+  availableStories?: StorySummary[];
   allowMultipleQueries?: boolean;
   selectedTermsScrollable?: boolean;
   showSimilarityThreshold?: boolean;
@@ -142,9 +145,22 @@ export function ExplorationFilterSetTermPicker({
       },
     );
   }, [alsoAddAllItemsWithString, resultsMeetingThreshold, stringMatchResults]);
+  const availableResults = useMemo(
+    () =>
+      availableStories
+        ? visibleResults.filter((candidate) =>
+            filterStoriesBySelectedSemanticTerms(availableStories, {
+              themes: kind === "theme" ? [selectedTermForCandidate(candidate)] : [],
+              tropes: kind === "trope" ? [selectedTermForCandidate(candidate)] : [],
+              keywords: kind === "keyword" ? [selectedTermForCandidate(candidate)] : [],
+            }).length > 0,
+          )
+        : visibleResults,
+    [availableStories, kind, visibleResults],
+  );
   const unselectedResults = useMemo(
-    () => visibleResults.filter((candidate) => !selectedTermIds.has(candidate.id)),
-    [selectedTermIds, visibleResults],
+    () => availableResults.filter((candidate) => !selectedTermIds.has(candidate.id)),
+    [availableResults, selectedTermIds],
   );
 
   useEffect(() => {
@@ -280,9 +296,9 @@ export function ExplorationFilterSetTermPicker({
             <div className="story-filter-value-summary">
               {searchStatus === "loading"
                 ? `Searching related ${config.pluralLabel}...`
-                : `Suggested ${config.pluralLabel} (${visibleResults.length})`}
+                : `Suggested ${config.pluralLabel} (${availableResults.length})`}
             </div>
-            {visibleResults.length > 0 ? (
+            {availableResults.length > 0 ? (
               <button
                 className="button button-ghost"
                 disabled={loading || unselectedResults.length === 0}
@@ -294,9 +310,9 @@ export function ExplorationFilterSetTermPicker({
             ) : null}
           </div>
           {searchError ? <p className="notice-inline">{searchError}</p> : null}
-          {visibleResults.length > 0 ? (
+          {availableResults.length > 0 ? (
             <div className="story-filter-value-list" role="group" aria-label={`Suggested ${config.pluralLabel}`}>
-              {visibleResults.map((candidate) => {
+              {availableResults.map((candidate) => {
                 const selected = selectedTermIds.has(candidate.id);
                 return (
                   <label
@@ -321,9 +337,11 @@ export function ExplorationFilterSetTermPicker({
               })}
             </div>
           ) : null}
-          {searchStatus === "ready" && !searchError && visibleResults.length === 0 ? (
+          {searchStatus === "ready" && !searchError && availableResults.length === 0 ? (
             <p className="muted">
-              {results.length > 0
+              {visibleResults.length > 0 && availableStories
+                ? `No suggested ${config.pluralLabel} are available after the preceding filters.`
+                : results.length > 0
                 ? `No ${config.pluralLabel} meet the current similarity threshold.`
                 : `No similar ${config.pluralLabel} were returned for this query.`}
             </p>

@@ -75,6 +75,13 @@ class FilterSetSelectedTermRequest(BaseModel):
     text: str | None = None
 
 
+class StoryFilterGroupRequest(BaseModel):
+    filters: list[StoryFieldFilterRequest] = Field(default_factory=list)
+    selected_themes: list[FilterSetSelectedTermRequest] = Field(default_factory=list)
+    selected_tropes: list[FilterSetSelectedTermRequest] = Field(default_factory=list)
+    selected_keywords: list[FilterSetSelectedTermRequest] = Field(default_factory=list)
+
+
 class StoryFilterSetRequest(BaseModel):
     id: str
     label: str
@@ -83,6 +90,7 @@ class StoryFilterSetRequest(BaseModel):
     selected_themes: list[FilterSetSelectedTermRequest] = Field(default_factory=list)
     selected_tropes: list[FilterSetSelectedTermRequest] = Field(default_factory=list)
     selected_keywords: list[FilterSetSelectedTermRequest] = Field(default_factory=list)
+    filter_groups: list[StoryFilterGroupRequest] = Field(default_factory=list)
 
 
 class ExplorationNetworkRequest(BaseModel):

@@ -12,6 +12,7 @@ import {
   normalizeStoryFieldFilters,
   serializeStoryFieldFilters,
   storyFieldFiltersAreComplete,
+  storyMatchesFieldFilters,
   StoryFieldFilterBuilder,
   type StoryFieldFilter,
 } from "../components/StoryFieldFilters";
@@ -52,10 +53,8 @@ const DENSITY_RADIUS_MAX = 92;
 
 type CoordinatePair = [number, number];
 type MapRenderMode = "markers" | "density";
-type ExplorationFilterSetState = {
+type ExplorationFilterState = {
   id: number;
-  label: string;
-  color: string;
   draftFilters: StoryFieldFilter[];
   appliedFilters: StoryFieldFilter[];
   themeQuery: string;
@@ -67,6 +66,12 @@ type ExplorationFilterSetState = {
   appliedSelectedThemes: ExplorationAppliedTermFilter[];
   appliedSelectedTropes: ExplorationAppliedTropeFilter[];
   appliedSelectedKeywords: ExplorationAppliedTermFilter[];
+};
+type ExplorationFilterSetState = {
+  id: number;
+  label: string;
+  color: string;
+  filters: ExplorationFilterState[];
 };
 type FilterSetLegend = {
   id: string;
@@ -625,11 +630,9 @@ function toggleSelectedTerms(
     : [...selectedTerms, term];
 }
 
-function createExplorationFilterSet(nextId: number): ExplorationFilterSetState {
+function createExplorationFilter(nextId: number): ExplorationFilterState {
   return {
     id: nextId,
-    label: `Set ${nextId}`,
-    color: FILTER_SET_PALETTE[(nextId - 1) % FILTER_SET_PALETTE.length],
     draftFilters: [],
     appliedFilters: [],
     themeQuery: "",
@@ -644,43 +647,68 @@ function createExplorationFilterSet(nextId: number): ExplorationFilterSetState {
   };
 }
 
+function createExplorationFilterSet(nextId: number, firstFilterId: number): ExplorationFilterSetState {
+  return {
+    id: nextId,
+    label: `Set ${nextId}`,
+    color: FILTER_SET_PALETTE[(nextId - 1) % FILTER_SET_PALETTE.length],
+    filters: [createExplorationFilter(firstFilterId)],
+  };
+}
+
 function serializeExplorationFilterSets(filterSets: ExplorationFilterSetState[]): string {
   return JSON.stringify(
     filterSets.map((filterSet) => ({
       id: filterSet.id,
       label: filterSet.label,
       color: filterSet.color,
-      draftFilters: JSON.parse(serializeStoryFieldFilters(filterSet.draftFilters)),
-      appliedFilters: JSON.parse(serializeStoryFieldFilters(filterSet.appliedFilters)),
-      draftSelectedThemes: JSON.parse(serializeSelectedTermFilters(filterSet.draftSelectedThemes)),
-      draftSelectedTropes: JSON.parse(serializeSelectedTermFilters(filterSet.draftSelectedTropes)),
-      draftSelectedKeywords: JSON.parse(serializeSelectedTermFilters(filterSet.draftSelectedKeywords)),
-      appliedSelectedThemes: JSON.parse(serializeSelectedTermFilters(filterSet.appliedSelectedThemes)),
-      appliedSelectedTropes: JSON.parse(serializeSelectedTermFilters(filterSet.appliedSelectedTropes)),
-      appliedSelectedKeywords: JSON.parse(serializeSelectedTermFilters(filterSet.appliedSelectedKeywords)),
+      filters: filterSet.filters.map((filter) => ({
+        id: filter.id,
+        draftFilters: JSON.parse(serializeStoryFieldFilters(filter.draftFilters)),
+        appliedFilters: JSON.parse(serializeStoryFieldFilters(filter.appliedFilters)),
+        draftSelectedThemes: JSON.parse(serializeSelectedTermFilters(filter.draftSelectedThemes)),
+        draftSelectedTropes: JSON.parse(serializeSelectedTermFilters(filter.draftSelectedTropes)),
+        draftSelectedKeywords: JSON.parse(serializeSelectedTermFilters(filter.draftSelectedKeywords)),
+        appliedSelectedThemes: JSON.parse(serializeSelectedTermFilters(filter.appliedSelectedThemes)),
+        appliedSelectedTropes: JSON.parse(serializeSelectedTermFilters(filter.appliedSelectedTropes)),
+        appliedSelectedKeywords: JSON.parse(serializeSelectedTermFilters(filter.appliedSelectedKeywords)),
+      })),
     })),
   );
 }
 
-function filterSetHasPendingChanges(filterSet: ExplorationFilterSetState): boolean {
+function filterHasPendingChanges(filter: ExplorationFilterState): boolean {
   return (
-    serializeStoryFieldFilters(filterSet.draftFilters) !== serializeStoryFieldFilters(filterSet.appliedFilters) ||
-    serializeSelectedTermFilters(filterSet.draftSelectedThemes) !==
-      serializeSelectedTermFilters(filterSet.appliedSelectedThemes) ||
-    serializeSelectedTermFilters(filterSet.draftSelectedTropes) !==
-      serializeSelectedTermFilters(filterSet.appliedSelectedTropes) ||
-    serializeSelectedTermFilters(filterSet.draftSelectedKeywords) !==
-      serializeSelectedTermFilters(filterSet.appliedSelectedKeywords)
+    serializeStoryFieldFilters(filter.draftFilters) !== serializeStoryFieldFilters(filter.appliedFilters) ||
+    serializeSelectedTermFilters(filter.draftSelectedThemes) !== serializeSelectedTermFilters(filter.appliedSelectedThemes) ||
+    serializeSelectedTermFilters(filter.draftSelectedTropes) !== serializeSelectedTermFilters(filter.appliedSelectedTropes) ||
+    serializeSelectedTermFilters(filter.draftSelectedKeywords) !== serializeSelectedTermFilters(filter.appliedSelectedKeywords)
   );
 }
 
-function filterSetHasAppliedCriteria(filterSet: ExplorationFilterSetState): boolean {
+function filterHasAppliedCriteria(filter: ExplorationFilterState): boolean {
   return (
-    filterSet.appliedFilters.length > 0 ||
-    filterSet.appliedSelectedThemes.length > 0 ||
-    filterSet.appliedSelectedTropes.length > 0 ||
-    filterSet.appliedSelectedKeywords.length > 0
+    filter.appliedFilters.length > 0 ||
+    filter.appliedSelectedThemes.length > 0 ||
+    filter.appliedSelectedTropes.length > 0 ||
+    filter.appliedSelectedKeywords.length > 0
   );
+}
+
+function filterStoriesForExplorationFilter(stories: StorySummary[], filter: ExplorationFilterState): StorySummary[] {
+  return filterStoriesBySelectedSemanticTerms(stories, {
+    themes: filter.draftSelectedThemes,
+    tropes: filter.draftSelectedTropes,
+    keywords: filter.draftSelectedKeywords,
+  }).filter((story) => storyMatchesFieldFilters(story, filter.draftFilters));
+}
+
+function filterSetHasPendingChanges(filterSet: ExplorationFilterSetState): boolean {
+  return filterSet.filters.some(filterHasPendingChanges);
+}
+
+function filterSetHasAppliedCriteria(filterSet: ExplorationFilterSetState): boolean {
+  return filterSet.filters.some(filterHasAppliedCriteria);
 }
 
 function normalizedFilterSetLabel(filterSet: Pick<ExplorationFilterSetState, "id" | "label">): string {
@@ -694,18 +722,11 @@ function buildStoryFilterSetsPayload(filterSets: ExplorationFilterSetState[]) {
       id: `filter-set-${filterSet.id}`,
       label: normalizedFilterSetLabel(filterSet),
       color: filterSet.color,
-      filters: storyFiltersPayload(filterSet.appliedFilters),
-      selected_themes: filterSet.appliedSelectedThemes.map((theme) => ({
-        id: theme.id,
-        text: theme.text,
-      })),
-      selected_tropes: filterSet.appliedSelectedTropes.map((trope) => ({
-        id: trope.id,
-        text: trope.text,
-      })),
-      selected_keywords: filterSet.appliedSelectedKeywords.map((keyword) => ({
-        id: keyword.id,
-        text: keyword.text,
+      filter_groups: filterSet.filters.filter(filterHasAppliedCriteria).map((filter) => ({
+        filters: storyFiltersPayload(filter.appliedFilters),
+        selected_themes: filter.appliedSelectedThemes.map((theme) => ({ id: theme.id, text: theme.text })),
+        selected_tropes: filter.appliedSelectedTropes.map((trope) => ({ id: trope.id, text: trope.text })),
+        selected_keywords: filter.appliedSelectedKeywords.map((keyword) => ({ id: keyword.id, text: keyword.text })),
       })),
     }));
 }
@@ -970,13 +991,14 @@ export function ExplorationPage() {
   const { user } = useAuth();
   const hashSearch = useHashSearch();
   const nextFilterIdRef = useRef(1);
+  const nextSemanticFilterIdRef = useRef(2);
   const nextSetIdRef = useRef(2);
   const [query, setQuery] = useState("");
   const [selectedTropeId, setSelectedTropeId] = useState<string | null>(null);
   const [selectedTropePreview, setSelectedTropePreview] = useState<string | null>(null);
   const [stories, setStories] = useState<StorySummary[]>([]);
   const [storiesLoading, setStoriesLoading] = useState(false);
-  const [filterSets, setFilterSets] = useState<ExplorationFilterSetState[]>([createExplorationFilterSet(1)]);
+  const [filterSets, setFilterSets] = useState<ExplorationFilterSetState[]>([createExplorationFilterSet(1, 1)]);
   const [network, setNetwork] = useState<ExplorationNetworkResponse | null>(null);
   const [threshold, setThreshold] = useState(0.62);
   const [busy, setBusy] = useState(false);
@@ -1004,10 +1026,12 @@ export function ExplorationPage() {
       id: string;
       label: string;
       color: string;
-      filters: Array<{ field: string; selected_values: string[] }>;
-      selected_themes?: Array<{ id: string; text: string }>;
-      selected_tropes?: Array<{ id: string; text: string }>;
-      selected_keywords?: Array<{ id: string; text: string }>;
+      filter_groups: Array<{
+        filters: Array<{ field: string; selected_values: string[] }>;
+        selected_themes?: Array<{ id: string; text: string }>;
+        selected_tropes?: Array<{ id: string; text: string }>;
+        selected_keywords?: Array<{ id: string; text: string }>;
+      }>;
     }>;
     min_similarity?: number;
   }) {
@@ -1079,17 +1103,25 @@ export function ExplorationPage() {
       return;
     }
 
-    const normalizedFilterSets = filterSets.map((filterSet) => ({
-      ...filterSet,
-      draftFilters: normalizeStoryFieldFilters(
-        filterSet.draftFilters,
-        filterStoriesBySelectedSemanticTerms(stories, {
-          themes: filterSet.draftSelectedThemes,
-          tropes: filterSet.draftSelectedTropes,
-          keywords: filterSet.draftSelectedKeywords,
+    const normalizedFilterSets = filterSets.map((filterSet) => {
+      let storiesRemaining = stories;
+      return {
+        ...filterSet,
+        filters: filterSet.filters.map((filter) => {
+          const storiesMatchingSelectedTerms = filterStoriesBySelectedSemanticTerms(storiesRemaining, {
+            themes: filter.draftSelectedThemes,
+            tropes: filter.draftSelectedTropes,
+            keywords: filter.draftSelectedKeywords,
+          });
+          const normalizedFilter = {
+            ...filter,
+            draftFilters: normalizeStoryFieldFilters(filter.draftFilters, storiesMatchingSelectedTerms),
+          };
+          storiesRemaining = filterStoriesForExplorationFilter(storiesRemaining, normalizedFilter);
+          return normalizedFilter;
         }),
-      ),
-    }));
+      };
+    });
     if (serializeExplorationFilterSets(normalizedFilterSets) !== serializeExplorationFilterSets(filterSets)) {
       setFilterSets(normalizedFilterSets);
     }
@@ -1142,7 +1174,31 @@ export function ExplorationPage() {
   function addFilterSet() {
     const nextSetId = nextSetIdRef.current;
     nextSetIdRef.current += 1;
-    setFilterSets((current) => [...current, createExplorationFilterSet(nextSetId)]);
+    const nextFilterId = nextSemanticFilterIdRef.current;
+    nextSemanticFilterIdRef.current += 1;
+    setFilterSets((current) => [...current, createExplorationFilterSet(nextSetId, nextFilterId)]);
+  }
+
+  function addFilter(filterSetId: number) {
+    const nextFilterId = nextSemanticFilterIdRef.current;
+    nextSemanticFilterIdRef.current += 1;
+    setFilterSets((current) =>
+      current.map((filterSet) =>
+        filterSet.id === filterSetId
+          ? { ...filterSet, filters: [...filterSet.filters, createExplorationFilter(nextFilterId)] }
+          : filterSet,
+      ),
+    );
+  }
+
+  function removeFilter(filterSetId: number, semanticFilterId: number) {
+    setFilterSets((current) =>
+      current.map((filterSet) =>
+        filterSet.id === filterSetId
+          ? { ...filterSet, filters: filterSet.filters.filter((filter) => filter.id !== semanticFilterId) }
+          : filterSet,
+      ),
+    );
   }
 
   function removeFilterSet(filterSetId: number) {
@@ -1161,72 +1217,72 @@ export function ExplorationPage() {
     );
   }
 
-  function updateFilterSetTermQuery(filterSetId: number, kind: ExplorationSemanticTermKind, query: string) {
-    setFilterSets((current) =>
-      current.map((filterSet) =>
-        filterSet.id !== filterSetId
-          ? filterSet
-          : kind === "theme"
-            ? { ...filterSet, themeQuery: query }
-            : kind === "trope"
-              ? { ...filterSet, tropeQuery: query }
-              : { ...filterSet, keywordQuery: query },
-      ),
-    );
-  }
-
-  function toggleFilterSetSelectedTerm(
+  function updateFilterSetTermQuery(
     filterSetId: number,
+    semanticFilterId: number,
     kind: ExplorationSemanticTermKind,
-    term: ExplorationAppliedTermFilter,
+    query: string,
   ) {
     setFilterSets((current) =>
       current.map((filterSet) => {
-        if (filterSet.id !== filterSetId) {
-          return filterSet;
-        }
-        if (kind === "theme") {
-          return {
-            ...filterSet,
-            draftSelectedThemes: toggleSelectedTerms(filterSet.draftSelectedThemes, term),
-          };
-        }
-        if (kind === "trope") {
-          return {
-            ...filterSet,
-            draftSelectedTropes: toggleSelectedTerms(filterSet.draftSelectedTropes, term),
-          };
-        }
+        if (filterSet.id !== filterSetId) return filterSet;
         return {
           ...filterSet,
-          draftSelectedKeywords: toggleSelectedTerms(filterSet.draftSelectedKeywords, term),
+          filters: filterSet.filters.map((filter) =>
+            filter.id !== semanticFilterId
+              ? filter
+              : kind === "theme"
+                ? { ...filter, themeQuery: query }
+                : kind === "trope"
+                  ? { ...filter, tropeQuery: query }
+                  : { ...filter, keywordQuery: query },
+          ),
         };
       }),
     );
   }
 
-  function addDraftFilter(filterSetId: number) {
+  function toggleFilterSetSelectedTerm(
+    filterSetId: number,
+    semanticFilterId: number,
+    kind: ExplorationSemanticTermKind,
+    term: ExplorationAppliedTermFilter,
+  ) {
+    setFilterSets((current) =>
+      current.map((filterSet) => {
+        if (filterSet.id !== filterSetId) return filterSet;
+        return {
+          ...filterSet,
+          filters: filterSet.filters.map((filter) => {
+            if (filter.id !== semanticFilterId) return filter;
+            if (kind === "theme") return { ...filter, draftSelectedThemes: toggleSelectedTerms(filter.draftSelectedThemes, term) };
+            if (kind === "trope") return { ...filter, draftSelectedTropes: toggleSelectedTerms(filter.draftSelectedTropes, term) };
+            return { ...filter, draftSelectedKeywords: toggleSelectedTerms(filter.draftSelectedKeywords, term) };
+          }),
+        };
+      }),
+    );
+  }
+
+  function addDraftFilter(filterSetId: number, semanticFilterId: number) {
     const nextId = nextFilterIdRef.current;
     nextFilterIdRef.current += 1;
     setFilterSets((current) =>
       current.map((filterSet) =>
         filterSet.id === filterSetId
-          ? {
-              ...filterSet,
-              draftFilters: [...filterSet.draftFilters, createEmptyStoryFieldFilter(nextId)],
-            }
+          ? { ...filterSet, filters: filterSet.filters.map((filter) => filter.id === semanticFilterId ? { ...filter, draftFilters: [...filter.draftFilters, createEmptyStoryFieldFilter(nextId)] } : filter) }
           : filterSet,
       ),
     );
   }
 
-  function updateDraftFilterField(filterSetId: number, filterId: number, field: string) {
+  function updateDraftFilterField(filterSetId: number, semanticFilterId: number, filterId: number, field: string) {
     setFilterSets((current) =>
       current.map((filterSet) =>
         filterSet.id === filterSetId
-          ? {
-              ...filterSet,
-              draftFilters: filterSet.draftFilters.map((filter) =>
+          ? { ...filterSet, filters: filterSet.filters.map((semanticFilter) => semanticFilter.id !== semanticFilterId ? semanticFilter : {
+              ...semanticFilter,
+              draftFilters: semanticFilter.draftFilters.map((filter) =>
                 filter.id === filterId
                   ? {
                       ...filter,
@@ -1235,19 +1291,19 @@ export function ExplorationPage() {
                     }
                   : filter,
               ),
-            }
+            }) }
           : filterSet,
       ),
     );
   }
 
-  function updateDraftFilterValues(filterSetId: number, filterId: number, selectedValues: string[]) {
+  function updateDraftFilterValues(filterSetId: number, semanticFilterId: number, filterId: number, selectedValues: string[]) {
     setFilterSets((current) =>
       current.map((filterSet) =>
         filterSet.id === filterSetId
-          ? {
-              ...filterSet,
-              draftFilters: filterSet.draftFilters.map((filter) =>
+          ? { ...filterSet, filters: filterSet.filters.map((semanticFilter) => semanticFilter.id !== semanticFilterId ? semanticFilter : {
+              ...semanticFilter,
+              draftFilters: semanticFilter.draftFilters.map((filter) =>
                 filter.id === filterId
                   ? {
                       ...filter,
@@ -1255,57 +1311,52 @@ export function ExplorationPage() {
                     }
                   : filter,
               ),
-            }
+            }) }
           : filterSet,
       ),
     );
   }
 
-  function removeDraftFilter(filterSetId: number, filterId: number) {
+  function removeDraftFilter(filterSetId: number, semanticFilterId: number, filterId: number) {
     setFilterSets((current) =>
       current.map((filterSet) =>
         filterSet.id === filterSetId
-          ? {
-              ...filterSet,
-              draftFilters: filterSet.draftFilters.filter((filter) => filter.id !== filterId),
-            }
+          ? { ...filterSet, filters: filterSet.filters.map((semanticFilter) => semanticFilter.id !== semanticFilterId ? semanticFilter : { ...semanticFilter, draftFilters: semanticFilter.draftFilters.filter((filter) => filter.id !== filterId) }) }
           : filterSet,
       ),
     );
   }
 
-  function applyDraftFilters(filterSetId: number) {
+  function applyDraftFilters(filterSetId: number, semanticFilterId: number) {
     setFilterSets((current) =>
       current.map((filterSet) => {
-        if (filterSet.id !== filterSetId || !storyFieldFiltersAreComplete(filterSet.draftFilters)) {
+        if (filterSet.id !== filterSetId) {
           return filterSet;
         }
         return {
           ...filterSet,
-          appliedFilters: filterSet.draftFilters.map((filter) => ({
-            ...filter,
-            selectedValues: [...filter.selectedValues],
-          })),
-          appliedSelectedThemes: filterSet.draftSelectedThemes.map((theme) => ({
-            ...theme,
-          })),
-          appliedSelectedTropes: filterSet.draftSelectedTropes.map((trope) => ({
-            ...trope,
-          })),
-          appliedSelectedKeywords: filterSet.draftSelectedKeywords.map((keyword) => ({
-            ...keyword,
-          })),
+          filters: filterSet.filters.map((filter) =>
+            filter.id !== semanticFilterId || !storyFieldFiltersAreComplete(filter.draftFilters)
+              ? filter
+              : {
+                  ...filter,
+                  appliedFilters: filter.draftFilters.map((fieldFilter) => ({ ...fieldFilter, selectedValues: [...fieldFilter.selectedValues] })),
+                  appliedSelectedThemes: filter.draftSelectedThemes.map((theme) => ({ ...theme })),
+                  appliedSelectedTropes: filter.draftSelectedTropes.map((trope) => ({ ...trope })),
+                  appliedSelectedKeywords: filter.draftSelectedKeywords.map((keyword) => ({ ...keyword })),
+                },
+          ),
         };
       }),
     );
   }
 
-  function clearFilterSet(filterSetId: number) {
+  function clearFilterSet(filterSetId: number, semanticFilterId: number) {
     setFilterSets((current) =>
       current.map((filterSet) =>
         filterSet.id === filterSetId
-          ? {
-              ...filterSet,
+          ? { ...filterSet, filters: filterSet.filters.map((filter) => filter.id !== semanticFilterId ? filter : {
+              ...filter,
               draftFilters: [],
               appliedFilters: [],
               themeQuery: "",
@@ -1317,7 +1368,7 @@ export function ExplorationPage() {
               appliedSelectedThemes: [],
               appliedSelectedTropes: [],
               appliedSelectedKeywords: [],
-            }
+            }) }
           : filterSet,
       ),
     );
@@ -1447,15 +1498,6 @@ export function ExplorationPage() {
             <strong>Filter sets</strong>
             <div className="stack">
               {filterSets.map((filterSet) => {
-                const storiesMatchingSelectedTerms = filterStoriesBySelectedSemanticTerms(stories, {
-                  themes: filterSet.draftSelectedThemes,
-                  tropes: filterSet.draftSelectedTropes,
-                  keywords: filterSet.draftSelectedKeywords,
-                });
-                const hasDraftSemanticTerms =
-                  filterSet.draftSelectedThemes.length > 0 ||
-                  filterSet.draftSelectedTropes.length > 0 ||
-                  filterSet.draftSelectedKeywords.length > 0;
                 return (
                   <article className="panel exploration-filter-set-panel" key={filterSet.id}>
                     <div className="card-row">
@@ -1498,82 +1540,88 @@ export function ExplorationPage() {
                         Remove set
                       </button>
                     </div>
-                    <StoryFieldFilterBuilder
-                      activeCount={
-                        filterSet.appliedFilters.length +
-                        filterSet.appliedSelectedThemes.length +
-                        filterSet.appliedSelectedTropes.length +
-                        filterSet.appliedSelectedKeywords.length
-                      }
-                      appliedFilters={filterSet.appliedFilters}
-                      clearDisabled={
-                        filterSet.draftFilters.length === 0 &&
-                        filterSet.appliedFilters.length === 0 &&
-                        filterSet.draftSelectedThemes.length === 0 &&
-                        filterSet.appliedSelectedThemes.length === 0 &&
-                        filterSet.draftSelectedTropes.length === 0 &&
-                        filterSet.appliedSelectedTropes.length === 0 &&
-                        filterSet.draftSelectedKeywords.length === 0 &&
-                        filterSet.appliedSelectedKeywords.length === 0 &&
-                        !filterSet.themeQuery.trim() &&
-                        !filterSet.tropeQuery.trim() &&
-                        !filterSet.keywordQuery.trim()
-                      }
-                      draftFilters={filterSet.draftFilters}
-                      hasPendingChanges={filterSetHasPendingChanges(filterSet)}
-                      loading={storiesLoading || busy}
-                      onAddFilter={() => addDraftFilter(filterSet.id)}
-                      onApplyFilters={() => applyDraftFilters(filterSet.id)}
-                      onClearFilters={() => clearFilterSet(filterSet.id)}
-                      onRemoveFilter={(filterId) => removeDraftFilter(filterSet.id, filterId)}
-                      onUpdateFilterField={(filterId, field) => updateDraftFilterField(filterSet.id, filterId, field)}
-                      onUpdateFilterValues={(filterId, selectedValues) =>
-                        updateDraftFilterValues(filterSet.id, filterId, selectedValues)
-                      }
-                      stories={storiesMatchingSelectedTerms}
-                    >
-                      {canUseFilterSets ? (
-                        <div className="stack">
-                          <div className="exploration-semantic-filter-grid">
+                    <div className="stack">
+                      {(() => {
+                        let storiesRemaining = stories;
+                        return filterSet.filters.map((filter, index) => {
+                        const storiesBeforeFilter = storiesRemaining;
+                        const storiesMatchingSelectedTerms = filterStoriesBySelectedSemanticTerms(storiesBeforeFilter, {
+                          themes: filter.draftSelectedThemes,
+                          tropes: filter.draftSelectedTropes,
+                          keywords: filter.draftSelectedKeywords,
+                        });
+                        const storiesAfterFilter = filterStoriesForExplorationFilter(storiesBeforeFilter, filter);
+                        storiesRemaining = storiesAfterFilter;
+                        const hasDraftSemanticTerms = filter.draftSelectedThemes.length > 0 || filter.draftSelectedTropes.length > 0 || filter.draftSelectedKeywords.length > 0;
+                        return (
+                          <div className="stack" key={filter.id}>
+                            {filterSet.filters.length > 1 ? (
+                              <div className="card-row">
+                                <strong>Filter {index + 1}</strong>
+                                <button className="button button-ghost" disabled={busy || storiesLoading} onClick={() => removeFilter(filterSet.id, filter.id)} type="button">Remove filter</button>
+                              </div>
+                            ) : null}
+                            <StoryFieldFilterBuilder
+                              activeCount={filter.appliedFilters.length + filter.appliedSelectedThemes.length + filter.appliedSelectedTropes.length + filter.appliedSelectedKeywords.length}
+                              addFilterLabel="Add field filter"
+                              appliedFilters={filter.appliedFilters}
+                              clearDisabled={filter.draftFilters.length === 0 && filter.appliedFilters.length === 0 && filter.draftSelectedThemes.length === 0 && filter.appliedSelectedThemes.length === 0 && filter.draftSelectedTropes.length === 0 && filter.appliedSelectedTropes.length === 0 && filter.draftSelectedKeywords.length === 0 && filter.appliedSelectedKeywords.length === 0 && !filter.themeQuery.trim() && !filter.tropeQuery.trim() && !filter.keywordQuery.trim()}
+                              draftFilters={filter.draftFilters}
+                              hasPendingChanges={filterHasPendingChanges(filter)}
+                              loading={storiesLoading || busy}
+                              onAddFilter={() => addDraftFilter(filterSet.id, filter.id)}
+                              onApplyFilters={() => applyDraftFilters(filterSet.id, filter.id)}
+                              onClearFilters={() => clearFilterSet(filterSet.id, filter.id)}
+                              onRemoveFilter={(fieldFilterId) => removeDraftFilter(filterSet.id, filter.id, fieldFilterId)}
+                              onUpdateFilterField={(fieldFilterId, field) => updateDraftFilterField(filterSet.id, filter.id, fieldFilterId, field)}
+                              onUpdateFilterValues={(fieldFilterId, selectedValues) => updateDraftFilterValues(filterSet.id, filter.id, fieldFilterId, selectedValues)}
+                              stories={storiesMatchingSelectedTerms}
+                            >
+                              <div className="stack">
+                                <div className="exploration-semantic-filter-grid">
                             <ExplorationFilterSetTermPicker
                               allowMultipleQueries
                               kind="theme"
                               loading={storiesLoading || busy}
-                              onQueryChange={(value) => updateFilterSetTermQuery(filterSet.id, "theme", value)}
-                              onToggleTerm={(theme) => toggleFilterSetSelectedTerm(filterSet.id, "theme", theme)}
-                              query={filterSet.themeQuery}
-                              selectedTermsScrollable={filterSet.appliedSelectedThemes.length > 0}
-                              selectedTerms={filterSet.draftSelectedThemes}
+                              onQueryChange={(value) => updateFilterSetTermQuery(filterSet.id, filter.id, "theme", value)}
+                              onToggleTerm={(theme) => toggleFilterSetSelectedTerm(filterSet.id, filter.id, "theme", theme)}
+                              query={filter.themeQuery}
+                              availableStories={storiesBeforeFilter}
+                              selectedTermsScrollable={filter.appliedSelectedThemes.length > 0}
+                              selectedTerms={filter.draftSelectedThemes}
                             />
                             <ExplorationFilterSetTermPicker
                               allowMultipleQueries
                               kind="trope"
                               loading={storiesLoading || busy}
-                              onQueryChange={(value) => updateFilterSetTermQuery(filterSet.id, "trope", value)}
-                              onToggleTerm={(trope) => toggleFilterSetSelectedTerm(filterSet.id, "trope", trope)}
-                              query={filterSet.tropeQuery}
-                              selectedTermsScrollable={filterSet.appliedSelectedTropes.length > 0}
-                              selectedTerms={filterSet.draftSelectedTropes}
+                              onQueryChange={(value) => updateFilterSetTermQuery(filterSet.id, filter.id, "trope", value)}
+                              onToggleTerm={(trope) => toggleFilterSetSelectedTerm(filterSet.id, filter.id, "trope", trope)}
+                              query={filter.tropeQuery}
+                              availableStories={storiesBeforeFilter}
+                              selectedTermsScrollable={filter.appliedSelectedTropes.length > 0}
+                              selectedTerms={filter.draftSelectedTropes}
                             />
                             <ExplorationFilterSetTermPicker
                               allowMultipleQueries
                               kind="keyword"
                               loading={storiesLoading || busy}
-                              onQueryChange={(value) => updateFilterSetTermQuery(filterSet.id, "keyword", value)}
-                              onToggleTerm={(keyword) => toggleFilterSetSelectedTerm(filterSet.id, "keyword", keyword)}
-                              query={filterSet.keywordQuery}
-                              selectedTermsScrollable={filterSet.appliedSelectedKeywords.length > 0}
-                              selectedTerms={filterSet.draftSelectedKeywords}
+                              onQueryChange={(value) => updateFilterSetTermQuery(filterSet.id, filter.id, "keyword", value)}
+                              onToggleTerm={(keyword) => toggleFilterSetSelectedTerm(filterSet.id, filter.id, "keyword", keyword)}
+                              query={filter.keywordQuery}
+                              availableStories={storiesBeforeFilter}
+                              selectedTermsScrollable={filter.appliedSelectedKeywords.length > 0}
+                              selectedTerms={filter.draftSelectedKeywords}
                             />
                           </div>
-                          {hasDraftSemanticTerms && storiesMatchingSelectedTerms.length === 0 ? (
-                            <p className="muted">
-                              No stories match the selected themes, tropes, and keywords yet, so no hard filters are available for this set.
-                            </p>
-                          ) : null}
-                        </div>
-                      ) : null}
-                      </StoryFieldFilterBuilder>
+                                {hasDraftSemanticTerms && storiesMatchingSelectedTerms.length === 0 ? <p className="muted">No stories match the selected themes, tropes, and keywords yet, so no hard filters are available for this filter.</p> : null}
+                              </div>
+                            </StoryFieldFilterBuilder>
+                          </div>
+                        );
+                        });
+                      })()}
+                      <div className="button-row"><button className="button button-ghost" disabled={busy || storiesLoading} onClick={() => addFilter(filterSet.id)} type="button">Add filter</button></div>
+                    </div>
                     </article>
                   );
                 })}
