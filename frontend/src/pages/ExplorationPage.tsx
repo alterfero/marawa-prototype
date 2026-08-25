@@ -1553,6 +1553,18 @@ function ExplorationMap({
             <button
               className="button button-ghost"
               disabled={exportStatus === "preparing"}
+              onClick={() => void handleSvgExport(true)}
+              type="button"
+            >
+              {exportStatus === "preparing"
+                ? "Preparing export…"
+                : renderMode === "density"
+                  ? "SVG map + density zones + legend"
+                  : "SVG map + markers + legend"}
+            </button>
+            <button
+              className="button button-ghost"
+              disabled={exportStatus === "preparing"}
               onClick={() => void handleSvgExport(false)}
               type="button"
             >
@@ -1572,8 +1584,8 @@ function ExplorationMap({
             </button>
             <p className="map-export-help">
               {renderMode === "density"
-                ? "Exports use the current extent. Density zones are embedded at their displayed resolution; the legend remains vector."
-                : "Exports use the current extent and marker size. SVG preserves editable markers, connections, and legend; use the vector-overlay option for a fully vector figure."}
+                ? "All exports use the current extent. Density zones are embedded at their displayed resolution; the legend remains vector."
+                : "All exports use the current extent and marker size. The map SVG includes the current basemap, dots or clusters, connections, and legend; the vector-overlay option is for fully vector figures."}
             </p>
           </div>
         </details>
