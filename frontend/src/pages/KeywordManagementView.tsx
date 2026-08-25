@@ -67,7 +67,8 @@ export function KeywordManagementView() {
   const [notice, setNotice] = useState<PageNotice | null>(null);
   const mutationDisabled = busy || maintenance.active;
   const selectedKeywordParam = new URLSearchParams(hashSearch).get("selected_keyword_id");
-  const { pinnedStoryId, togglePinnedStory } = useStoryPin(stories);
+  const { pinnedStoryIds, togglePinnedStory } = useStoryPin(stories);
+  const pinnedStoryIdsSet = useMemo(() => new Set(pinnedStoryIds), [pinnedStoryIds]);
 
   const selectedKeyword = keywords.find((keyword) => keyword.id === selectedKeywordId) ?? null;
   const canonicalKeywords = useMemo(
@@ -637,7 +638,7 @@ export function KeywordManagementView() {
                       window.location.hash = routeHref("/stories", { selected_story_id: story.id });
                     }}
                     onPinToggle={() => togglePinnedStory(story)}
-                    pinned={story.id === pinnedStoryId}
+                    pinned={pinnedStoryIdsSet.has(story.id)}
                     story={story}
                   />
                 ))}

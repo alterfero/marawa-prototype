@@ -79,7 +79,8 @@ export function ThemeManagementView() {
   const [notice, setNotice] = useState<PageNotice | null>(null);
   const mutationDisabled = busy || maintenance.active;
   const selectedThemeParam = new URLSearchParams(hashSearch).get("selected_theme_id");
-  const { pinnedStoryId, togglePinnedStory } = useStoryPin(stories);
+  const { pinnedStoryIds, togglePinnedStory } = useStoryPin(stories);
+  const pinnedStoryIdsSet = useMemo(() => new Set(pinnedStoryIds), [pinnedStoryIds]);
 
   const selectedTheme = themes.find((theme) => theme.id === selectedThemeId) ?? null;
   const canonicalThemes = useMemo(
@@ -794,7 +795,7 @@ export function ThemeManagementView() {
                       window.location.hash = routeHref("/stories", { selected_story_id: story.id });
                     }}
                     onPinToggle={() => togglePinnedStory(story)}
-                    pinned={story.id === pinnedStoryId}
+                    pinned={pinnedStoryIdsSet.has(story.id)}
                     story={story}
                   />
                 ))}

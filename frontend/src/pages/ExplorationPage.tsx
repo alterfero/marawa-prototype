@@ -50,6 +50,12 @@ const RELATED_DENSITY_COLOR = "#2c7bb6";
 const DENSITY_RADIUS = 72;
 const DENSITY_RADIUS_MIN = 44;
 const DENSITY_RADIUS_MAX = 92;
+const DEFAULT_MARKER_RADIUS = 9;
+const MIN_MARKER_RADIUS = 4;
+const MAX_MARKER_RADIUS = 18;
+const RELATED_MARKER_RADIUS_OFFSET = 2;
+const BUNDLE_RADIUS_GROWTH = 0.7;
+const BUNDLE_RADIUS_MAX = 42;
 
 type CoordinatePair = [number, number];
 type MapRenderMode = "markers" | "density";
@@ -96,6 +102,62 @@ type RenderableConnection = ExplorationConnection & {
   source_coordinates: CoordinatePair;
   target_coordinates: CoordinatePair;
 };
+type MapLegendItem = {
+  color?: string;
+  label: string;
+  symbol: "dot" | "line" | "none";
+};
+type MapExportTile = {
+  height: number;
+  href: string;
+  width: number;
+  x: number;
+  y: number;
+};
+type MapExportDensityImage = {
+  height: number;
+  href: string;
+  width: number;
+  x: number;
+  y: number;
+};
+type MapExportView = {
+  centerLongitude: number;
+  pixelOrigin: L.Point;
+  size: L.Point;
+  zoom: number;
+};
+type MapLegendLayoutItem = MapLegendItem & {
+  x: number;
+  y: number;
+};
+type ProjectedExplorationMarker = {
+  marker: VisibleExplorationMarker;
+  point: L.Point;
+  radius: number;
+};
+type MarkerCluster = {
+  markers: ProjectedExplorationMarker[];
+  point: L.Point;
+  radius: number;
+};
+type DisplayedExplorationMarker =
+  | {
+      kind: "marker";
+      marker: VisibleExplorationMarker;
+      point: L.Point;
+      radius: number;
+    }
+  | {
+      color: string;
+      count: number;
+      fontSize: number;
+      kind: "bundle";
+      markers: VisibleExplorationMarker[];
+      point: L.Point;
+      radius: number;
+      textColor: string;
+    };
 
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value));
@@ -233,6 +295,28 @@ function markerPopupHtml(marker: ExplorationMarker): string {
         <strong>Matched tropes</strong>
         <div class="tag-list">${matchedTropes}</div>
       </div>
+    </div>
+  `;
+}
+
+function markerBundlePopupHtml(markers: VisibleExplorationMarker[]): string {
+  const visibleMarkers = markers.slice(0, 20);
+  const remainingLabel = markers.length > visibleMarkers.length ? `<p class="muted">+${markers.length - visibleMarkers.length} more stories</p>` : "";
+  const storyItems = visibleMarkers
+    .map(
+      (marker) =>
+        `<li><strong>${escapeHtml(marker.title)}</strong><br /><span class="muted">${escapeHtml(formatCoordinateLabel(marker))}</span></li>`,
+    )
+    .join("");
+
+  return `
+    <div class="map-popup-content popup-stack">
+      <div>
+        <strong>${markers.length} overlapping stories</strong>
+      </div>
+      <p class="muted">These markers are grouped at the current map scale. Zoom in to separate them.</p>
+      <ul class="map-bundle-popup-list">${storyItems}</ul>
+      ${remainingLabel}
     </div>
   `;
 }
@@ -389,6 +473,403 @@ function buildDensityDataSignature(groups: DensityGroup[]): string {
       })),
     })),
   );
+}
+
+function getMapLegendItems(
+  renderMode: MapRenderMode,
+  filterSetLegends?: FilterSetLegend[],
+): MapLegendItem[] {
+  if (renderMode === "density") {
+    if (filterSetLegends && filterSetLegends.length > 0) {
+      return [
+        ...filterSetLegends.map((legend) => ({ color: legend.color, label: legend.label, symbol: "dot" as const })),
+        {
+          label: "Darker zones mean more stories. Switch back to exact locations to inspect individual stories.",
+          symbol: "none" as const,
+        },
+      ];
+    }
+
+    return [
+      { color: ORIGINAL_DENSITY_COLOR, label: "Original story density", symbol: "dot" },
+      { color: RELATED_DENSITY_COLOR, label: "Related story density", symbol: "dot" },
+      {
+        label: "Darker zones mean more stories. Switch back to exact locations for markers and connections.",
+        symbol: "none",
+      },
+    ];
+  }
+
+  if (filterSetLegends && filterSetLegends.length > 0) {
+    return filterSetLegends.map((legend) => ({ color: legend.color, label: legend.label, symbol: "dot" }));
+  }
+
+  return [
+    { color: ORIGINAL_DENSITY_COLOR, label: "Original markers", symbol: "dot" },
+    { color: RELATED_DENSITY_COLOR, label: "Related markers", symbol: "dot" },
+    { color: "#5b6d72", label: "Closest connection", symbol: "line" },
+  ];
+}
+
+function getRelatedMarkerRadius(markerRadius: number): number {
+  return Math.max(MIN_MARKER_RADIUS - 1, markerRadius - RELATED_MARKER_RADIUS_OFFSET);
+}
+
+function getBundleRadius(storyCount: number, markerRadius: number): number {
+  return clamp(
+    markerRadius + Math.ceil(markerRadius * BUNDLE_RADIUS_GROWTH * Math.sqrt(storyCount)),
+    markerRadius + 5,
+    BUNDLE_RADIUS_MAX,
+  );
+}
+
+function getBundleFontSize(storyCount: number, radius: number): number {
+  const diameter = radius * 2;
+  const digitCount = String(storyCount).length;
+  const characterWidth = digitCount * 0.62 + 0.22;
+  return Math.max(10, Math.floor(Math.min(diameter * 0.78, (diameter * 0.82) / characterWidth)));
+}
+
+function getTextColorForBackground(color: string): string {
+  const [red, green, blue] = colorToRgb(color);
+  const luminance = (red * 0.2126 + green * 0.7152 + blue * 0.0722) / 255;
+  return luminance > 0.58 ? "#111111" : "#ffffff";
+}
+
+function chooseBundleColor(markers: ProjectedExplorationMarker[]): string {
+  const colors = new Map<string, { color: string; originalCount: number; totalCount: number }>();
+  markers.forEach(({ marker }) => {
+    const current = colors.get(marker.color) ?? { color: marker.color, originalCount: 0, totalCount: 0 };
+    current.totalCount += 1;
+    if (marker.kind === "original") {
+      current.originalCount += 1;
+    }
+    colors.set(marker.color, current);
+  });
+
+  return Array.from(colors.values()).sort(
+    (left, right) =>
+      right.totalCount - left.totalCount ||
+      right.originalCount - left.originalCount ||
+      left.color.localeCompare(right.color),
+  )[0]?.color ?? "#1f7177";
+}
+
+function makeMarkerCluster(markers: ProjectedExplorationMarker[], markerRadius: number): MarkerCluster {
+  const point = markers.reduce((sum, marker) => sum.add(marker.point), new L.Point(0, 0)).divideBy(markers.length);
+  return {
+    markers,
+    point,
+    radius: markers.length === 1 ? markers[0].radius : getBundleRadius(markers.length, markerRadius),
+  };
+}
+
+function clustersOverlap(left: MarkerCluster, right: MarkerCluster): boolean {
+  return left.point.distanceTo(right.point) <= left.radius + right.radius;
+}
+
+function buildDisplayedExplorationMarkers(
+  markers: VisibleExplorationMarker[],
+  markerRadius: number,
+  project: (marker: VisibleExplorationMarker) => L.Point,
+): DisplayedExplorationMarker[] {
+  const clusters = markers.map((marker) =>
+    makeMarkerCluster(
+      [
+        {
+          marker,
+          point: project(marker),
+          radius: marker.kind === "original" ? markerRadius : getRelatedMarkerRadius(markerRadius),
+        },
+      ],
+      markerRadius,
+    ),
+  );
+
+  let merged = true;
+  while (merged) {
+    merged = false;
+    for (let leftIndex = 0; leftIndex < clusters.length; leftIndex += 1) {
+      for (let rightIndex = leftIndex + 1; rightIndex < clusters.length; rightIndex += 1) {
+        if (!clustersOverlap(clusters[leftIndex], clusters[rightIndex])) {
+          continue;
+        }
+        clusters[leftIndex] = makeMarkerCluster(
+          [...clusters[leftIndex].markers, ...clusters[rightIndex].markers],
+          markerRadius,
+        );
+        clusters.splice(rightIndex, 1);
+        merged = true;
+        break;
+      }
+      if (merged) {
+        break;
+      }
+    }
+  }
+
+  return clusters.map((cluster) => {
+    if (cluster.markers.length === 1) {
+      const [{ marker, point, radius }] = cluster.markers;
+      return { kind: "marker", marker, point, radius };
+    }
+
+    const color = chooseBundleColor(cluster.markers);
+    return {
+      color,
+      count: cluster.markers.length,
+      fontSize: getBundleFontSize(cluster.markers.length, cluster.radius),
+      kind: "bundle",
+      markers: cluster.markers.map(({ marker }) => marker),
+      point: cluster.point,
+      radius: cluster.radius,
+      textColor: getTextColorForBackground(color),
+    };
+  });
+}
+
+function getVisibleMapTiles(map: L.Map): MapExportTile[] {
+  const mapBounds = map.getContainer().getBoundingClientRect();
+  const mapSize = map.getSize();
+  if (!mapBounds.width || !mapBounds.height) {
+    return [];
+  }
+
+  const scaleX = mapSize.x / mapBounds.width;
+  const scaleY = mapSize.y / mapBounds.height;
+
+  return Array.from(map.getContainer().querySelectorAll<HTMLImageElement>(".leaflet-tile-pane img"))
+    .map((tile) => {
+      const bounds = tile.getBoundingClientRect();
+      return {
+        height: bounds.height * scaleY,
+        href: tile.currentSrc || tile.src,
+        width: bounds.width * scaleX,
+        x: (bounds.left - mapBounds.left) * scaleX,
+        y: (bounds.top - mapBounds.top) * scaleY,
+      };
+    })
+    .filter(
+      (tile) =>
+        Boolean(tile.href) &&
+        tile.width > 0 &&
+        tile.height > 0 &&
+        tile.x + tile.width > 0 &&
+        tile.y + tile.height > 0 &&
+        tile.x < mapSize.x &&
+        tile.y < mapSize.y,
+    );
+}
+
+function getDensityExportImage(map: L.Map): MapExportDensityImage | null {
+  const canvas = map.getContainer().querySelector<HTMLCanvasElement>(".exploration-density-layer");
+  if (!canvas) {
+    return null;
+  }
+
+  const mapBounds = map.getContainer().getBoundingClientRect();
+  const canvasBounds = canvas.getBoundingClientRect();
+  const mapSize = map.getSize();
+  if (!mapBounds.width || !mapBounds.height || !canvasBounds.width || !canvasBounds.height) {
+    return null;
+  }
+
+  try {
+    return {
+      height: (canvasBounds.height * mapSize.y) / mapBounds.height,
+      href: canvas.toDataURL("image/png"),
+      width: (canvasBounds.width * mapSize.x) / mapBounds.width,
+      x: ((canvasBounds.left - mapBounds.left) * mapSize.x) / mapBounds.width,
+      y: ((canvasBounds.top - mapBounds.top) * mapSize.y) / mapBounds.height,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error ?? new Error("Unable to read the map tile."));
+    reader.onload = () => resolve(String(reader.result));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function embedMapTiles(tiles: MapExportTile[]): Promise<{ externalTiles: boolean; tiles: MapExportTile[] }> {
+  let externalTiles = false;
+  const embeddedTiles = await Promise.all(
+    tiles.map(async (tile) => {
+      if (tile.href.startsWith("data:")) {
+        return tile;
+      }
+
+      try {
+        const response = await fetch(tile.href, { mode: "cors" });
+        if (!response.ok) {
+          throw new Error(`Tile request failed with ${response.status}.`);
+        }
+        return { ...tile, href: await blobToDataUrl(await response.blob()) };
+      } catch {
+        externalTiles = true;
+        return tile;
+      }
+    }),
+  );
+
+  return { externalTiles, tiles: embeddedTiles };
+}
+
+function layoutMapLegend(items: MapLegendItem[], mapWidth: number, mapHeight: number): {
+  height: number;
+  items: MapLegendLayoutItem[];
+} {
+  const outerPadding = 16;
+  const itemGap = 20;
+  const rowHeight = 24;
+  const usableWidth = Math.max(1, mapWidth - outerPadding * 2);
+  let x = outerPadding;
+  let y = mapHeight + 22;
+  const positionedItems: MapLegendLayoutItem[] = [];
+
+  items.forEach((item) => {
+    const estimatedWidth = item.label.length * 7.1 + (item.symbol === "none" ? 0 : 26);
+    if (x > outerPadding && x + estimatedWidth > outerPadding + usableWidth) {
+      x = outerPadding;
+      y += rowHeight;
+    }
+    positionedItems.push({ ...item, x, y });
+    x += estimatedWidth + itemGap;
+  });
+
+  return {
+    height: Math.max(48, y - mapHeight + 18),
+    items: positionedItems,
+  };
+}
+
+function createMapExportView(map: L.Map): MapExportView {
+  return {
+    centerLongitude: map.getCenter().lng,
+    pixelOrigin: map.getPixelOrigin(),
+    size: map.getSize(),
+    zoom: map.getZoom(),
+  };
+}
+
+function mapPointToSvg(map: L.Map, coordinates: CoordinatePair, view: MapExportView): L.Point {
+  return map.project(toNearestWorldCoordinates(coordinates, view.centerLongitude), view.zoom).subtract(view.pixelOrigin);
+}
+
+function createExplorationMapSvg({
+  connections,
+  densityImage,
+  filterSetLegends,
+  includeBasemap,
+  map,
+  markerRadius,
+  markers,
+  renderMode,
+  tiles,
+  view,
+}: {
+  connections: RenderableConnection[];
+  densityImage: MapExportDensityImage | null;
+  filterSetLegends?: FilterSetLegend[];
+  includeBasemap: boolean;
+  map: L.Map;
+  markerRadius: number;
+  markers: VisibleExplorationMarker[];
+  renderMode: MapRenderMode;
+  tiles: MapExportTile[];
+  view: MapExportView;
+}): string {
+  const mapWidth = Math.max(1, Math.round(view.size.x));
+  const mapHeight = Math.max(1, Math.round(view.size.y));
+  const legend = layoutMapLegend(getMapLegendItems(renderMode, filterSetLegends), mapWidth, mapHeight);
+  const exportHeight = mapHeight + legend.height;
+  const displayedMarkers =
+    renderMode === "markers"
+      ? buildDisplayedExplorationMarkers(markers, markerRadius, (marker) => mapPointToSvg(map, marker.coordinates, view))
+      : [];
+  const markerElements =
+    renderMode === "markers"
+      ? displayedMarkers
+          .map((displayedMarker) => {
+            if (displayedMarker.kind === "bundle") {
+              return `<g><title>${displayedMarker.count} overlapping stories</title><circle cx="${displayedMarker.point.x}" cy="${displayedMarker.point.y}" r="${displayedMarker.radius}" fill="${escapeHtml(displayedMarker.color)}" stroke="${escapeHtml(displayedMarker.color)}" stroke-width="2.5" /><text fill="${displayedMarker.textColor}" font-family="Arial, Helvetica, sans-serif" font-size="${displayedMarker.fontSize}" font-weight="700" text-anchor="middle" x="${displayedMarker.point.x}" y="${displayedMarker.point.y}" dy="0.35em">${displayedMarker.count}</text></g>`;
+            }
+
+            const { marker, point, radius } = displayedMarker;
+            const strokeWidth = marker.kind === "original" ? 2.5 : 1.5;
+            const fillOpacity = marker.kind === "original" ? 0.88 : 0.62;
+            return `<circle cx="${point.x}" cy="${point.y}" r="${radius}" fill="${escapeHtml(marker.color)}" fill-opacity="${fillOpacity}" stroke="${escapeHtml(marker.color)}" stroke-width="${strokeWidth}" />`;
+          })
+          .join("")
+      : "";
+  const connectionElements =
+    renderMode === "markers"
+      ? connections
+          .map((connection) => {
+            const points = toNearestWorldConnectionCoordinates(
+              connection.source_coordinates,
+              connection.target_coordinates,
+              view.centerLongitude,
+            )
+              .map((coordinates) => mapPointToSvg(map, coordinates as CoordinatePair, view))
+              .map((point) => `${point.x},${point.y}`)
+              .join(" ");
+            return `<polyline fill="none" opacity="0.62" points="${points}" stroke="${escapeHtml(connection.color)}" stroke-width="2" />`;
+          })
+          .join("")
+      : "";
+  const tileElements = includeBasemap
+    ? tiles
+        .map(
+          (tile) =>
+            `<image height="${tile.height}" href="${escapeHtml(tile.href)}" preserveAspectRatio="none" width="${tile.width}" x="${tile.x}" y="${tile.y}" />`,
+        )
+        .join("")
+    : "";
+  const densityElement =
+    renderMode === "density" && densityImage
+      ? `<image height="${densityImage.height}" href="${escapeHtml(densityImage.href)}" preserveAspectRatio="none" width="${densityImage.width}" x="${densityImage.x}" y="${densityImage.y}" />`
+      : "";
+  const legendElements = legend.items
+    .map((item) => {
+      const symbol =
+        item.symbol === "dot"
+          ? `<circle cx="${item.x + 5}" cy="${item.y - 5}" fill="${escapeHtml(item.color ?? "#48656c")}" r="5" />`
+          : item.symbol === "line"
+            ? `<line stroke="${escapeHtml(item.color ?? "#5b6d72")}" stroke-width="2" x1="${item.x}" x2="${item.x + 18}" y1="${item.y - 5}" y2="${item.y - 5}" />`
+            : "";
+      const textX = item.x + (item.symbol === "none" ? 0 : 26);
+      return `${symbol}<text fill="#48656c" font-family="Arial, Helvetica, sans-serif" font-size="13" x="${textX}" y="${item.y}">${escapeHtml(item.label)}</text>`;
+    })
+    .join("");
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" height="${exportHeight}" role="img" viewBox="0 0 ${mapWidth} ${exportHeight}" width="${mapWidth}">
+  <title>Marawa exploration map</title>
+  <defs><clipPath id="map-clip"><rect height="${mapHeight}" rx="16" width="${mapWidth}" x="0" y="0" /></clipPath></defs>
+  <rect fill="${includeBasemap ? "#dce7e8" : "#ffffff"}" height="${mapHeight}" rx="16" width="${mapWidth}" x="0" y="0" />
+  <g clip-path="url(#map-clip)">${tileElements}${densityElement}${connectionElements}${markerElements}</g>
+  <rect fill="none" height="${mapHeight}" rx="16" stroke="#d4dee0" width="${mapWidth}" x="0.5" y="0.5" />
+  ${includeBasemap ? `<text fill="#48656c" font-family="Arial, Helvetica, sans-serif" font-size="10" text-anchor="end" x="${mapWidth - 10}" y="${mapHeight - 10}">© OpenStreetMap contributors</text>` : ""}
+  <rect fill="#fffdf9" height="${legend.height}" width="${mapWidth}" x="0" y="${mapHeight}" />
+  ${legendElements}
+</svg>`;
+}
+
+function downloadSvg(svg: string): void {
+  const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `marawa-exploration-map-${new Date().toISOString().slice(0, 10)}.svg`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 class ExplorationDensityLayer extends L.Layer {
@@ -772,11 +1253,15 @@ function ExplorationMap({
   filterSetLegends?: FilterSetLegend[];
 }) {
   const mapViewId = useId();
+  const markerSizeId = useId();
   const mapElementRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
   const overlayLayerRef = useRef<L.LayerGroup | null>(null);
   const densityLayerRef = useRef<ExplorationDensityLayer | null>(null);
   const [renderMode, setRenderMode] = useState<MapRenderMode>("markers");
+  const [markerRadius, setMarkerRadius] = useState(DEFAULT_MARKER_RADIUS);
+  const [exportStatus, setExportStatus] = useState<"idle" | "preparing">("idle");
+  const [exportNotice, setExportNotice] = useState<string | null>(null);
   const dataSignature = buildExplorationMapDataSignature(markers, connections);
   const viewport = useMemo(
     () =>
@@ -853,13 +1338,38 @@ function ExplorationMap({
         ).addTo(activeOverlayLayer);
       });
 
-      markers.forEach((marker) => {
+      const displayedMarkers = buildDisplayedExplorationMarkers(markers, markerRadius, (marker) =>
+        activeMap.latLngToContainerPoint(toNearestWorldCoordinates(marker.coordinates, mapCenterLongitude)),
+      );
+      displayedMarkers.forEach((displayedMarker) => {
+        if (displayedMarker.kind === "bundle") {
+          const diameter = displayedMarker.radius * 2;
+          const bundleIcon = L.divIcon({
+            className: "map-marker-bundle-icon",
+            html: `<span class="map-marker-bundle" style="--bundle-color: ${escapeHtml(displayedMarker.color)}; --bundle-font-size: ${displayedMarker.fontSize}px; --bundle-size: ${diameter}px; --bundle-text-color: ${displayedMarker.textColor};">${displayedMarker.count}</span>`,
+            iconAnchor: [displayedMarker.radius, displayedMarker.radius],
+            iconSize: [diameter, diameter],
+          });
+          L.marker(activeMap.containerPointToLatLng(displayedMarker.point), { icon: bundleIcon })
+            .bindTooltip(`${displayedMarker.count} overlapping stories`, {
+              direction: "top",
+              opacity: 0.92,
+              sticky: true,
+            })
+            .bindPopup(markerBundlePopupHtml(displayedMarker.markers), {
+              maxWidth: 360,
+            })
+            .addTo(activeOverlayLayer);
+          return;
+        }
+
+        const { marker, radius } = displayedMarker;
         L.circleMarker(toNearestWorldCoordinates(marker.coordinates, mapCenterLongitude), {
           color: marker.color,
           fillColor: marker.color,
           fillOpacity: marker.kind === "original" ? 0.88 : 0.62,
           weight: marker.kind === "original" ? 2.5 : 1.5,
-          radius: marker.kind === "original" ? 9 : 7,
+          radius,
         })
           .bindTooltip(escapeHtml(marker.title), {
             direction: "top",
@@ -874,10 +1384,25 @@ function ExplorationMap({
     }
 
     renderMarkerOverlay();
-    map.on("moveend", renderMarkerOverlay);
+    map.on("moveend zoomend", renderMarkerOverlay);
 
     densityLayer.setGroups(densityGroups);
     densityLayer.setVisible(renderMode === "density");
+
+    window.requestAnimationFrame(() => {
+      map.invalidateSize();
+    });
+
+    return () => {
+      map.off("moveend zoomend", renderMarkerOverlay);
+    };
+  }, [dataSignature, densitySignature, markerRadius, renderMode]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) {
+      return;
+    }
 
     if (viewport) {
       const [southWest, northEast] = viewport.bounds;
@@ -892,14 +1417,92 @@ function ExplorationMap({
       map.setView(DEFAULT_CENTER, DEFAULT_ZOOM);
     }
 
-    window.requestAnimationFrame(() => {
-      map.invalidateSize();
-    });
+  }, [dataSignature, viewport]);
 
-    return () => {
-      map.off("moveend", renderMarkerOverlay);
+  async function prepareMapExport(includeBasemap: boolean): Promise<{ externalTiles: boolean; svg: string }> {
+    const map = mapRef.current;
+    if (!map) {
+      throw new Error("The map is still loading. Please try again in a moment.");
+    }
+
+    const view = createMapExportView(map);
+    const densityImage = renderMode === "density" ? getDensityExportImage(map) : null;
+    const tileSnapshot = includeBasemap ? getVisibleMapTiles(map) : [];
+    const { externalTiles, tiles } = includeBasemap
+      ? await embedMapTiles(tileSnapshot)
+      : { externalTiles: false, tiles: [] };
+
+    return {
+      externalTiles,
+      svg: createExplorationMapSvg({
+        connections,
+        densityImage,
+        filterSetLegends,
+        includeBasemap,
+        map,
+        markerRadius,
+        markers,
+        renderMode,
+        tiles,
+        view,
+      }),
     };
-  }, [dataSignature, densitySignature, renderMode, viewport]);
+  }
+
+  async function handleSvgExport(includeBasemap: boolean): Promise<void> {
+    try {
+      setExportStatus("preparing");
+      setExportNotice(null);
+      const { externalTiles, svg } = await prepareMapExport(includeBasemap);
+      downloadSvg(svg);
+      setExportNotice(
+        externalTiles
+          ? "SVG saved. Some basemap tiles could not be embedded, so the file references their original URLs."
+          : renderMode === "density"
+            ? "SVG saved. The legend remains editable; density zones are embedded at their displayed resolution."
+            : "SVG saved. Markers, connections, and the legend remain editable vectors.",
+      );
+    } catch (caughtError) {
+      setExportNotice(caughtError instanceof Error ? caughtError.message : "The map could not be exported.");
+    } finally {
+      setExportStatus("idle");
+    }
+  }
+
+  async function handlePrintExport(): Promise<void> {
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) {
+      setExportNotice("Your browser blocked the print window. Allow pop-ups for this site, then try again.");
+      return;
+    }
+
+    printWindow.document.write("<!doctype html><title>Preparing map export</title><p>Preparing map for print…</p>");
+    printWindow.document.close();
+
+    try {
+      setExportStatus("preparing");
+      setExportNotice(null);
+      const { externalTiles, svg } = await prepareMapExport(true);
+      const svgUrl = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml;charset=utf-8" }));
+      printWindow.document.open();
+      printWindow.document.write(`<!doctype html>
+<html><head><title>Marawa exploration map</title><style>@page { size: landscape; margin: 12mm; } body { margin: 0; } img { display: block; height: auto; max-height: 100vh; max-width: 100%; width: 100%; }</style></head>
+<body><img alt="Exploration map" onload="window.focus(); window.print();" src="${svgUrl}" /></body></html>`);
+      printWindow.document.close();
+      printWindow.addEventListener("afterprint", () => URL.revokeObjectURL(svgUrl), { once: true });
+      printWindow.addEventListener("beforeunload", () => URL.revokeObjectURL(svgUrl), { once: true });
+      setExportNotice(
+        externalTiles
+          ? "The print view is ready. Some basemap tiles remain linked to their original URLs."
+          : "The print view is ready. Choose “Save as PDF” in your browser’s print dialog for a paper-ready file.",
+      );
+    } catch (caughtError) {
+      printWindow.close();
+      setExportNotice(caughtError instanceof Error ? caughtError.message : "The print export could not be prepared.");
+    } finally {
+      setExportStatus("idle");
+    }
+  }
 
   if (!markers.length && !connections.length) {
     return (
@@ -914,6 +1517,24 @@ function ExplorationMap({
   return (
     <div className="map-shell">
       <div className="map-toolbar">
+        <label className="field map-marker-size-control" htmlFor={markerSizeId}>
+          <span className="map-view-label">Marker size</span>
+          <div className="map-marker-size-row">
+            <input
+              aria-label="Marker size"
+              className="range-input"
+              id={markerSizeId}
+              max={MAX_MARKER_RADIUS}
+              min={MIN_MARKER_RADIUS}
+              onChange={(event) => setMarkerRadius(Number(event.target.value))}
+              step="1"
+              type="range"
+              value={markerRadius}
+            />
+            <output className="pill" htmlFor={markerSizeId}>{markerRadius}px radius</output>
+          </div>
+          {renderMode === "density" ? <span className="map-control-hint">Applied when showing exact locations.</span> : null}
+        </label>
         <label className="field map-view-control" htmlFor={mapViewId}>
           <span className="map-view-label">Map view</span>
           <select
@@ -926,63 +1547,48 @@ function ExplorationMap({
             <option value="density">Density zones</option>
           </select>
         </label>
+        <details className="map-export-menu">
+          <summary className="button button-ghost">Export map</summary>
+          <div className="map-export-options">
+            <button
+              className="button button-ghost"
+              disabled={exportStatus === "preparing"}
+              onClick={() => void handleSvgExport(false)}
+              type="button"
+            >
+              {exportStatus === "preparing"
+                ? "Preparing export…"
+                : renderMode === "density"
+                  ? "SVG density zones + legend"
+                  : "SVG vector overlay + legend"}
+            </button>
+            <button
+              className="button button-ghost"
+              disabled={exportStatus === "preparing"}
+              onClick={() => void handlePrintExport()}
+              type="button"
+            >
+              Print / Save as PDF
+            </button>
+            <p className="map-export-help">
+              {renderMode === "density"
+                ? "Exports use the current extent. Density zones are embedded at their displayed resolution; the legend remains vector."
+                : "Exports use the current extent and marker size. SVG preserves editable markers, connections, and legend; use the vector-overlay option for a fully vector figure."}
+            </p>
+          </div>
+        </details>
       </div>
       <div className="map-canvas" ref={mapElementRef} />
       <div className="legend-row">
-        {renderMode === "density" ? (
-          filterSetLegends && filterSetLegends.length > 0 ? (
-            <>
-              {filterSetLegends.map((legend) => (
-                <span className="legend-item" key={legend.id}>
-                  <span className="legend-dot" style={{ background: legend.color }} />
-                  {legend.label}
-                </span>
-              ))}
-              <span className="legend-item">
-                Darker zones mean more stories. Switch back to exact locations to inspect individual stories.
-              </span>
-            </>
-          ) : (
-            <>
-              <span className="legend-item">
-                <span className="legend-dot legend-dot-original" />
-                Original story density
-              </span>
-              <span className="legend-item">
-                <span className="legend-dot legend-dot-related" />
-                Related story density
-              </span>
-              <span className="legend-item">
-                Darker zones mean more stories. Switch back to exact locations for markers and connections.
-              </span>
-            </>
-          )
-        ) : filterSetLegends && filterSetLegends.length > 0 ? (
-          <>
-            {filterSetLegends.map((legend) => (
-              <span className="legend-item" key={legend.id}>
-                <span className="legend-dot" style={{ background: legend.color }} />
-                {legend.label}
-              </span>
-            ))}
-          </>
-        ) : (
-          <>
-            <span className="legend-item">
-              <span className="legend-dot legend-dot-original" />
-              Original markers
-            </span>
-            <span className="legend-item">
-              <span className="legend-dot legend-dot-related" />
-              Related markers
-            </span>
-            <span className="legend-item">
-              <span className="legend-line" />
-              Closest connection
-            </span>
-          </>
-        )}
+        {getMapLegendItems(renderMode, filterSetLegends).map((item) => (
+          <span className="legend-item" key={`${item.symbol}-${item.color ?? ""}-${item.label}`}>
+            {item.symbol === "dot" ? <span className="legend-dot" style={{ background: item.color }} /> : null}
+            {item.symbol === "line" ? <span className="legend-line" style={{ borderColor: item.color }} /> : null}
+            {item.label}
+          </span>
+        ))}
       </div>
+      {exportNotice ? <p className="map-export-notice" role="status">{exportNotice}</p> : null}
     </div>
   );
 }

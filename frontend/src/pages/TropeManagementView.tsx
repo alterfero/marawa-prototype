@@ -102,7 +102,8 @@ export function TropeManagementView() {
   const selectedTropeParam = new URLSearchParams(hashSearch).get("selected_trope_id");
   const editingTrope = tropes.find((trope) => trope.id === editingTropeId) ?? null;
   const mutationDisabled = busy || maintenance.active;
-  const { pinnedStoryId, togglePinnedStory } = useStoryPin(stories);
+  const { pinnedStoryIds, togglePinnedStory } = useStoryPin(stories);
+  const pinnedStoryIdsSet = useMemo(() => new Set(pinnedStoryIds), [pinnedStoryIds]);
 
   function resetTropeEditor() {
     setEditingTropeId(null);
@@ -845,7 +846,7 @@ export function TropeManagementView() {
                       window.location.hash = routeHref("/stories", { selected_story_id: story.id });
                     }}
                     onPinToggle={() => togglePinnedStory(story)}
-                    pinned={story.id === pinnedStoryId}
+                    pinned={pinnedStoryIdsSet.has(story.id)}
                     story={story}
                   />
                 ))}

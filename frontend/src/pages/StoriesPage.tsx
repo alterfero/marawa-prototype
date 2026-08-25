@@ -182,15 +182,15 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<PageNotice | null>(null);
   const selectedStoryParam = new URLSearchParams(hashSearch).get("selected_story_id");
-  const { pinnedStoryId, togglePinnedStory } = useStoryPin(stories);
+  const { pinnedStoryIds, togglePinnedStory } = useStoryPin(stories);
 
   const matchingStories = stories.filter(
     (story) => storyMatchesQuery(story, storyQuery) && storyMatchesFieldFilters(story, appliedFilters),
   );
-  const pinnedStory = stories.find((story) => story.id === pinnedStoryId) ?? null;
+  const pinnedStoryIdsSet = new Set(pinnedStoryIds);
   const filteredStories = [
-    ...(pinnedStory ? [pinnedStory] : []),
-    ...matchingStories.filter((story) => story.id !== pinnedStoryId),
+    ...stories.filter((story) => pinnedStoryIdsSet.has(story.id)),
+    ...matchingStories.filter((story) => !pinnedStoryIdsSet.has(story.id)),
   ];
   const assignedTropeIds = new Set(detail?.tropes.map((trope) => trope.id) ?? []);
   const assignedKeywordIds = new Set(detail?.keywords.map((keyword) => keyword.id) ?? []);
@@ -1217,7 +1217,7 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
                 }}
                 key={story.id}
                 onPinToggle={() => togglePinnedStory(story)}
-                pinned={story.id === pinnedStoryId}
+                pinned={pinnedStoryIdsSet.has(story.id)}
                 story={story}
               />
             ))}

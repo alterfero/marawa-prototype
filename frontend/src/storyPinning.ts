@@ -4,24 +4,28 @@ import type { StorySummary } from "./api/types";
 
 const PINNED_STORIES_STORAGE_KEY = "marawa.pinnedStoryIdsByDataset";
 
-function getPinnedStoryId(datasetId: string | undefined): string | null {
+function normalizePinnedStoryIds(value: unknown): string[] {
+  const pinnedStoryIds = typeof value === "string" ? [value] : Array.isArray(value) ? value : [];
+  return [...new Set(pinnedStoryIds.filter((storyId): storyId is string => typeof storyId === "string" && Boolean(storyId)))];
+}
+
+function getPinnedStoryIds(datasetId: string | undefined): string[] {
   if (!datasetId) {
-    return null;
+    return [];
   }
 
   try {
     const storedValue: unknown = JSON.parse(window.localStorage.getItem(PINNED_STORIES_STORAGE_KEY) || "{}");
     if (!storedValue || typeof storedValue !== "object" || Array.isArray(storedValue)) {
-      return null;
+      return [];
     }
-    const pinnedStoryId = (storedValue as Record<string, unknown>)[datasetId];
-    return typeof pinnedStoryId === "string" && pinnedStoryId ? pinnedStoryId : null;
+    return normalizePinnedStoryIds((storedValue as Record<string, unknown>)[datasetId]);
   } catch {
-    return null;
+    return [];
   }
 }
 
-function savePinnedStoryId(datasetId: string, storyId: string | null): void {
+function savePinnedStoryIds(datasetId: string, storyIds: string[]): void {
   try {
     const storedValue: unknown = JSON.parse(window.localStorage.getItem(PINNED_STORIES_STORAGE_KEY) || "{}");
     const pinnedStoryIds =
@@ -29,8 +33,9 @@ function savePinnedStoryId(datasetId: string, storyId: string | null): void {
         ? { ...(storedValue as Record<string, unknown>) }
         : {};
 
-    if (storyId) {
-      pinnedStoryIds[datasetId] = storyId;
+    const normalizedStoryIds = normalizePinnedStoryIds(storyIds);
+    if (normalizedStoryIds.length > 0) {
+      pinnedStoryIds[datasetId] = normalizedStoryIds;
     } else {
       delete pinnedStoryIds[datasetId];
     }
@@ -42,23 +47,23 @@ function savePinnedStoryId(datasetId: string, storyId: string | null): void {
 
 export function useStoryPin(stories: StorySummary[]) {
   const datasetId = stories[0]?.dataset_id;
-  const [pinnedStoryId, setPinnedStoryId] = useState<string | null>(null);
+  const [pinnedStoryIds, setPinnedStoryIds] = useState<string[]>([]);
 
   useEffect(() => {
-    const storedPinnedStoryId = getPinnedStoryId(datasetId);
-    setPinnedStoryId(
-      storedPinnedStoryId && stories.some((story) => story.id === storedPinnedStoryId) ? storedPinnedStoryId : null,
-    );
+    const availableStoryIds = new Set(stories.map((story) => story.id));
+    setPinnedStoryIds(getPinnedStoryIds(datasetId).filter((storyId) => availableStoryIds.has(storyId)));
   }, [datasetId, stories]);
 
   const togglePinnedStory = useCallback(
     (story: StorySummary) => {
-      const nextPinnedStoryId = pinnedStoryId === story.id ? null : story.id;
-      setPinnedStoryId(nextPinnedStoryId);
-      savePinnedStoryId(story.dataset_id, nextPinnedStoryId);
+      const nextPinnedStoryIds = pinnedStoryIds.includes(story.id)
+        ? pinnedStoryIds.filter((storyId) => storyId !== story.id)
+        : [...pinnedStoryIds, story.id];
+      setPinnedStoryIds(nextPinnedStoryIds);
+      savePinnedStoryIds(story.dataset_id, nextPinnedStoryIds);
     },
-    [pinnedStoryId],
+    [pinnedStoryIds],
   );
 
-  return { pinnedStoryId, togglePinnedStory };
+  return { pinnedStoryIds, togglePinnedStory };
 }
