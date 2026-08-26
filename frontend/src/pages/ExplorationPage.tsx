@@ -123,6 +123,7 @@ type MapExportDensityImage = {
 };
 type MapExportView = {
   centerLongitude: number;
+  mapPanePosition: L.Point;
   pixelOrigin: L.Point;
   size: L.Point;
   zoom: number;
@@ -749,8 +750,10 @@ function layoutMapLegend(items: MapLegendItem[], mapWidth: number, mapHeight: nu
 }
 
 function createMapExportView(map: L.Map): MapExportView {
+  const mapPane = map.getPane("mapPane");
   return {
     centerLongitude: map.getCenter().lng,
+    mapPanePosition: mapPane ? L.DomUtil.getPosition(mapPane) : new L.Point(0, 0),
     pixelOrigin: map.getPixelOrigin(),
     size: map.getSize(),
     zoom: map.getZoom(),
@@ -758,7 +761,10 @@ function createMapExportView(map: L.Map): MapExportView {
 }
 
 function mapPointToSvg(map: L.Map, coordinates: CoordinatePair, view: MapExportView): L.Point {
-  return map.project(toNearestWorldCoordinates(coordinates, view.centerLongitude), view.zoom).subtract(view.pixelOrigin);
+  return map
+    .project(toNearestWorldCoordinates(coordinates, view.centerLongitude), view.zoom)
+    .subtract(view.pixelOrigin)
+    .subtract(view.mapPanePosition);
 }
 
 function createExplorationMapSvg({
