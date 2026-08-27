@@ -1288,9 +1288,14 @@ function ExplorationMap({
     const map = L.map(mapElementRef.current, {
       center: DEFAULT_CENTER,
       zoom: DEFAULT_ZOOM,
+      zoomControl: false,
+      zoomDelta: 0.25,
+      zoomSnap: 0.25,
       scrollWheelZoom: true,
       worldCopyJump: true,
     });
+
+    L.control.zoom({ position: "topleft" }).addTo(map);
 
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
