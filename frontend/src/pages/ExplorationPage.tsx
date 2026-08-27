@@ -773,6 +773,7 @@ function createExplorationMapSvg({
   filterSetLegends,
   includeBasemap,
   map,
+  markerOpacity,
   markerRadius,
   markers,
   renderMode,
@@ -784,6 +785,7 @@ function createExplorationMapSvg({
   filterSetLegends?: FilterSetLegend[];
   includeBasemap: boolean;
   map: L.Map;
+  markerOpacity: number;
   markerRadius: number;
   markers: VisibleExplorationMarker[];
   renderMode: MapRenderMode;
@@ -803,13 +805,13 @@ function createExplorationMapSvg({
       ? displayedMarkers
           .map((displayedMarker) => {
             if (displayedMarker.kind === "bundle") {
-              return `<g><title>${displayedMarker.count} overlapping stories</title><circle cx="${displayedMarker.point.x}" cy="${displayedMarker.point.y}" r="${displayedMarker.radius}" fill="${escapeHtml(displayedMarker.color)}" stroke="${escapeHtml(displayedMarker.color)}" stroke-width="2.5" /><text fill="${displayedMarker.textColor}" font-family="Arial, Helvetica, sans-serif" font-size="${displayedMarker.fontSize}" font-weight="700" text-anchor="middle" x="${displayedMarker.point.x}" y="${displayedMarker.point.y}" dy="0.35em">${displayedMarker.count}</text></g>`;
+              return `<g opacity="${markerOpacity}"><title>${displayedMarker.count} overlapping stories</title><circle cx="${displayedMarker.point.x}" cy="${displayedMarker.point.y}" r="${displayedMarker.radius}" fill="${escapeHtml(displayedMarker.color)}" stroke="${escapeHtml(displayedMarker.color)}" stroke-width="2.5" /><text fill="${displayedMarker.textColor}" font-family="Arial, Helvetica, sans-serif" font-size="${displayedMarker.fontSize}" font-weight="700" text-anchor="middle" x="${displayedMarker.point.x}" y="${displayedMarker.point.y}" dy="0.35em">${displayedMarker.count}</text></g>`;
             }
 
             const { marker, point, radius } = displayedMarker;
             const strokeWidth = marker.kind === "original" ? 2.5 : 1.5;
             const fillOpacity = marker.kind === "original" ? 0.88 : 0.62;
-            return `<circle cx="${point.x}" cy="${point.y}" r="${radius}" fill="${escapeHtml(marker.color)}" fill-opacity="${fillOpacity}" stroke="${escapeHtml(marker.color)}" stroke-width="${strokeWidth}" />`;
+            return `<circle cx="${point.x}" cy="${point.y}" r="${radius}" fill="${escapeHtml(marker.color)}" fill-opacity="${fillOpacity * markerOpacity}" stroke="${escapeHtml(marker.color)}" stroke-opacity="${markerOpacity}" stroke-width="${strokeWidth}" />`;
           })
           .join("")
       : "";
@@ -1260,12 +1262,14 @@ function ExplorationMap({
 }) {
   const mapViewId = useId();
   const markerSizeId = useId();
+  const markerOpacityId = useId();
   const mapElementRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
   const overlayLayerRef = useRef<L.LayerGroup | null>(null);
   const densityLayerRef = useRef<ExplorationDensityLayer | null>(null);
   const [renderMode, setRenderMode] = useState<MapRenderMode>("markers");
   const [markerRadius, setMarkerRadius] = useState(DEFAULT_MARKER_RADIUS);
+  const [markerOpacity, setMarkerOpacity] = useState(1);
   const [exportStatus, setExportStatus] = useState<"idle" | "preparing">("idle");
   const [exportNotice, setExportNotice] = useState<string | null>(null);
   const dataSignature = buildExplorationMapDataSignature(markers, connections);
@@ -1357,7 +1361,7 @@ function ExplorationMap({
           const diameter = displayedMarker.radius * 2;
           const bundleIcon = L.divIcon({
             className: "map-marker-bundle-icon",
-            html: `<span class="map-marker-bundle" style="--bundle-color: ${escapeHtml(displayedMarker.color)}; --bundle-font-size: ${displayedMarker.fontSize}px; --bundle-size: ${diameter}px; --bundle-text-color: ${displayedMarker.textColor};">${displayedMarker.count}</span>`,
+            html: `<span class="map-marker-bundle" style="--bundle-color: ${escapeHtml(displayedMarker.color)}; --bundle-font-size: ${displayedMarker.fontSize}px; --bundle-opacity: ${markerOpacity}; --bundle-size: ${diameter}px; --bundle-text-color: ${displayedMarker.textColor};">${displayedMarker.count}</span>`,
             iconAnchor: [displayedMarker.radius, displayedMarker.radius],
             iconSize: [diameter, diameter],
           });
@@ -1378,7 +1382,8 @@ function ExplorationMap({
         L.circleMarker(toNearestWorldCoordinates(marker.coordinates, mapCenterLongitude), {
           color: marker.color,
           fillColor: marker.color,
-          fillOpacity: marker.kind === "original" ? 0.88 : 0.62,
+          fillOpacity: (marker.kind === "original" ? 0.88 : 0.62) * markerOpacity,
+          opacity: markerOpacity,
           weight: marker.kind === "original" ? 2.5 : 1.5,
           radius,
         })
@@ -1407,7 +1412,7 @@ function ExplorationMap({
     return () => {
       map.off("moveend zoomend", renderMarkerOverlay);
     };
-  }, [dataSignature, densitySignature, markerRadius, renderMode]);
+  }, [dataSignature, densitySignature, markerOpacity, markerRadius, renderMode]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -1451,6 +1456,7 @@ function ExplorationMap({
         filterSetLegends,
         includeBasemap,
         map,
+        markerOpacity,
         markerRadius,
         markers,
         renderMode,
@@ -1543,6 +1549,24 @@ function ExplorationMap({
               value={markerRadius}
             />
             <output className="pill" htmlFor={markerSizeId}>{markerRadius}px radius</output>
+          </div>
+          {renderMode === "density" ? <span className="map-control-hint">Applied when showing exact locations.</span> : null}
+        </label>
+        <label className="field map-marker-opacity-control" htmlFor={markerOpacityId}>
+          <span className="map-view-label">Marker opacity</span>
+          <div className="map-marker-size-row">
+            <input
+              aria-label="Marker opacity"
+              className="range-input"
+              id={markerOpacityId}
+              max="1"
+              min="0.1"
+              onChange={(event) => setMarkerOpacity(Number(event.target.value))}
+              step="0.05"
+              type="range"
+              value={markerOpacity}
+            />
+            <output className="pill" htmlFor={markerOpacityId}>{Math.round(markerOpacity * 100)}%</output>
           </div>
           {renderMode === "density" ? <span className="map-control-hint">Applied when showing exact locations.</span> : null}
         </label>

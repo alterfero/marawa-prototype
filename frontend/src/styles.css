@@ -1339,6 +1339,10 @@ p {
   width: min(100%, 17rem);
 }
 
+.map-marker-opacity-control {
+  width: min(100%, 17rem);
+}
+
 .map-marker-size-row {
   display: flex;
   gap: 0.65rem;
@@ -1434,6 +1438,7 @@ p {
   }
 
   .map-view-control,
+  .map-marker-opacity-control,
   .map-marker-size-control,
   .map-export-menu {
     width: 100%;
@@ -1471,6 +1476,7 @@ p {
   border-radius: 999px;
   background: var(--bundle-color);
   color: var(--bundle-text-color);
+  opacity: var(--bundle-opacity, 1);
   font-size: var(--bundle-font-size);
   font-weight: 700;
   line-height: 1;
