@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -25,8 +26,10 @@ from app.db.models import (
     TermSimilarityCache,
     Theme,
     Trope,
+    UserRole,
 )
 from app.services.snapshots import DatasetSnapshotService
+from app.services.territory_access import can_access_story_fields
 
 
 NEAR_DUPLICATE_THRESHOLD = 0.9
@@ -155,8 +158,15 @@ class SearchService:
         *,
         limit: int = 10,
         include_string_matches: bool = False,
+        actor_role: UserRole | None = None,
+        actor_territories: Iterable[object] | None = None,
     ) -> dict[str, Any]:
-        active_terms = self._load_active_terms(session, term_kind)
+        active_terms = self._load_active_terms(
+            session,
+            term_kind,
+            actor_role=actor_role,
+            actor_territories=actor_territories,
+        )
         if not active_terms:
             return {
                 "items": [],
@@ -782,11 +792,83 @@ class SearchService:
             for row in rows
         ]
 
-    def _load_active_terms(self, session: Session, term_kind: TermKind) -> list[SearchTermRecord]:
+    def _load_active_terms(
+        self,
+        session: Session,
+        term_kind: TermKind,
+        *,
+        actor_role: UserRole | None = None,
+        actor_territories: Iterable[object] | None = None,
+    ) -> list[SearchTermRecord]:
         active_dataset = session.scalar(select(Dataset).where(Dataset.status == DatasetStatus.ACTIVE))
         if active_dataset is None:
             return []
-        return self._load_dataset_terms(session, active_dataset.id, term_kind)
+        terms = self._load_dataset_terms(session, active_dataset.id, term_kind)
+        if actor_role != UserRole.CONTRIBUTOR:
+            return terms
+
+        visible_counts_by_term_id = self._visible_story_counts_by_term_id(
+            session,
+            dataset_id=active_dataset.id,
+            term_kind=term_kind,
+            actor_role=actor_role,
+            actor_territories=actor_territories,
+        )
+        return [
+            SearchTermRecord(
+                id=term.id,
+                text=term.text,
+                normalized_text=term.normalized_text,
+                story_count=visible_counts_by_term_id[term.id],
+            )
+            for term in terms
+            if visible_counts_by_term_id.get(term.id, 0) > 0
+        ]
+
+    def _visible_story_counts_by_term_id(
+        self,
+        session: Session,
+        *,
+        dataset_id: str,
+        term_kind: TermKind,
+        actor_role: UserRole | None,
+        actor_territories: Iterable[object] | None,
+    ) -> dict[str, int]:
+        if term_kind == TermKind.TROPE:
+            term_id_column = StoryTrope.trope_id.label("term_id")
+            statement = (
+                select(term_id_column, Story.fields_json.label("fields_json"))
+                .select_from(StoryTrope)
+                .join(Story, Story.id == StoryTrope.story_id)
+                .where(Story.dataset_id == dataset_id)
+            )
+        elif term_kind == TermKind.THEME:
+            term_id_column = StoryTheme.theme_id.label("term_id")
+            statement = (
+                select(term_id_column, Story.fields_json.label("fields_json"))
+                .select_from(StoryTheme)
+                .join(Story, Story.id == StoryTheme.story_id)
+                .where(Story.dataset_id == dataset_id)
+            )
+        else:
+            term_id_column = StoryKeyword.keyword_id.label("term_id")
+            statement = (
+                select(term_id_column, Story.fields_json.label("fields_json"))
+                .select_from(StoryKeyword)
+                .join(Story, Story.id == StoryKeyword.story_id)
+                .where(Story.dataset_id == dataset_id)
+            )
+
+        visible_counts_by_term_id: dict[str, int] = {}
+        for row in session.execute(statement).all():
+            if not can_access_story_fields(
+                row.fields_json,
+                actor_role=actor_role,
+                actor_territories=actor_territories,
+            ):
+                continue
+            visible_counts_by_term_id[row.term_id] = visible_counts_by_term_id.get(row.term_id, 0) + 1
+        return visible_counts_by_term_id
 
     def _next_artifact_version(self, session: Session, dataset_id: str) -> int:
         latest_trope_version = session.scalar(

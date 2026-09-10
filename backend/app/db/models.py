@@ -22,6 +22,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from app.core.parsing import clean_text, normalize_text
+from app.core.territories import normalize_territories
 from app.db.base import Base
 
 
@@ -179,6 +180,8 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     deactivated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    territories: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
     sessions: Mapped[list["UserSession"]] = relationship(
         back_populates="user",
@@ -202,6 +205,13 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     @validates("display_name")
     def _normalize_display_name(self, _: str, value: str) -> str:
         return clean_text(value)
+
+    @validates("territories")
+    def _normalize_territories(self, _: str, value: object) -> list[str]:
+        try:
+            return normalize_territories(value)
+        except TypeError:
+            return []
 
 
 class UserSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):

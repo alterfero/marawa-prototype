@@ -54,6 +54,7 @@ def test_bootstrap_admin_login_me_and_logout(monkeypatch, tmp_path) -> None:
         body = login_response.json()
         assert body["user"]["email"] == "admin@example.com"
         assert body["user"]["role"] == "admin"
+        assert body["user"]["version"] == 1
         assert body["csrf_token"]
         set_cookie_header = ",".join(login_response.headers.get_list("set-cookie"))
         assert "marawa_session=" in set_cookie_header
@@ -62,6 +63,7 @@ def test_bootstrap_admin_login_me_and_logout(monkeypatch, tmp_path) -> None:
         me_response = client.get("/api/auth/me")
         assert me_response.status_code == 200
         assert me_response.json()["email"] == "admin@example.com"
+        assert me_response.json()["version"] == 1
 
         logout_without_csrf = client.post("/api/auth/logout")
         assert logout_without_csrf.status_code == 403

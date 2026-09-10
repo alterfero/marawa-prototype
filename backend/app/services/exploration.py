@@ -2,15 +2,17 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 import unicodedata
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.coordinates import parse_space_coord
 from app.core.csv_schema import THEME_FIELD
 from app.core.parsing import clean_text, split_themes
+from app.core.territories import normalize_territories, territory_key
 from app.db.models import (
     Dataset,
     DatasetStatus,
@@ -20,6 +22,7 @@ from app.db.models import (
     StoryTrope,
     TermKind,
     Trope,
+    UserRole,
 )
 
 
@@ -160,6 +163,8 @@ def build_exploration_response(
     min_similarity: float = 0.62,
     related_limit: int = 60,
     candidate_limit: int = 12,
+    actor_role: UserRole | None = None,
+    actor_territories: Iterable[object] | None = None,
 ) -> dict:
     normalized_story_filters = _normalize_story_filters(story_filters)
     normalized_story_filter_sets = _normalize_story_filter_sets(story_filter_sets)
@@ -168,7 +173,14 @@ def build_exploration_response(
             raise ExplorationValidationError(
                 "Provide selected_trope_id, a query, story_filters, or story_filter_sets to build exploration."
             )
-        candidates = search_service.search_terms(session, TermKind.TROPE, clean_text(query), limit=candidate_limit)
+        candidates = search_service.search_terms(
+            session,
+            TermKind.TROPE,
+            clean_text(query),
+            limit=candidate_limit,
+            actor_role=actor_role,
+            actor_territories=actor_territories,
+        )
         return {
             "selected_trope": None,
             "selected_trope_candidates": [_serialize_candidate(item) for item in candidates["items"]],
@@ -186,7 +198,12 @@ def build_exploration_response(
     if active_dataset is None:
         raise ExplorationNotFoundError("No active dataset is available for exploration.")
 
-    stories = _load_active_story_entries(session, active_dataset.id)
+    territory_scope = _territory_scope_for_actor(actor_role, actor_territories)
+    stories = _load_active_story_entries(
+        session,
+        active_dataset.id,
+        territory_scope=territory_scope,
+    )
     active_story_counts_by_trope_id = _story_counts_by_trope_id(stories)
     active_story_counts_by_theme_id = _story_counts_by_term_id(stories, "themes")
     active_story_counts_by_keyword_id = _story_counts_by_term_id(stories, "keywords")
@@ -194,7 +211,12 @@ def build_exploration_response(
     if normalized_story_filter_sets:
         selected_trope = None
         if selected_trope_id is not None:
-            selected_trope = _get_active_trope(session, active_dataset.id, selected_trope_id)
+            selected_trope = _get_active_trope(
+                session,
+                active_dataset.id,
+                selected_trope_id,
+                visible_trope_ids=set(active_story_counts_by_trope_id) if territory_scope is not None else None,
+            )
             if selected_trope is None:
                 raise ExplorationNotFoundError("Selected trope not found in the active dataset.")
 
@@ -224,6 +246,8 @@ def build_exploration_response(
                     connection_color=filter_set.color,
                     filter_set_id=filter_set.id,
                     filter_set_label=filter_set.label,
+                    actor_role=actor_role,
+                    actor_territories=actor_territories,
                 )
 
             filter_set_results.append(
@@ -261,7 +285,14 @@ def build_exploration_response(
             )
 
         return _aggregate_filter_set_results(
-            selected_trope=_selected_trope_payload(selected_trope, active_dataset.id, session) if selected_trope else None,
+            selected_trope=(
+                _selected_trope_payload(
+                    selected_trope,
+                    active_story_counts_by_trope_id.get(selected_trope.id, 0),
+                )
+                if selected_trope
+                else None
+            ),
             filter_set_results=filter_set_results,
         )
 
@@ -273,7 +304,12 @@ def build_exploration_response(
             min_similarity=min_similarity,
         )
 
-    selected_trope = _get_active_trope(session, active_dataset.id, selected_trope_id)
+    selected_trope = _get_active_trope(
+        session,
+        active_dataset.id,
+        selected_trope_id,
+        visible_trope_ids=set(active_story_counts_by_trope_id) if territory_scope is not None else None,
+    )
     if selected_trope is None:
         raise ExplorationNotFoundError("Selected trope not found in the active dataset.")
 
@@ -285,6 +321,8 @@ def build_exploration_response(
         filtered_stories,
         min_similarity=min_similarity,
         related_limit=related_limit,
+        actor_role=actor_role,
+        actor_territories=actor_territories,
     )
 
 
@@ -292,8 +330,14 @@ def _get_active_dataset(session: Session) -> Dataset | None:
     return session.scalar(select(Dataset).where(Dataset.status == DatasetStatus.ACTIVE))
 
 
-def _get_active_trope(session: Session, dataset_id: str, trope_id: str) -> Trope | None:
-    return session.scalar(
+def _get_active_trope(
+    session: Session,
+    dataset_id: str,
+    trope_id: str,
+    *,
+    visible_trope_ids: set[str] | None = None,
+) -> Trope | None:
+    trope = session.scalar(
         select(Trope)
         .join(StoryTrope, StoryTrope.trope_id == Trope.id)
         .join(Story, Story.id == StoryTrope.story_id)
@@ -303,21 +347,12 @@ def _get_active_trope(session: Session, dataset_id: str, trope_id: str) -> Trope
         )
         .group_by(Trope.id)
     )
+    if trope is None or (visible_trope_ids is not None and trope.id not in visible_trope_ids):
+        return None
+    return trope
 
 
-def _selected_trope_payload(trope: Trope, dataset_id: str, session: Session) -> dict:
-    story_count = (
-        session.scalar(
-            select(func.count(func.distinct(Story.id)))
-            .select_from(StoryTrope)
-            .join(Story, Story.id == StoryTrope.story_id)
-            .where(
-                Story.dataset_id == dataset_id,
-                StoryTrope.trope_id == trope.id,
-            )
-        )
-        or 0
-    )
+def _selected_trope_payload(trope: Trope, story_count: int) -> dict:
     return {
         "id": trope.id,
         "text": trope.text,
@@ -334,7 +369,12 @@ def _serialize_candidate(item: dict) -> dict:
     }
 
 
-def _load_active_story_entries(session: Session, dataset_id: str) -> list[StoryEntry]:
+def _load_active_story_entries(
+    session: Session,
+    dataset_id: str,
+    *,
+    territory_scope: set[str] | None = None,
+) -> list[StoryEntry]:
     stories = session.scalars(
         select(Story)
         .where(Story.dataset_id == dataset_id)
@@ -343,6 +383,12 @@ def _load_active_story_entries(session: Session, dataset_id: str) -> list[StoryE
         .options(selectinload(Story.keyword_links).selectinload(StoryKeyword.keyword))
         .order_by(Story.source_row_number, Story.created_at, Story.id)
     ).all()
+    if territory_scope is not None:
+        stories = [
+            story
+            for story in stories
+            if territory_key((story.fields_json or {}).get("territory", "")) in territory_scope
+        ]
     return [
         StoryEntry(
             story_id=story.id,
@@ -400,6 +446,20 @@ def _load_active_story_entries(session: Session, dataset_id: str) -> list[StoryE
         )
         for story in stories
     ]
+
+
+def _territory_scope_for_actor(
+    actor_role: UserRole | None,
+    actor_territories: Iterable[object] | None,
+) -> set[str] | None:
+    """Return a contributor's allowed territory keys, or ``None`` when unrestricted."""
+    if actor_role != UserRole.CONTRIBUTOR:
+        return None
+    return {
+        key
+        for key in (territory_key(territory) for territory in normalize_territories(actor_territories))
+        if key
+    }
 
 
 def _normalize_filter_value(value: str) -> str:
@@ -717,6 +777,8 @@ def _selected_trope_story_map_response(
     connection_color: str | None = None,
     filter_set_id: str | None = None,
     filter_set_label: str | None = None,
+    actor_role: UserRole | None = None,
+    actor_territories: Iterable[object] | None = None,
 ) -> dict:
     stories_by_trope_id: dict[str, list[StoryEntry]] = {}
     for entry in entries:
@@ -730,7 +792,7 @@ def _selected_trope_story_map_response(
     selected_entries = stories_by_trope_id.get(selected_trope.id, [])
     if not selected_entries:
         return {
-            "selected_trope": _selected_trope_payload(selected_trope, dataset_id, session),
+            "selected_trope": _selected_trope_payload(selected_trope, story_counts_by_trope_id.get(selected_trope.id, 0)),
             "selected_trope_candidates": [],
             "related_tropes": [],
             "original_markers": [],
@@ -743,7 +805,14 @@ def _selected_trope_story_map_response(
         }
 
     selected_story_ids = {entry.story_id for entry in selected_entries}
-    related_search = search_service.search_terms(session, TermKind.TROPE, selected_trope.text, limit=related_limit + 1)
+    related_search = search_service.search_terms(
+        session,
+        TermKind.TROPE,
+        selected_trope.text,
+        limit=related_limit + 1,
+        actor_role=actor_role,
+        actor_territories=actor_territories,
+    )
     related_tropes = []
     for item in related_search["items"]:
         if item["id"] == selected_trope.id:
@@ -880,7 +949,7 @@ def _selected_trope_story_map_response(
         bounds = [[min(latitudes), min(longitudes)], [max(latitudes), max(longitudes)]]
 
     return {
-        "selected_trope": _selected_trope_payload(selected_trope, dataset_id, session),
+        "selected_trope": _selected_trope_payload(selected_trope, story_counts_by_trope_id.get(selected_trope.id, 0)),
         "selected_trope_candidates": [],
         "related_tropes": related_tropes,
         "original_markers": original_markers,

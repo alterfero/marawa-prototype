@@ -114,7 +114,7 @@ def read_tropes(
     q: str | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=5000),
     include_story_ids: bool = Query(default=False),
-    _: object = Depends(require_minimum_role(UserRole.GUEST)),
+    auth_context: AuthSessionContext = Depends(require_minimum_role(UserRole.GUEST)),
     session: Session = Depends(get_db_session),
 ) -> list[TropeListItemResponse]:
     return [
@@ -125,6 +125,8 @@ def read_tropes(
             query=q,
             limit=limit,
             include_story_ids=include_story_ids,
+            actor_role=auth_context.user.role,
+            actor_territories=auth_context.user.territories,
         )
     ]
 
@@ -132,11 +134,18 @@ def read_tropes(
 @router.get("/{trope_id}", response_model=TropeDetailResponse)
 def read_trope_detail(
     trope_id: str,
-    _: object = Depends(require_minimum_role(UserRole.GUEST)),
+    auth_context: AuthSessionContext = Depends(require_minimum_role(UserRole.GUEST)),
     session: Session = Depends(get_db_session),
 ) -> TropeDetailResponse:
     try:
-        return TropeDetailResponse(**get_trope_detail(session, trope_id))
+        return TropeDetailResponse(
+            **get_trope_detail(
+                session,
+                trope_id,
+                actor_role=auth_context.user.role,
+                actor_territories=auth_context.user.territories,
+            )
+        )
     except TropeLookupNotFoundError as exc:
         raise api_error(404, "trope_not_found", str(exc)) from exc
 
@@ -153,6 +162,7 @@ def create_canonical_trope(
             payload.text,
             actor_user_id=auth_context.user.id,
             actor_role=auth_context.user.role,
+            actor_territories=auth_context.user.territories,
         )
     except TropeMutationValidationError as exc:
         raise api_error(400, "trope_mutation_invalid", str(exc)) from exc

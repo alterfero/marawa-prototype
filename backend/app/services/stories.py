@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session, selectinload
@@ -19,6 +19,7 @@ from app.core.parsing import (
     serialize_tropes,
     split_themes,
 )
+from app.core.territories import normalize_territories, territory_key
 from app.db.models import (
     AssignmentStatus,
     Dataset,
@@ -44,6 +45,7 @@ from app.services.reviews import (
     queue_story_trope_review_item,
     queue_term_review_item,
 )
+from app.services.territory_access import can_access_story_fields, find_existing_territory_label
 
 
 class StoryServiceError(ValueError):
@@ -92,6 +94,10 @@ class StoryCompletenessPermissionError(StoryServiceError):
     """Raised when a user cannot set the requested story completeness."""
 
 
+class StoryTerritoryPermissionError(StoryServiceError):
+    """Raised when a contributor accesses a story outside their territories."""
+
+
 class ThemeCreationPermissionError(StoryServiceError):
     """Raised when a non-admin user attempts to create a canonical theme."""
 
@@ -106,7 +112,12 @@ class DatasetVersionConflictError(StoryServiceError):
         self.current_dataset_version = current_dataset_version
 
 
-def list_active_stories(session: Session) -> dict:
+def list_active_stories(
+    session: Session,
+    *,
+    actor_role: UserRole | None = None,
+    actor_territories: Iterable[object] | None = None,
+) -> dict:
     active_dataset = _get_active_dataset(session)
     if active_dataset is None:
         return {
@@ -130,28 +141,82 @@ def list_active_stories(session: Session) -> dict:
         )
     ).all()
 
+    visible_stories = [
+        story
+        for story in stories
+        if _can_access_story_territory(
+            story,
+            actor_role=actor_role,
+            actor_territories=actor_territories,
+        )
+    ]
+
     return {
-        "items": [_serialize_story_summary(story) for story in stories],
-        "total": len(stories),
+        "items": [_serialize_story_summary(story) for story in visible_stories],
+        "total": len(visible_stories),
     }
 
 
-def get_story_detail(session: Session, story_id: str) -> dict:
-    _, story = _get_active_story(session, story_id)
-    return _serialize_story_detail(story)
+def get_story_detail(
+    session: Session,
+    story_id: str,
+    *,
+    actor_role: UserRole | None = None,
+    actor_territories: Iterable[object] | None = None,
+) -> dict:
+    _, story = _get_active_story(
+        session,
+        story_id,
+        actor_role=actor_role,
+        actor_territories=actor_territories,
+    )
+    return _serialize_story_detail(
+        session,
+        story,
+        actor_role=actor_role,
+        actor_territories=actor_territories,
+    )
 
 
-def get_story_tropes(session: Session, story_id: str) -> dict:
-    _, story = _get_active_story(session, story_id)
+def get_story_tropes(
+    session: Session,
+    story_id: str,
+    *,
+    actor_role: UserRole | None = None,
+    actor_territories: Iterable[object] | None = None,
+) -> dict:
+    _, story = _get_active_story(
+        session,
+        story_id,
+        actor_role=actor_role,
+        actor_territories=actor_territories,
+    )
     return {
         "story_id": story.id,
         "story_version": story.version,
-        "items": [_serialize_story_trope(link) for link in _ordered_trope_links(story)],
+        "items": _serialize_story_trope_links_for_actor(
+            session,
+            _ordered_trope_links(story),
+            dataset_id=story.dataset_id,
+            actor_role=actor_role,
+            actor_territories=actor_territories,
+        ),
     }
 
 
-def get_story_keywords(session: Session, story_id: str) -> dict:
-    _, story = _get_active_story(session, story_id)
+def get_story_keywords(
+    session: Session,
+    story_id: str,
+    *,
+    actor_role: UserRole | None = None,
+    actor_territories: Iterable[object] | None = None,
+) -> dict:
+    _, story = _get_active_story(
+        session,
+        story_id,
+        actor_role=actor_role,
+        actor_territories=actor_territories,
+    )
     return {
         "story_id": story.id,
         "story_version": story.version,
@@ -159,12 +224,29 @@ def get_story_keywords(session: Session, story_id: str) -> dict:
     }
 
 
-def get_story_themes(session: Session, story_id: str) -> dict:
-    _, story = _get_active_story(session, story_id)
+def get_story_themes(
+    session: Session,
+    story_id: str,
+    *,
+    actor_role: UserRole | None = None,
+    actor_territories: Iterable[object] | None = None,
+) -> dict:
+    _, story = _get_active_story(
+        session,
+        story_id,
+        actor_role=actor_role,
+        actor_territories=actor_territories,
+    )
     return {
         "story_id": story.id,
         "story_version": story.version,
-        "items": [_serialize_story_theme(link) for link in _ordered_theme_links(story)],
+        "items": _serialize_story_theme_links_for_actor(
+            session,
+            _ordered_theme_links(story),
+            dataset_id=story.dataset_id,
+            actor_role=actor_role,
+            actor_territories=actor_territories,
+        ),
     }
 
 
@@ -177,10 +259,20 @@ def create_story(
     keywords: list[str] | None = None,
     actor_user_id: str | None = None,
     actor_role: UserRole | None = None,
+    actor_territories: Iterable[object] | None = None,
 ) -> tuple[Story, Dataset, object]:
     active_dataset = _require_active_dataset(session)
     _assert_dataset_version(active_dataset, expected_dataset_version)
     normalized_fields = _normalize_story_fields(fields)
+    canonical_territory = _assert_fields_territory_access(
+        session,
+        normalized_fields,
+        dataset_id=active_dataset.id,
+        actor_role=actor_role,
+        actor_territories=actor_territories,
+    )
+    if canonical_territory is not None:
+        normalized_fields["territory"] = canonical_territory
     recording_interval = _validate_recording_year_interval(normalized_fields[DATE_OF_RECORDING_FIELD])
     normalized_fields[DATE_OF_RECORDING_FIELD] = _format_recording_year_interval(recording_interval)
 
@@ -341,8 +433,14 @@ def update_story(
     completeness: StoryCompleteness | None = None,
     actor_user_id: str | None = None,
     actor_role: UserRole | None = None,
+    actor_territories: Iterable[object] | None = None,
 ) -> tuple[Story, Dataset, object]:
-    active_dataset, story = _get_active_story(session, story_id)
+    active_dataset, story = _get_active_story(
+        session,
+        story_id,
+        actor_role=actor_role,
+        actor_territories=actor_territories,
+    )
     _assert_story_version(story, expected_story_version)
 
     field_updates = _normalize_story_field_updates(fields)
@@ -359,6 +457,15 @@ def update_story(
     if field_updates:
         previous_field_values = {column: story_fields.get(column, "") for column in field_updates}
         story_fields.update(field_updates)
+        canonical_territory = _assert_fields_territory_access(
+            session,
+            story_fields,
+            dataset_id=active_dataset.id,
+            actor_role=actor_role,
+            actor_territories=actor_territories,
+        )
+        if canonical_territory is not None:
+            story_fields["territory"] = canonical_territory
         story.fields_json = story_fields
         if DATE_OF_RECORDING_FIELD in field_updates:
             story.recording_year_start = None if recording_interval is None else recording_interval.year1
@@ -432,11 +539,17 @@ def add_story_trope(
     origin: StoryTropeOrigin = StoryTropeOrigin.HUMAN_ENTERED,
     actor_user_id: str | None = None,
     actor_role: UserRole | None = None,
+    actor_territories: Iterable[object] | None = None,
 ) -> tuple[Story, Dataset, StoryTrope, object]:
     if origin not in {StoryTropeOrigin.HUMAN_ENTERED, StoryTropeOrigin.SEMANTIC_SUGGESTION}:
         raise StoryMutationValidationError("New trope assignments may be human_entered or semantic_suggestion only.")
 
-    active_dataset, story = _get_active_story(session, story_id)
+    active_dataset, story = _get_active_story(
+        session,
+        story_id,
+        actor_role=actor_role,
+        actor_territories=actor_territories,
+    )
     _assert_story_version(story, expected_story_version)
 
     trope, created = _resolve_trope(
@@ -516,8 +629,14 @@ def add_story_keyword(
     text: str | None = None,
     actor_user_id: str | None = None,
     actor_role: UserRole | None = None,
+    actor_territories: Iterable[object] | None = None,
 ) -> tuple[Story, Dataset, StoryKeyword, object]:
-    active_dataset, story = _get_active_story(session, story_id)
+    active_dataset, story = _get_active_story(
+        session,
+        story_id,
+        actor_role=actor_role,
+        actor_territories=actor_territories,
+    )
     _assert_story_version(story, expected_story_version)
 
     keyword, created = _resolve_keyword(
@@ -593,8 +712,14 @@ def add_story_theme(
     text: str | None = None,
     actor_user_id: str | None = None,
     actor_role: UserRole | None = None,
+    actor_territories: Iterable[object] | None = None,
 ) -> tuple[Story, Dataset, StoryTheme, object]:
-    active_dataset, story = _get_active_story(session, story_id)
+    active_dataset, story = _get_active_story(
+        session,
+        story_id,
+        actor_role=actor_role,
+        actor_territories=actor_territories,
+    )
     _assert_story_version(story, expected_story_version)
 
     theme, _ = _resolve_theme(
@@ -648,8 +773,14 @@ def replace_story_trope(
     text: str | None = None,
     actor_user_id: str | None = None,
     actor_role: UserRole | None = None,
+    actor_territories: Iterable[object] | None = None,
 ) -> tuple[Story, Dataset, StoryTrope, object]:
-    active_dataset, story = _get_active_story(session, story_id)
+    active_dataset, story = _get_active_story(
+        session,
+        story_id,
+        actor_role=actor_role,
+        actor_territories=actor_territories,
+    )
     _assert_story_version(story, expected_story_version)
 
     link = next((item for item in story.trope_links if item.trope_id == current_trope_id), None)
@@ -743,8 +874,14 @@ def replace_story_keyword(
     text: str | None = None,
     actor_user_id: str | None = None,
     actor_role: UserRole | None = None,
+    actor_territories: Iterable[object] | None = None,
 ) -> tuple[Story, Dataset, StoryKeyword, object]:
-    active_dataset, story = _get_active_story(session, story_id)
+    active_dataset, story = _get_active_story(
+        session,
+        story_id,
+        actor_role=actor_role,
+        actor_territories=actor_territories,
+    )
     _assert_story_version(story, expected_story_version)
 
     link = next((item for item in story.keyword_links if item.keyword_id == current_keyword_id), None)
@@ -834,8 +971,14 @@ def delete_story_trope(
     expected_story_version: int,
     actor_user_id: str | None = None,
     actor_role: UserRole | None = None,
+    actor_territories: Iterable[object] | None = None,
 ) -> tuple[Story, Dataset, str, object]:
-    active_dataset, story = _get_active_story(session, story_id)
+    active_dataset, story = _get_active_story(
+        session,
+        story_id,
+        actor_role=actor_role,
+        actor_territories=actor_territories,
+    )
     _assert_story_version(story, expected_story_version)
 
     link = next((item for item in story.trope_links if item.trope_id == trope_id), None)
@@ -893,8 +1036,14 @@ def delete_story_keyword(
     expected_story_version: int,
     actor_user_id: str | None = None,
     actor_role: UserRole | None = None,
+    actor_territories: Iterable[object] | None = None,
 ) -> tuple[Story, Dataset, str, object]:
-    active_dataset, story = _get_active_story(session, story_id)
+    active_dataset, story = _get_active_story(
+        session,
+        story_id,
+        actor_role=actor_role,
+        actor_territories=actor_territories,
+    )
     _assert_story_version(story, expected_story_version)
 
     link = next((item for item in story.keyword_links if item.keyword_id == keyword_id), None)
@@ -951,8 +1100,15 @@ def delete_story_theme(
     *,
     expected_story_version: int,
     actor_user_id: str | None = None,
+    actor_role: UserRole | None = None,
+    actor_territories: Iterable[object] | None = None,
 ) -> tuple[Story, Dataset, str, object]:
-    active_dataset, story = _get_active_story(session, story_id)
+    active_dataset, story = _get_active_story(
+        session,
+        story_id,
+        actor_role=actor_role,
+        actor_territories=actor_territories,
+    )
     _assert_story_version(story, expected_story_version)
 
     link = next((item for item in story.theme_links if item.theme_id == theme_id), None)
@@ -997,8 +1153,14 @@ def validate_story_trope(
     expected_story_version: int,
     actor_user_id: str | None = None,
     actor_role: UserRole | None = None,
+    actor_territories: Iterable[object] | None = None,
 ) -> tuple[Story, Dataset, StoryTrope, object]:
-    active_dataset, story = _get_active_story(session, story_id)
+    active_dataset, story = _get_active_story(
+        session,
+        story_id,
+        actor_role=actor_role,
+        actor_territories=actor_territories,
+    )
     _assert_story_version(story, expected_story_version)
 
     link = next((item for item in story.trope_links if item.trope_id == trope_id), None)
@@ -1063,7 +1225,13 @@ def _require_active_dataset(session: Session) -> Dataset:
     return active_dataset
 
 
-def _get_active_story(session: Session, story_id: str) -> tuple[Dataset, Story]:
+def _get_active_story(
+    session: Session,
+    story_id: str,
+    *,
+    actor_role: UserRole | None = None,
+    actor_territories: Iterable[object] | None = None,
+) -> tuple[Dataset, Story]:
     active_dataset = _require_active_dataset(session)
 
     story = session.scalar(
@@ -1080,7 +1248,75 @@ def _get_active_story(session: Session, story_id: str) -> tuple[Dataset, Story]:
     )
     if story is None:
         raise StoryNotFoundError("Story not found in the active dataset.")
+    _assert_story_territory_access(
+        story,
+        actor_role=actor_role,
+        actor_territories=actor_territories,
+    )
     return active_dataset, story
+
+
+def _can_access_story_territory(
+    story: Story,
+    *,
+    actor_role: UserRole | None,
+    actor_territories: Iterable[object] | None,
+) -> bool:
+    if actor_role != UserRole.CONTRIBUTOR:
+        return True
+    allowed_territory_keys = {
+        key
+        for key in (territory_key(territory) for territory in normalize_territories(actor_territories))
+        if key
+    }
+    story_territory_key = territory_key((story.fields_json or {}).get("territory", ""))
+    return bool(story_territory_key and story_territory_key in allowed_territory_keys)
+
+
+def _assert_story_territory_access(
+    story: Story,
+    *,
+    actor_role: UserRole | None,
+    actor_territories: Iterable[object] | None,
+) -> None:
+    if not _can_access_story_territory(
+        story,
+        actor_role=actor_role,
+        actor_territories=actor_territories,
+    ):
+        raise StoryTerritoryPermissionError("You do not have access to stories in this territory.")
+
+
+def _assert_fields_territory_access(
+    session: Session,
+    fields: Mapping[str, object],
+    *,
+    dataset_id: str,
+    actor_role: UserRole | None,
+    actor_territories: Iterable[object] | None,
+) -> str | None:
+    if actor_role != UserRole.CONTRIBUTOR:
+        return None
+    allowed_territory_keys = {
+        key
+        for key in (territory_key(territory) for territory in normalize_territories(actor_territories))
+        if key
+    }
+    requested_territory_key = territory_key(fields.get("territory", ""))
+    canonical_territory = find_existing_territory_label(
+        session,
+        dataset_id=dataset_id,
+        requested_territory=fields.get("territory", ""),
+    )
+    if (
+        not requested_territory_key
+        or requested_territory_key not in allowed_territory_keys
+        or canonical_territory is None
+    ):
+        raise StoryTerritoryPermissionError(
+            "Contributors may only use an existing territory assigned by an administrator."
+        )
+    return canonical_territory
 
 
 def _assert_story_version(story: Story, expected_story_version: int) -> None:
@@ -1520,7 +1756,13 @@ def _serialize_story_summary(story: Story) -> dict:
     }
 
 
-def _serialize_story_detail(story: Story) -> dict:
+def _serialize_story_detail(
+    session: Session,
+    story: Story,
+    *,
+    actor_role: UserRole | None = None,
+    actor_territories: Iterable[object] | None = None,
+) -> dict:
     return {
         "id": story.id,
         "dataset_id": story.dataset_id,
@@ -1530,18 +1772,190 @@ def _serialize_story_detail(story: Story) -> dict:
         "created_at": story.created_at.isoformat(),
         "updated_at": story.updated_at.isoformat(),
         "fields": _build_story_fields(story),
-        "tropes": [_serialize_story_trope(link) for link in _ordered_trope_links(story)],
-        "themes": [_serialize_story_theme(link) for link in _ordered_theme_links(story)],
+        "tropes": _serialize_story_trope_links_for_actor(
+            session,
+            _ordered_trope_links(story),
+            dataset_id=story.dataset_id,
+            actor_role=actor_role,
+            actor_territories=actor_territories,
+        ),
+        "themes": _serialize_story_theme_links_for_actor(
+            session,
+            _ordered_theme_links(story),
+            dataset_id=story.dataset_id,
+            actor_role=actor_role,
+            actor_territories=actor_territories,
+        ),
         "keywords": [_serialize_story_keyword(link) for link in _ordered_keyword_links(story)],
     }
 
 
-def _serialize_story_trope(link: StoryTrope) -> dict:
+def serialize_story_trope_for_actor(
+    session: Session,
+    link: StoryTrope,
+    *,
+    dataset_id: str,
+    actor_role: UserRole | None = None,
+    actor_territories: Iterable[object] | None = None,
+) -> dict:
+    """Serialize one trope assignment with the caller's visible story count."""
+    return _serialize_story_trope_links_for_actor(
+        session,
+        [link],
+        dataset_id=dataset_id,
+        actor_role=actor_role,
+        actor_territories=actor_territories,
+    )[0]
+
+
+def serialize_story_theme_for_actor(
+    session: Session,
+    link: StoryTheme,
+    *,
+    dataset_id: str,
+    actor_role: UserRole | None = None,
+    actor_territories: Iterable[object] | None = None,
+) -> dict:
+    """Serialize one theme assignment with the caller's visible story count."""
+    return _serialize_story_theme_links_for_actor(
+        session,
+        [link],
+        dataset_id=dataset_id,
+        actor_role=actor_role,
+        actor_territories=actor_territories,
+    )[0]
+
+
+def _serialize_story_trope_links_for_actor(
+    session: Session,
+    links: list[StoryTrope],
+    *,
+    dataset_id: str,
+    actor_role: UserRole | None,
+    actor_territories: Iterable[object] | None,
+) -> list[dict]:
+    visible_story_counts: dict[str, int] | None = None
+    if actor_role == UserRole.CONTRIBUTOR:
+        visible_story_counts = _visible_trope_story_counts(
+            session,
+            dataset_id=dataset_id,
+            trope_ids=[link.trope_id for link in links],
+            actor_role=actor_role,
+            actor_territories=actor_territories,
+        )
+
+    return [
+        _serialize_story_trope(
+            link,
+            story_count=None if visible_story_counts is None else visible_story_counts.get(link.trope_id, 0),
+        )
+        for link in links
+    ]
+
+
+def _serialize_story_theme_links_for_actor(
+    session: Session,
+    links: list[StoryTheme],
+    *,
+    dataset_id: str,
+    actor_role: UserRole | None,
+    actor_territories: Iterable[object] | None,
+) -> list[dict]:
+    visible_story_counts: dict[str, int] | None = None
+    if actor_role == UserRole.CONTRIBUTOR:
+        visible_story_counts = _visible_theme_story_counts(
+            session,
+            dataset_id=dataset_id,
+            theme_ids=[link.theme_id for link in links],
+            actor_role=actor_role,
+            actor_territories=actor_territories,
+        )
+
+    return [
+        _serialize_story_theme(
+            link,
+            story_count=None if visible_story_counts is None else visible_story_counts.get(link.theme_id, 0),
+        )
+        for link in links
+    ]
+
+
+def _visible_trope_story_counts(
+    session: Session,
+    *,
+    dataset_id: str,
+    trope_ids: Iterable[str],
+    actor_role: UserRole | None,
+    actor_territories: Iterable[object] | None,
+) -> dict[str, int]:
+    ids = list(dict.fromkeys(trope_ids))
+    counts = {trope_id: 0 for trope_id in ids}
+    if not ids:
+        return counts
+
+    rows = session.execute(
+        select(
+            StoryTrope.trope_id.label("term_id"),
+            Story.fields_json.label("fields_json"),
+        )
+        .select_from(StoryTrope)
+        .join(Story, Story.id == StoryTrope.story_id)
+        .where(
+            Story.dataset_id == dataset_id,
+            StoryTrope.trope_id.in_(ids),
+        )
+    ).all()
+    for row in rows:
+        if can_access_story_fields(
+            row.fields_json,
+            actor_role=actor_role,
+            actor_territories=actor_territories,
+        ):
+            counts[row.term_id] += 1
+    return counts
+
+
+def _visible_theme_story_counts(
+    session: Session,
+    *,
+    dataset_id: str,
+    theme_ids: Iterable[str],
+    actor_role: UserRole | None,
+    actor_territories: Iterable[object] | None,
+) -> dict[str, int]:
+    ids = list(dict.fromkeys(theme_ids))
+    counts = {theme_id: 0 for theme_id in ids}
+    if not ids:
+        return counts
+
+    rows = session.execute(
+        select(
+            StoryTheme.theme_id.label("term_id"),
+            Story.fields_json.label("fields_json"),
+        )
+        .select_from(StoryTheme)
+        .join(Story, Story.id == StoryTheme.story_id)
+        .where(
+            Story.dataset_id == dataset_id,
+            StoryTheme.theme_id.in_(ids),
+        )
+    ).all()
+    for row in rows:
+        if can_access_story_fields(
+            row.fields_json,
+            actor_role=actor_role,
+            actor_territories=actor_territories,
+        ):
+            counts[row.term_id] += 1
+    return counts
+
+
+def _serialize_story_trope(link: StoryTrope, *, story_count: int | None = None) -> dict:
     return {
         "id": link.trope.id,
         "version": link.trope.version,
         "text": link.trope.text,
-        "story_count": int(link.trope.cached_story_count or 0),
+        "story_count": int(link.trope.cached_story_count or 0) if story_count is None else story_count,
         "confirmation_status": link.trope.confirmation_status.value,
         "origin": link.origin.value,
         "status": link.status.value,
@@ -1557,12 +1971,12 @@ def _serialize_story_keyword(link: StoryKeyword) -> dict:
     }
 
 
-def _serialize_story_theme(link: StoryTheme) -> dict:
+def _serialize_story_theme(link: StoryTheme, *, story_count: int | None = None) -> dict:
     return {
         "id": link.theme.id,
         "version": link.theme.version,
         "text": link.theme.text,
-        "story_count": int(link.theme.cached_story_count or 0),
+        "story_count": int(link.theme.cached_story_count or 0) if story_count is None else story_count,
         "confirmation_status": link.theme.confirmation_status.value,
         "position": link.position,
     }

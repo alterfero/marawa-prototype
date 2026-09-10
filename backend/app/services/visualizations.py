@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from sqlalchemy import case, func, select
@@ -8,6 +9,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.core.coordinates import parse_space_coord
 from app.core.parsing import clean_text
 from app.core.projection import project_lon_lat_equirectangular
+from app.core.territories import normalize_territories, territory_key
 from app.db.models import (
     Dataset,
     DatasetStatus,
@@ -22,6 +24,7 @@ from app.db.models import (
     ThemeConfirmationStatus,
     Trope,
     TropeConfirmationStatus,
+    UserRole,
 )
 
 
@@ -206,6 +209,8 @@ def build_trope_sequence_graph(
     max_stories: int = 150,
     max_links_per_node: int = 4,
     vertical_spacing: float = 30,
+    actor_role: UserRole | None = None,
+    actor_territories: Iterable[object] | None = None,
 ) -> dict:
     active_dataset = _get_active_dataset(session)
     if active_dataset is None:
@@ -215,15 +220,27 @@ def build_trope_sequence_graph(
     if not cleaned_query and not clean_text(selected_trope_id):
         raise VisualizationValidationError("Provide selected_trope_id or a query to build the visualization.")
 
+    territory_scope = _territory_scope_for_actor(actor_role, actor_territories)
+    stories = _load_active_stories(
+        session,
+        active_dataset.id,
+        territory_scope=territory_scope,
+    )
+    visible_trope_ids = {
+        link.trope_id
+        for story in stories
+        for link in _ordered_trope_links(story)
+    }
     selected_trope = _resolve_selected_trope(
         session,
         search_service,
         dataset_id=active_dataset.id,
         selected_trope_id=selected_trope_id,
         query=cleaned_query or None,
+        visible_trope_ids=visible_trope_ids if territory_scope is not None else None,
     )
 
-    trope_count = (
+    trope_count = len(visible_trope_ids) if territory_scope is not None else (
         session.scalar(
             select(func.count(func.distinct(StoryTrope.trope_id)))
             .select_from(StoryTrope)
@@ -245,7 +262,6 @@ def build_trope_sequence_graph(
     }
     selected_similarity_by_trope_id[selected_trope.id] = 1.0
 
-    stories = _load_active_stories(session, active_dataset.id)
     eligible_stories: list[StorySelection] = []
     for story in stories:
         ordered_links = _ordered_trope_links(story)
@@ -459,6 +475,7 @@ def _resolve_selected_trope(
     dataset_id: str,
     selected_trope_id: str | None,
     query: str | None,
+    visible_trope_ids: set[str] | None = None,
 ) -> SelectedTropeRecord:
     if clean_text(selected_trope_id):
         trope = session.scalar(
@@ -471,7 +488,7 @@ def _resolve_selected_trope(
             )
             .group_by(Trope.id)
         )
-        if trope is None:
+        if trope is None or (visible_trope_ids is not None and trope.id not in visible_trope_ids):
             raise VisualizationNotFoundError("Selected trope not found in the active dataset.")
         return SelectedTropeRecord(id=trope.id, text=trope.text, score=1.0)
 
@@ -479,9 +496,14 @@ def _resolve_selected_trope(
         raise VisualizationValidationError("Provide selected_trope_id or a query to build the visualization.")
 
     candidates = search_service.search_terms(session, TermKind.TROPE, query, limit=12)
-    if not candidates["items"]:
+    matching_candidates = [
+        item
+        for item in candidates["items"]
+        if visible_trope_ids is None or item["id"] in visible_trope_ids
+    ]
+    if not matching_candidates:
         raise VisualizationNotFoundError("No active trope matched the requested query.")
-    top_candidate = candidates["items"][0]
+    top_candidate = matching_candidates[0]
     return SelectedTropeRecord(
         id=top_candidate["id"],
         text=top_candidate["text"],
@@ -489,8 +511,13 @@ def _resolve_selected_trope(
     )
 
 
-def _load_active_stories(session: Session, dataset_id: str) -> list[Story]:
-    return session.scalars(
+def _load_active_stories(
+    session: Session,
+    dataset_id: str,
+    *,
+    territory_scope: set[str] | None = None,
+) -> list[Story]:
+    stories = session.scalars(
         select(Story)
         .where(Story.dataset_id == dataset_id)
         .options(selectinload(Story.trope_links).selectinload(StoryTrope.trope))
@@ -501,6 +528,26 @@ def _load_active_stories(session: Session, dataset_id: str) -> list[Story]:
             Story.id,
         )
     ).all()
+    if territory_scope is None:
+        return stories
+    return [
+        story
+        for story in stories
+        if territory_key((story.fields_json or {}).get("territory", "")) in territory_scope
+    ]
+
+
+def _territory_scope_for_actor(
+    actor_role: UserRole | None,
+    actor_territories: Iterable[object] | None,
+) -> set[str] | None:
+    if actor_role != UserRole.CONTRIBUTOR:
+        return None
+    return {
+        key
+        for key in (territory_key(territory) for territory in normalize_territories(actor_territories))
+        if key
+    }
 
 
 def _ordered_trope_links(story: Story) -> list[StoryTrope]:

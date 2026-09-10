@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -7,12 +8,20 @@ import secrets
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerifyMismatchError
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
 from app.core.parsing import clean_text
-from app.db.models import InviteResetToken, InviteResetTokenKind, User, UserRole, UserSession, UserStatus
+from app.core.territories import normalize_territories
+from app.db.models import (
+    InviteResetToken,
+    InviteResetTokenKind,
+    User,
+    UserRole,
+    UserSession,
+    UserStatus,
+)
 from app.services.audit import record_audit_event
 
 
@@ -116,12 +125,22 @@ class UserMutationConflictError(UserLifecycleError):
     """Raised when a user mutation would create an unsafe state."""
 
 
+class UserVersionConflictError(UserLifecycleError):
+    """Raised when an admin edits a user with a stale version."""
+
+    def __init__(self, current_user_version: int) -> None:
+        super().__init__("User version does not match the current server version.")
+        self.current_user_version = current_user_version
+
+
 def serialize_user(user: User) -> dict:
     return {
         "id": user.id,
         "email": user.email,
         "display_name": user.display_name,
         "role": user.role.value,
+        "territories": normalize_territories(user.territories) if user.role == UserRole.CONTRIBUTOR else [],
+        "version": user.version,
         "status": user.status.value,
         "last_login_at": ensure_utc(user.last_login_at).isoformat() if user.last_login_at else None,
         "deactivated_at": ensure_utc(user.deactivated_at).isoformat() if user.deactivated_at else None,
@@ -289,6 +308,7 @@ def create_invited_user(
     email: str,
     display_name: str,
     role: UserRole,
+    territories: Iterable[object] | None = None,
 ) -> tuple[User, TokenIssueResult]:
     normalized_email = normalize_email(email)
     if not normalized_email:
@@ -300,6 +320,7 @@ def create_invited_user(
         email=normalized_email,
         display_name=clean_text(display_name) or normalized_email,
         role=role,
+        territories=normalize_territories(territories) if role == UserRole.CONTRIBUTOR else [],
         status=UserStatus.PENDING_INVITE,
     )
     session.add(user)
@@ -318,7 +339,12 @@ def create_invited_user(
         actor_user_id=actor_user_id,
         subject_table="users",
         subject_id=user.id,
-        payload={"email": user.email, "role": user.role.value, "status": user.status.value},
+        payload={
+            "email": user.email,
+            "role": user.role.value,
+            "territories": list(user.territories),
+            "status": user.status.value,
+        },
     )
     session.commit()
     session.refresh(user)
@@ -397,22 +423,57 @@ def update_user(
     *,
     actor_user_id: str,
     target_user_id: str,
+    expected_user_version: int,
     display_name: str | None = None,
     role: UserRole | None = None,
+    territories: Iterable[object] | None = None,
 ) -> User:
+    if expected_user_version < 1:
+        raise UserLifecycleError("Expected user version must be at least 1.")
+
     user = session.get(User, target_user_id)
     if user is None:
         raise UserNotFoundError("User not found.")
+    if user.version != expected_user_version:
+        raise UserVersionConflictError(user.version)
     if actor_user_id == target_user_id and role is not None and role != UserRole.ADMIN:
         raise UserMutationConflictError("Admins cannot remove their own admin role.")
 
+    updated_display_name = user.display_name
     if display_name is not None:
         normalized_display_name = clean_text(display_name)
         if not normalized_display_name:
             raise UserLifecycleError("Display name cannot be empty.")
-        user.display_name = normalized_display_name
-    if role is not None:
-        user.role = role
+        updated_display_name = normalized_display_name
+    previous_role = user.role
+    effective_role = role if role is not None else previous_role
+
+    updated_territories = list(user.territories)
+    if effective_role != UserRole.CONTRIBUTOR:
+        updated_territories = []
+    elif territories is not None:
+        updated_territories = normalize_territories(territories)
+    elif role == UserRole.CONTRIBUTOR and previous_role != UserRole.CONTRIBUTOR:
+        # Role changes from a non-contributor begin with no territorial scope.
+        updated_territories = []
+
+    update_result = session.execute(
+        update(User)
+        .where(User.id == target_user_id, User.version == expected_user_version)
+        .values(
+            display_name=updated_display_name,
+            role=effective_role,
+            territories=updated_territories,
+            version=User.version + 1,
+            updated_at=utc_now(),
+        )
+        .execution_options(synchronize_session=False)
+    )
+    if update_result.rowcount != 1:
+        current_user_version = session.scalar(select(User.version).where(User.id == target_user_id))
+        if current_user_version is None:
+            raise UserNotFoundError("User not found.")
+        raise UserVersionConflictError(current_user_version)
 
     record_audit_event(
         session,
@@ -420,7 +481,11 @@ def update_user(
         actor_user_id=actor_user_id,
         subject_table="users",
         subject_id=user.id,
-        payload={"display_name": user.display_name, "role": user.role.value},
+        payload={
+            "display_name": updated_display_name,
+            "role": effective_role.value,
+            "territories": updated_territories,
+        },
     )
     session.commit()
     session.refresh(user)

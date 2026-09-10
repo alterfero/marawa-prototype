@@ -25,11 +25,12 @@ def make_csv_bytes(rows: list[dict[str, str]]) -> bytes:
     return buffer.getvalue().encode("utf-8-sig")
 
 
-def make_row(*, title: str, tropes: str = "", keywords: str = "") -> dict[str, str]:
+def make_row(*, title: str, tropes: str = "", keywords: str = "", territory: str = "") -> dict[str, str]:
     row = {column: "" for column in CSV_COLUMNS}
     row["Story title (Eng)"] = title
     row[TROPE_FIELD] = tropes
     row[KEYWORD_FIELD] = keywords
+    row["territory"] = territory
     return row
 
 
@@ -66,7 +67,7 @@ def test_audit_events_capture_auth_admin_write_and_review_actions(monkeypatch, t
 
     with TestClient(app) as admin_client, TestClient(app) as contributor_client:
         authenticate_admin(admin_client)
-        upload_dataset(admin_client, [make_row(title="Imported Story")])
+        upload_dataset(admin_client, [make_row(title="Imported Story", territory="Tahiti")])
         authenticate_role(
             admin_client,
             contributor_client,
@@ -74,13 +75,14 @@ def test_audit_events_capture_auth_admin_write_and_review_actions(monkeypatch, t
             display_name="Contributor User",
             role=UserRole.CONTRIBUTOR,
             password="contributor-password",
+            territories=["Tahiti"],
         )
 
         create_story = contributor_client.post(
             "/api/stories",
             json={
                 "expected_dataset_version": 1,
-                "fields": {"Story title (Eng)": "Contributor Story"},
+                "fields": {"Story title (Eng)": "Contributor Story", "territory": "Tahiti"},
                 "tropes": ["Audit Pending Trope"],
                 "keywords": ["Audit Keyword"],
             },

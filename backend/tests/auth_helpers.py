@@ -40,6 +40,7 @@ def create_invited_user(
     email: str,
     display_name: str,
     role: UserRole,
+    territories: list[str] | None = None,
 ) -> dict:
     response = admin_client.post(
         "/api/admin/users",
@@ -47,6 +48,7 @@ def create_invited_user(
             "email": email,
             "display_name": display_name,
             "role": role.value,
+            "territories": territories or [],
         },
     )
     assert response.status_code == 201
@@ -75,11 +77,13 @@ def authenticate_role(
     display_name: str,
     role: UserRole,
     password: str,
+    territories: list[str] | None = None,
 ) -> dict:
     invited_user = create_invited_user(
         admin_client,
         email=email,
         display_name=display_name,
         role=role,
+        territories=territories,
     )
     return redeem_token(user_client, token=invited_user["invite_token"], new_password=password)

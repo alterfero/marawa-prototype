@@ -1222,6 +1222,52 @@ p {
   align-items: center;
 }
 
+.territory-access-field {
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.territory-access-field legend {
+  padding: 0;
+  font-weight: 600;
+}
+
+.field-help {
+  margin: 0;
+  color: #53737a;
+  font-size: 0.88rem;
+}
+
+.territory-access-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.45rem;
+  max-height: 13rem;
+  overflow-y: auto;
+  padding: 0.1rem;
+}
+
+.territory-access-option {
+  min-width: 0;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid rgba(19, 52, 59, 0.12);
+  border-radius: 0.65rem;
+  background: rgba(255, 253, 249, 0.78);
+  cursor: pointer;
+}
+
+.territory-access-option input {
+  flex: 0 0 auto;
+  accent-color: #1f7177;
+}
+
+.territory-access-field:disabled .territory-access-option {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
 .input {
   width: 100%;
   padding: 0.8rem 0.95rem;

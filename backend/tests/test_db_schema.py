@@ -3,8 +3,12 @@ import pytest
 from sqlalchemy import inspect
 from sqlalchemy.exc import IntegrityError, OperationalError
 
-from app.db import Dataset, DatasetStatus, Story, Theme, Trope, build_engine, build_session_factory, initialize_database
+from app.db import Dataset, DatasetStatus, Story, Theme, Trope, User, build_engine, build_session_factory, initialize_database
 from app.db.init import _build_alembic_config, _looks_like_missing_postgres_database
+
+
+PRE_CONTRIBUTOR_TERRITORY_REVISION = "20260810_0015"
+PRE_USER_VERSION_REVISION = "20260909_0016"
 
 
 def test_initialize_database_creates_expected_tables(tmp_path) -> None:
@@ -42,10 +46,12 @@ def test_initialize_database_creates_expected_tables(tmp_path) -> None:
 
     assert busy_timeout == 5000
     assert str(journal_mode).lower() == "wal"
-    assert alembic_version == "20260810_0015"
+    assert alembic_version == "20260909_0017"
 
     story_columns = {column["name"] for column in inspector.get_columns("stories")}
     assert {"completeness", "recording_year_start", "recording_year_end"}.issubset(story_columns)
+    user_columns = {column["name"] for column in inspector.get_columns("users")}
+    assert {"territories", "version"}.issubset(user_columns)
     trope_columns = {column["name"] for column in inspector.get_columns("tropes")}
     assert "confirmation_status" in trope_columns
     assert "version" in trope_columns
@@ -89,7 +95,7 @@ def test_initialize_database_upgrades_confirmed_trope_status_to_canonical(tmp_pa
         alembic_version = connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one()
 
     assert status == "canonical"
-    assert alembic_version == "20260810_0015"
+    assert alembic_version == "20260909_0017"
 
 
 def test_initialize_database_backfills_themes_imported_after_initial_theme_migration(tmp_path) -> None:
@@ -153,7 +159,7 @@ def test_initialize_database_recovers_from_interrupted_sqlite_dataset_scope_upgr
     with engine.connect() as connection:
         alembic_version = connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one()
 
-    assert alembic_version == "20260810_0015"
+    assert alembic_version == "20260909_0017"
 
 
 def test_initialize_database_upgrades_populated_sqlite_db_with_term_and_story_foreign_keys(tmp_path) -> None:
@@ -235,9 +241,63 @@ def test_initialize_database_upgrades_populated_sqlite_db_with_term_and_story_fo
         trope_count = connection.exec_driver_sql("SELECT COUNT(*) FROM story_tropes").scalar_one()
         keyword_count = connection.exec_driver_sql("SELECT COUNT(*) FROM story_keywords").scalar_one()
 
-    assert alembic_version == "20260810_0015"
+    assert alembic_version == "20260909_0017"
     assert trope_count == 1
     assert keyword_count == 1
+
+
+def test_initialize_database_adds_empty_territories_to_existing_users(tmp_path) -> None:
+    db_path = tmp_path / "contributor-territories.db"
+    engine = build_engine(f"sqlite:///{db_path}")
+    config = _build_alembic_config(str(engine.url))
+
+    with engine.begin() as connection:
+        config.attributes["connection"] = connection
+        command.upgrade(config, PRE_CONTRIBUTOR_TERRITORY_REVISION)
+        connection.exec_driver_sql(
+            """
+            INSERT INTO users (email, display_name, role, status, id, created_at, updated_at)
+            VALUES (
+                'existing-contributor@example.com', 'Existing Contributor', 'contributor', 'active',
+                'user-1', '2026-08-10T00:00:00+00:00', '2026-08-10T00:00:00+00:00'
+            )
+            """
+        )
+
+    initialize_database(engine)
+    SessionLocal = build_session_factory(engine)
+    with SessionLocal() as session:
+        user = session.get(User, "user-1")
+        assert user is not None
+        assert user.territories == []
+        assert user.version == 1
+
+
+def test_initialize_database_adds_user_versions_to_existing_users(tmp_path) -> None:
+    db_path = tmp_path / "user-version.db"
+    engine = build_engine(f"sqlite:///{db_path}")
+    config = _build_alembic_config(str(engine.url))
+
+    with engine.begin() as connection:
+        config.attributes["connection"] = connection
+        command.upgrade(config, PRE_USER_VERSION_REVISION)
+        connection.exec_driver_sql(
+            """
+            INSERT INTO users (email, display_name, role, status, territories, id, created_at, updated_at)
+            VALUES (
+                'existing-contributor@example.com', 'Existing Contributor', 'contributor', 'active', '["Tahiti"]',
+                'user-1', '2026-09-09T00:00:00+00:00', '2026-09-09T00:00:00+00:00'
+            )
+            """
+        )
+
+    initialize_database(engine)
+    SessionLocal = build_session_factory(engine)
+    with SessionLocal() as session:
+        user = session.get(User, "user-1")
+        assert user is not None
+        assert user.territories == ["Tahiti"]
+        assert user.version == 1
 
 
 def test_story_source_row_number_unique_constraint_allows_multiple_nulls(tmp_path) -> None:

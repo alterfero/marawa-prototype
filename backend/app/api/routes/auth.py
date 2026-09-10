@@ -25,6 +25,8 @@ class CurrentUserResponse(BaseModel):
     email: str
     display_name: str
     role: str
+    territories: list[str] = Field(default_factory=list)
+    version: int
     status: str
     last_login_at: str | None = None
     deactivated_at: str | None = None

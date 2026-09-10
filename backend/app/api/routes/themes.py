@@ -94,7 +94,7 @@ def read_themes(
     q: str | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=5000),
     include_story_ids: bool = Query(default=False),
-    _: object = Depends(require_minimum_role(UserRole.GUEST)),
+    auth_context: AuthSessionContext = Depends(require_minimum_role(UserRole.GUEST)),
     session: Session = Depends(get_db_session),
 ) -> list[ThemeListItemResponse]:
     return [
@@ -105,6 +105,8 @@ def read_themes(
             query=q,
             limit=limit,
             include_story_ids=include_story_ids,
+            actor_role=auth_context.user.role,
+            actor_territories=auth_context.user.territories,
         )
     ]
 
@@ -125,11 +127,18 @@ def create_canonical_theme(
 @router.get("/{theme_id}", response_model=ThemeDetailResponse)
 def read_theme_detail(
     theme_id: str,
-    _: object = Depends(require_minimum_role(UserRole.GUEST)),
+    auth_context: AuthSessionContext = Depends(require_minimum_role(UserRole.GUEST)),
     session: Session = Depends(get_db_session),
 ) -> ThemeDetailResponse:
     try:
-        return ThemeDetailResponse(**get_theme_detail(session, theme_id))
+        return ThemeDetailResponse(
+            **get_theme_detail(
+                session,
+                theme_id,
+                actor_role=auth_context.user.role,
+                actor_territories=auth_context.user.territories,
+            )
+        )
     except ThemeLookupNotFoundError as exc:
         raise api_error(404, "theme_not_found", str(exc)) from exc
 

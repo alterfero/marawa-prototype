@@ -57,6 +57,7 @@ Stories enter the system through a legacy-compatible CSV import, are edited and 
 - Has all `guest` permissions.
 - May create stories.
 - May edit stories.
+- May only work in territories assigned by an admin and choose from territories that already exist in the active dataset.
 - May add, replace, and remove trope, keyword, and theme assignments on stories.
 - May create new canonical tropes and canonical keywords.
 - Contributor-created content saves immediately but also generates admin review work.
@@ -64,6 +65,7 @@ Stories enter the system through a legacy-compatible CSV import, are edited and 
 ### Admin
 
 - Has all `contributor` permissions.
+- May introduce a new territory through a story create or edit.
 - May upload and export CSV.
 - May manage users and roles.
 - May activate, deactivate, and reset user access.

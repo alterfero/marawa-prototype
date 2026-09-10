@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db_session, require_minimum_role
 from app.api.errors import api_error
 from app.db.models import TermKind, UserRole
+from app.services.auth import AuthSessionContext
 from app.services.visualizations import (
     VisualizationNotFoundError,
     VisualizationValidationError,
@@ -135,7 +136,7 @@ def get_search_service(request: Request):
 @router.post("/trope-sequence-graph", response_model=TropeSequenceGraphResponse)
 def build_trope_sequence_graph_endpoint(
     payload: TropeSequenceGraphRequest,
-    _: object = Depends(require_minimum_role(UserRole.GUEST)),
+    auth_context: AuthSessionContext = Depends(require_minimum_role(UserRole.GUEST)),
     session: Session = Depends(get_db_session),
     search_service=Depends(get_search_service),
 ) -> TropeSequenceGraphResponse:
@@ -150,6 +151,8 @@ def build_trope_sequence_graph_endpoint(
                 max_stories=payload.max_stories,
                 max_links_per_node=payload.max_links_per_node,
                 vertical_spacing=payload.vertical_spacing,
+                actor_role=auth_context.user.role,
+                actor_territories=auth_context.user.territories,
             )
         )
     except VisualizationValidationError as exc:

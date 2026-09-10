@@ -25,11 +25,12 @@ def make_csv_bytes(rows: list[dict[str, str]]) -> bytes:
     return buffer.getvalue().encode("utf-8-sig")
 
 
-def make_row(*, title: str, tropes: str = "", keywords: str = "") -> dict[str, str]:
+def make_row(*, title: str, tropes: str = "", keywords: str = "", territory: str = "") -> dict[str, str]:
     row = {column: "" for column in CSV_COLUMNS}
     row["Story title (Eng)"] = title
     row[TROPE_FIELD] = tropes
     row[KEYWORD_FIELD] = keywords
+    row["territory"] = territory
     return row
 
 
@@ -66,7 +67,7 @@ def test_contributor_story_and_term_changes_create_review_items_and_admin_can_re
 
     with TestClient(app) as admin_client, TestClient(app) as contributor_client:
         authenticate_admin(admin_client)
-        upload_dataset(admin_client, [make_row(title="Imported Story")])
+        upload_dataset(admin_client, [make_row(title="Imported Story", territory="Tahiti")])
         authenticate_role(
             admin_client,
             contributor_client,
@@ -74,13 +75,14 @@ def test_contributor_story_and_term_changes_create_review_items_and_admin_can_re
             display_name="Contributor User",
             role=UserRole.CONTRIBUTOR,
             password="contributor-password",
+            territories=["Tahiti"],
         )
 
         create_response = contributor_client.post(
             "/api/stories",
             json={
                 "expected_dataset_version": 1,
-                "fields": {"Story title (Eng)": "Contributor Story"},
+                "fields": {"Story title (Eng)": "Contributor Story", "territory": "Tahiti"},
                 "tropes": ["New Pending Trope"],
                 "keywords": ["Night Canoe"],
             },
@@ -91,7 +93,7 @@ def test_contributor_story_and_term_changes_create_review_items_and_admin_can_re
         review_items_response = admin_client.get("/api/review/items")
         assert review_items_response.status_code == 200
         review_items = review_items_response.json()
-        assert len(review_items) == 5
+        assert len(review_items) == 6
         assert {item["review_type"] for item in review_items} == {
             "story_created",
             "trope_pending",
@@ -120,6 +122,18 @@ def test_contributor_story_and_term_changes_create_review_items_and_admin_can_re
         assert approve_story_field.status_code == 200
         assert approve_story_field.json()["status"] == "approved"
         assert approve_story_field.json()["metadata"]["resolution"]["decision"] == "approved"
+
+        territory_field_review = next(
+            item
+            for item in review_items
+            if item["metadata"].get("change_kind") == "story_field"
+            and item["metadata"].get("field_name") == "territory"
+        )
+        approve_territory_field = admin_client.post(
+            f"/api/review/items/{territory_field_review['id']}/approve",
+            json={"note": "Territory approved"},
+        )
+        assert approve_territory_field.status_code == 200
 
         reject_story_keyword = admin_client.post(
             f"/api/review/items/{story_keyword_review['id']}/reject",
@@ -175,7 +189,7 @@ def test_rejecting_story_field_review_reverts_only_that_field(monkeypatch, tmp_p
 
     with TestClient(app) as admin_client, TestClient(app) as contributor_client:
         authenticate_admin(admin_client)
-        upload_dataset(admin_client, [make_row(title="Imported Story")])
+        upload_dataset(admin_client, [make_row(title="Imported Story", territory="Tahiti")])
         authenticate_role(
             admin_client,
             contributor_client,
@@ -183,6 +197,7 @@ def test_rejecting_story_field_review_reverts_only_that_field(monkeypatch, tmp_p
             display_name="Contributor User",
             role=UserRole.CONTRIBUTOR,
             password="contributor-password",
+            territories=["Tahiti"],
         )
 
         imported_story = contributor_client.get("/api/stories").json()["items"][0]
@@ -237,7 +252,7 @@ def test_admin_can_reject_pending_trope_by_merging_into_existing_trope(monkeypat
 
     with TestClient(app) as admin_client, TestClient(app) as contributor_client:
         authenticate_admin(admin_client)
-        upload_dataset(admin_client, [make_row(title="Imported Story", tropes="§§ existing trope")])
+        upload_dataset(admin_client, [make_row(title="Imported Story", tropes="§§ existing trope", territory="Tahiti")])
         authenticate_role(
             admin_client,
             contributor_client,
@@ -245,6 +260,7 @@ def test_admin_can_reject_pending_trope_by_merging_into_existing_trope(monkeypat
             display_name="Contributor User",
             role=UserRole.CONTRIBUTOR,
             password="contributor-password",
+            territories=["Tahiti"],
         )
 
         imported_story = contributor_client.get("/api/stories").json()["items"][0]

@@ -3,12 +3,13 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.errors import api_error
-from app.api.deps import get_db_session
+from app.api.deps import get_current_auth_context_optional, get_db_session
 from app.services.exploration import (
     ExplorationNotFoundError,
     ExplorationValidationError,
     build_exploration_response,
 )
+from app.services.auth import AuthSessionContext
 
 
 class TropeCandidateResponse(BaseModel):
@@ -145,6 +146,7 @@ def build_exploration_network(
     payload: ExplorationNetworkRequest,
     session: Session = Depends(get_db_session),
     search_service=Depends(get_search_service),
+    auth_context: AuthSessionContext | None = Depends(get_current_auth_context_optional),
 ) -> ExplorationNetworkResponse:
     try:
         return ExplorationNetworkResponse(
@@ -158,6 +160,8 @@ def build_exploration_network(
                 min_similarity=payload.min_similarity,
                 related_limit=payload.related_limit,
                 candidate_limit=payload.candidate_limit,
+                actor_role=auth_context.user.role if auth_context else None,
+                actor_territories=auth_context.user.territories if auth_context else None,
             )
         )
     except ExplorationValidationError as exc:

@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db_session, require_minimum_role
 from app.db.models import TermKind, UserRole
+from app.services.auth import AuthSessionContext
 
 
 class SearchRequest(BaseModel):
@@ -47,7 +48,7 @@ def get_search_service(request: Request):
 @router.post("/tropes", response_model=SearchResponse)
 def search_tropes(
     payload: SearchRequest,
-    _: object = Depends(require_minimum_role(UserRole.GUEST)),
+    auth_context: AuthSessionContext = Depends(require_minimum_role(UserRole.GUEST)),
     session: Session = Depends(get_db_session),
     search_service=Depends(get_search_service),
 ) -> SearchResponse:
@@ -58,6 +59,8 @@ def search_tropes(
             payload.query,
             limit=payload.limit,
             include_string_matches=payload.include_string_matches,
+            actor_role=auth_context.user.role,
+            actor_territories=auth_context.user.territories,
         )
     )
 
@@ -65,7 +68,7 @@ def search_tropes(
 @router.post("/keywords", response_model=SearchResponse)
 def search_keywords(
     payload: SearchRequest,
-    _: object = Depends(require_minimum_role(UserRole.GUEST)),
+    auth_context: AuthSessionContext = Depends(require_minimum_role(UserRole.GUEST)),
     session: Session = Depends(get_db_session),
     search_service=Depends(get_search_service),
 ) -> SearchResponse:
@@ -76,6 +79,8 @@ def search_keywords(
             payload.query,
             limit=payload.limit,
             include_string_matches=payload.include_string_matches,
+            actor_role=auth_context.user.role,
+            actor_territories=auth_context.user.territories,
         )
     )
 
@@ -83,7 +88,7 @@ def search_keywords(
 @router.post("/themes", response_model=SearchResponse)
 def search_themes(
     payload: SearchRequest,
-    _: object = Depends(require_minimum_role(UserRole.GUEST)),
+    auth_context: AuthSessionContext = Depends(require_minimum_role(UserRole.GUEST)),
     session: Session = Depends(get_db_session),
     search_service=Depends(get_search_service),
 ) -> SearchResponse:
@@ -94,5 +99,7 @@ def search_themes(
             payload.query,
             limit=payload.limit,
             include_string_matches=payload.include_string_matches,
+            actor_role=auth_context.user.role,
+            actor_territories=auth_context.user.territories,
         )
     )

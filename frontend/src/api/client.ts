@@ -71,6 +71,7 @@ import type {
   TropeDetail,
   TropeSearchResponse,
   ThemeSearchResponse,
+  TerritoryListResponse,
 } from "./types";
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || "/api").replace(/\/$/, "");
@@ -354,6 +355,10 @@ export function requestDatasetRebuild(): Promise<DatasetRebuildResponse> {
 
 export function getStories(): Promise<StoryListResponse> {
   return request<StoryListResponse>("/stories");
+}
+
+export function getStoryTerritories(): Promise<TerritoryListResponse> {
+  return request<TerritoryListResponse>("/stories/territories");
 }
 
 export function getStory(storyId: string): Promise<StoryDetail> {
@@ -1080,10 +1085,15 @@ export function getUsers(): Promise<CurrentUser[]> {
   return request<CurrentUser[]>("/admin/users");
 }
 
+export function getAdminTerritories(): Promise<TerritoryListResponse> {
+  return request<TerritoryListResponse>("/admin/users/territories");
+}
+
 export function createUser(payload: {
   email: string;
   display_name: string;
   role: CurrentUser["role"];
+  territories: string[];
 }): Promise<CreateUserResponse> {
   return request<CreateUserResponse>("/admin/users", {
     method: "POST",
@@ -1096,8 +1106,10 @@ export function createUser(payload: {
 
 export function updateUser(payload: {
   user_id: string;
+  expected_user_version: number;
   display_name?: string;
   role?: CurrentUser["role"];
+  territories: string[];
 }): Promise<CurrentUser> {
   return request<CurrentUser>(`/admin/users/${payload.user_id}`, {
     method: "PATCH",
@@ -1105,8 +1117,10 @@ export function updateUser(payload: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
+      expected_user_version: payload.expected_user_version,
       display_name: payload.display_name,
       role: payload.role,
+      territories: payload.territories,
     }),
   });
 }

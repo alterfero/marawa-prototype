@@ -4,6 +4,7 @@ import {
   activateUser,
   createUser,
   deactivateUser,
+  getAdminTerritories,
   getErrorMessage,
   getUsers,
   issuePasswordReset,
@@ -21,6 +22,7 @@ interface PageNotice {
 interface UserDraft {
   display_name: string;
   role: UserRole;
+  territories: string[];
 }
 
 type IssuedToken =
@@ -37,10 +39,85 @@ function statusLabel(user: CurrentUser): string {
   return user.status.replace(/_/g, " ");
 }
 
+function territoryKey(territory: string): string {
+  return territory.replace(/\ufeff/g, "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function normalizeTerritories(territories: readonly string[] | null | undefined): string[] {
+  const labelsByKey = new Map<string, string>();
+  for (const territory of territories || []) {
+    const label = territory.replace(/\ufeff/g, "").trim();
+    const key = territoryKey(label);
+    if (key && !labelsByKey.has(key)) {
+      labelsByKey.set(key, label);
+    }
+  }
+
+  return [...labelsByKey.entries()]
+    .sort(([leftKey, leftLabel], [rightKey, rightLabel]) => leftKey.localeCompare(rightKey) || leftLabel.localeCompare(rightLabel))
+    .map(([, label]) => label);
+}
+
+function canonicalizeTerritories(territories: readonly string[], availableTerritories: readonly string[]): string[] {
+  const labelsByKey = new Map(normalizeTerritories(availableTerritories).map((territory) => [territoryKey(territory), territory]));
+  return normalizeTerritories(territories).map((territory) => labelsByKey.get(territoryKey(territory)) || territory);
+}
+
+function territoryCollectionsMatch(left: readonly string[], right: readonly string[]): boolean {
+  const leftKeys = normalizeTerritories(left).map(territoryKey);
+  const rightKeys = normalizeTerritories(right).map(territoryKey);
+  return leftKeys.length === rightKeys.length && leftKeys.every((key, index) => key === rightKeys[index]);
+}
+
+function updateTerritorySelection(territories: readonly string[], territory: string, selected: boolean): string[] {
+  const key = territoryKey(territory);
+  const remainingTerritories = territories.filter((item) => territoryKey(item) !== key);
+  return normalizeTerritories(selected ? [...remainingTerritories, territory] : remainingTerritories);
+}
+
+interface TerritoryAccessFieldProps {
+  availableTerritories: readonly string[];
+  disabled: boolean;
+  onChange: (territory: string, selected: boolean) => void;
+  selectedTerritories: readonly string[];
+}
+
+function TerritoryAccessField({
+  availableTerritories,
+  disabled,
+  onChange,
+  selectedTerritories,
+}: TerritoryAccessFieldProps) {
+  const territories = normalizeTerritories([...availableTerritories, ...selectedTerritories]);
+  const selected = new Set(normalizeTerritories(selectedTerritories).map(territoryKey));
+
+  return (
+    <fieldset className="field field-span-full territory-access-field" disabled={disabled}>
+      <legend>Story territories</legend>
+      <p className="field-help">
+        Contributors can only view, enter, and edit stories in checked territories. Leaving every territory unchecked grants no story access.
+      </p>
+      {territories.length ? (
+        <div className="territory-access-options">
+          {territories.map((territory) => (
+            <label className="checkbox-row territory-access-option" key={territory}>
+              <input checked={selected.has(territoryKey(territory))} onChange={(event) => onChange(territory, event.target.checked)} type="checkbox" />
+              <span>{territory}</span>
+            </label>
+          ))}
+        </div>
+      ) : (
+        <p className="muted">No territories are available in the current dataset.</p>
+      )}
+    </fieldset>
+  );
+}
+
 export function AdminUsersPage() {
   const { user: currentUser } = useAuth();
   const [users, setUsers] = useState<CurrentUser[]>([]);
   const [drafts, setDrafts] = useState<Record<string, UserDraft>>({});
+  const [territoryOptions, setTerritoryOptions] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyUserId, setBusyUserId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -49,12 +126,15 @@ export function AdminUsersPage() {
   const [newEmail, setNewEmail] = useState("");
   const [newDisplayName, setNewDisplayName] = useState("");
   const [newRole, setNewRole] = useState<UserRole>("guest");
+  const [newTerritories, setNewTerritories] = useState<string[]>([]);
 
   async function loadUsers() {
     try {
       setLoading(true);
-      const nextUsers = await getUsers();
+      const [nextUsers, territoryResponse] = await Promise.all([getUsers(), getAdminTerritories()]);
+      const nextTerritoryOptions = normalizeTerritories(territoryResponse.items);
       setUsers(nextUsers);
+      setTerritoryOptions(nextTerritoryOptions);
       setDrafts(
         Object.fromEntries(
           nextUsers.map((user) => [
@@ -62,6 +142,7 @@ export function AdminUsersPage() {
             {
               display_name: user.display_name,
               role: user.role,
+              territories: canonicalizeTerritories(user.territories, nextTerritoryOptions),
             },
           ]),
         ),
@@ -90,11 +171,13 @@ export function AdminUsersPage() {
         email: newEmail,
         display_name: newDisplayName,
         role: newRole,
+        territories: newRole === "contributor" ? canonicalizeTerritories(newTerritories, territoryOptions) : [],
       });
       setIssuedToken({ kind: "invite", response });
       setNewEmail("");
       setNewDisplayName("");
       setNewRole("guest");
+      setNewTerritories([]);
       await loadUsers();
       setNotice({
         tone: "success",
@@ -136,7 +219,7 @@ export function AdminUsersPage() {
         <div className="panel-header">
           <div>
             <h1>User management</h1>
-            <p className="muted">Create invited accounts, change roles, deactivate access, and issue admin reset tokens.</p>
+            <p className="muted">Create invited accounts, change roles and contributor territory access, deactivate access, and issue admin reset tokens.</p>
           </div>
           <button className="button button-ghost" disabled={loading} onClick={() => void loadUsers()} type="button">
             {loading ? "Loading..." : "Refresh"}
@@ -203,12 +286,33 @@ export function AdminUsersPage() {
           </label>
           <label className="field">
             <span>Role</span>
-            <select className="input" disabled={creating} onChange={(event) => setNewRole(event.target.value as UserRole)} value={newRole}>
+            <select
+              className="input"
+              disabled={creating}
+              onChange={(event) => {
+                const role = event.target.value as UserRole;
+                setNewRole(role);
+                if (role !== "contributor") {
+                  setNewTerritories([]);
+                }
+              }}
+              value={newRole}
+            >
               <option value="guest">Guest</option>
               <option value="contributor">Contributor</option>
               <option value="admin">Admin</option>
             </select>
           </label>
+          {newRole === "contributor" ? (
+            <TerritoryAccessField
+              availableTerritories={territoryOptions}
+              disabled={creating}
+              onChange={(territory, selected) =>
+                setNewTerritories((current) => updateTerritorySelection(current, territory, selected))
+              }
+              selectedTerritories={newTerritories}
+            />
+          ) : null}
           <div className="field field-span-full">
             <div className="button-row wrap-row">
               <button className="button" disabled={creating || !newEmail.trim() || !newDisplayName.trim()} type="submit">
@@ -227,10 +331,20 @@ export function AdminUsersPage() {
 
         <div className="list">
           {users.map((user) => {
-            const draft = drafts[user.id] || { display_name: user.display_name, role: user.role };
+            const userTerritories = canonicalizeTerritories(user.territories, territoryOptions);
+            const draft = drafts[user.id] || {
+              display_name: user.display_name,
+              role: user.role,
+              territories: userTerritories,
+            };
             const isBusy = busyUserId === user.id;
             const isSelf = currentUser?.id === user.id;
-            const hasChanges = draft.display_name !== user.display_name || draft.role !== user.role;
+            const hasChanges =
+              draft.display_name !== user.display_name ||
+              draft.role !== user.role ||
+              (draft.role === "contributor" &&
+                user.role === "contributor" &&
+                !territoryCollectionsMatch(draft.territories, userTerritories));
 
             return (
               <article className="card" key={user.id}>
@@ -252,13 +366,16 @@ export function AdminUsersPage() {
                       className="input"
                       disabled={isBusy}
                       onChange={(event) =>
-                        setDrafts((current) => ({
-                          ...current,
-                          [user.id]: {
-                            ...draft,
-                            display_name: event.target.value,
-                          },
-                        }))
+                        setDrafts((current) => {
+                          const currentDraft = current[user.id] || draft;
+                          return {
+                            ...current,
+                            [user.id]: {
+                              ...currentDraft,
+                              display_name: event.target.value,
+                            },
+                          };
+                        })
                       }
                       value={draft.display_name}
                     />
@@ -270,13 +387,18 @@ export function AdminUsersPage() {
                       className="input"
                       disabled={isBusy}
                       onChange={(event) =>
-                        setDrafts((current) => ({
-                          ...current,
-                          [user.id]: {
-                            ...draft,
-                            role: event.target.value as UserRole,
-                          },
-                        }))
+                        setDrafts((current) => {
+                          const currentDraft = current[user.id] || draft;
+                          const role = event.target.value as UserRole;
+                          return {
+                            ...current,
+                            [user.id]: {
+                              ...currentDraft,
+                              role,
+                              territories: role === "contributor" ? currentDraft.territories : [],
+                            },
+                          };
+                        })
                       }
                       value={draft.role}
                     >
@@ -285,6 +407,26 @@ export function AdminUsersPage() {
                       <option value="admin">Admin</option>
                     </select>
                   </label>
+
+                  {draft.role === "contributor" ? (
+                    <TerritoryAccessField
+                      availableTerritories={territoryOptions}
+                      disabled={isBusy}
+                      onChange={(territory, selected) =>
+                        setDrafts((current) => {
+                          const currentDraft = current[user.id] || draft;
+                          return {
+                            ...current,
+                            [user.id]: {
+                              ...currentDraft,
+                              territories: updateTerritorySelection(currentDraft.territories, territory, selected),
+                            },
+                          };
+                        })
+                      }
+                      selectedTerritories={draft.territories}
+                    />
+                  ) : null}
                 </div>
 
                 <div className="button-row wrap-row">
@@ -297,8 +439,10 @@ export function AdminUsersPage() {
                         async () => {
                           await updateUser({
                             user_id: user.id,
+                            expected_user_version: user.version,
                             display_name: draft.display_name,
                             role: draft.role,
+                            territories: draft.role === "contributor" ? canonicalizeTerritories(draft.territories, territoryOptions) : [],
                           });
                         },
                         {

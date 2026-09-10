@@ -26,11 +26,12 @@ def make_csv_bytes(rows: list[dict[str, str]]) -> bytes:
     return buffer.getvalue().encode("utf-8-sig")
 
 
-def make_row(*, title: str, tropes: str = "", keywords: str = "") -> dict[str, str]:
+def make_row(*, title: str, tropes: str = "", keywords: str = "", territory: str = "") -> dict[str, str]:
     row = {column: "" for column in CSV_COLUMNS}
     row["Story title (Eng)"] = title
     row[TROPE_FIELD] = tropes
     row[KEYWORD_FIELD] = keywords
+    row["territory"] = territory
     return row
 
 
@@ -117,7 +118,7 @@ def test_contributor_and_admin_access_matrix(monkeypatch, tmp_path) -> None:
 
     with TestClient(app) as admin_client:
         authenticate_admin(admin_client)
-        upload_dataset(admin_client, [make_row(title="Story One", keywords="moon")])
+        upload_dataset(admin_client, [make_row(title="Story One", keywords="moon", territory="Tahiti")])
 
     with TestClient(app) as contributor_client:
         with TestClient(app) as admin_client:
@@ -129,6 +130,7 @@ def test_contributor_and_admin_access_matrix(monkeypatch, tmp_path) -> None:
                 display_name="Contributor User",
                 role=UserRole.CONTRIBUTOR,
                 password="contributor-password",
+                territories=["Tahiti"],
             )
 
             export_response = admin_client.get("/api/dataset/export.csv")
@@ -137,7 +139,7 @@ def test_contributor_and_admin_access_matrix(monkeypatch, tmp_path) -> None:
             "/api/stories",
             json={
                 "expected_dataset_version": 1,
-                "fields": {"Story title (Eng)": "Contributor Story"},
+                "fields": {"Story title (Eng)": "Contributor Story", "territory": "Tahiti"},
                 "tropes": ["Moon Bride"],
                 "keywords": ["night canoe"],
             },
@@ -166,7 +168,7 @@ def test_story_completeness_role_rules(monkeypatch, tmp_path) -> None:
 
     with TestClient(app) as admin_client:
         authenticate_admin(admin_client)
-        upload_dataset(admin_client, [make_row(title="Story One")])
+        upload_dataset(admin_client, [make_row(title="Story One", territory="Tahiti")])
 
     with TestClient(app) as contributor_client, TestClient(app) as admin_client:
         authenticate_admin(admin_client)
@@ -177,6 +179,7 @@ def test_story_completeness_role_rules(monkeypatch, tmp_path) -> None:
             display_name="Contributor User",
             role=UserRole.CONTRIBUTOR,
             password="contributor-password",
+            territories=["Tahiti"],
         )
 
         story = contributor_client.get("/api/stories").json()["items"][0]
@@ -225,7 +228,7 @@ def test_only_admins_can_create_themes(monkeypatch, tmp_path) -> None:
 
     with TestClient(app) as admin_client, TestClient(app) as contributor_client:
         authenticate_admin(admin_client)
-        upload_dataset(admin_client, [make_row(title="Story One")])
+        upload_dataset(admin_client, [make_row(title="Story One", territory="Tahiti")])
         authenticate_role(
             admin_client,
             contributor_client,
@@ -233,6 +236,7 @@ def test_only_admins_can_create_themes(monkeypatch, tmp_path) -> None:
             display_name="Contributor User",
             role=UserRole.CONTRIBUTOR,
             password="contributor-password",
+            territories=["Tahiti"],
         )
 
         story = contributor_client.get("/api/stories").json()["items"][0]
@@ -241,7 +245,11 @@ def test_only_admins_can_create_themes(monkeypatch, tmp_path) -> None:
             "/api/stories",
             json={
                 "expected_dataset_version": 1,
-                "fields": {"Story title (Eng)": "Blocked story", THEME_FIELD: "§§ Contributor theme"},
+                "fields": {
+                    "Story title (Eng)": "Blocked story",
+                    "territory": "Tahiti",
+                    THEME_FIELD: "§§ Contributor theme",
+                },
                 "tropes": [],
                 "keywords": [],
             },

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from sqlalchemy import case, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
@@ -25,6 +27,7 @@ from app.db.models import (
 from app.services.audit import record_audit_event
 from app.services.reviews import queue_term_review_item
 from app.services.stories import sync_story_derived_fields
+from app.services.territory_access import can_access_story_fields
 
 
 TITLE_FIELDS = [
@@ -116,6 +119,7 @@ def ensure_canonical_trope(
     *,
     actor_user_id: str | None = None,
     actor_role: UserRole | None = None,
+    actor_territories: Iterable[object] | None = None,
 ) -> tuple[dict, bool]:
     active_dataset = session.scalar(select(Dataset).where(Dataset.status == DatasetStatus.ACTIVE))
     if active_dataset is None:
@@ -133,7 +137,12 @@ def ensure_canonical_trope(
         )
     )
     if trope is not None:
-        return _serialize_trope_summary(trope), False
+        return _serialize_trope_summary_for_actor(
+            session,
+            trope,
+            actor_role=actor_role,
+            actor_territories=actor_territories,
+        ), False
 
     trope = Trope(
         dataset_id=active_dataset.id,
@@ -177,12 +186,28 @@ def ensure_canonical_trope(
         )
         if trope is None:
             raise
-        return _serialize_trope_summary(trope), False
+        return _serialize_trope_summary_for_actor(
+            session,
+            trope,
+            actor_role=actor_role,
+            actor_territories=actor_territories,
+        ), False
 
-    return _serialize_trope_summary(trope), True
+    return _serialize_trope_summary_for_actor(
+        session,
+        trope,
+        actor_role=actor_role,
+        actor_territories=actor_territories,
+    ), True
 
 
-def get_trope_detail(session: Session, trope_id: str) -> dict:
+def get_trope_detail(
+    session: Session,
+    trope_id: str,
+    *,
+    actor_role: UserRole | None = None,
+    actor_territories: Iterable[object] | None = None,
+) -> dict:
     active_dataset = session.scalar(select(Dataset).where(Dataset.status == DatasetStatus.ACTIVE))
     if active_dataset is None:
         raise TropeLookupNotFoundError("Canonical trope not found.")
@@ -211,19 +236,29 @@ def get_trope_detail(session: Session, trope_id: str) -> dict:
         )
     ).all()
 
+    visible_stories = [
+        story
+        for story in stories
+        if can_access_story_fields(
+            story.fields_json,
+            actor_role=actor_role,
+            actor_territories=actor_territories,
+        )
+    ]
+
     return {
         "id": trope.id,
         "version": trope.version,
         "text": trope.text,
         "confirmation_status": trope.confirmation_status.value,
-        "story_count": len(stories),
+        "story_count": len(visible_stories),
         "stories": [
             {
                 "id": story.id,
                 "title": _story_title(story),
                 "source_row_number": story.source_row_number,
             }
-            for story in stories
+            for story in visible_stories
         ],
     }
 
@@ -487,6 +522,36 @@ def _serialize_trope_summary(trope: Trope) -> dict:
         "confirmation_status": trope.confirmation_status.value,
         "story_count": int(trope.cached_story_count or 0),
     }
+
+
+def _serialize_trope_summary_for_actor(
+    session: Session,
+    trope: Trope,
+    *,
+    actor_role: UserRole | None,
+    actor_territories: Iterable[object] | None,
+) -> dict:
+    summary = _serialize_trope_summary(trope)
+    if actor_role != UserRole.CONTRIBUTOR:
+        return summary
+
+    story_fields = session.scalars(
+        select(Story.fields_json)
+        .join(StoryTrope, StoryTrope.story_id == Story.id)
+        .where(
+            Story.dataset_id == trope.dataset_id,
+            StoryTrope.trope_id == trope.id,
+        )
+    ).all()
+    summary["story_count"] = sum(
+        can_access_story_fields(
+            fields,
+            actor_role=actor_role,
+            actor_territories=actor_territories,
+        )
+        for fields in story_fields
+    )
+    return summary
 
 
 def _delete_trope_artifacts(session: Session, trope_id: str) -> None:

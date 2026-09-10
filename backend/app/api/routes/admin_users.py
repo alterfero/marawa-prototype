@@ -14,6 +14,7 @@ from app.services.auth import (
     UserLifecycleError,
     UserMutationConflictError,
     UserNotFoundError,
+    UserVersionConflictError,
     activate_user,
     create_invited_user,
     ensure_utc,
@@ -23,6 +24,7 @@ from app.services.auth import (
     update_user,
     deactivate_user,
 )
+from app.services.territory_access import list_available_territories
 
 
 class CurrentUserResponse(BaseModel):
@@ -30,6 +32,8 @@ class CurrentUserResponse(BaseModel):
     email: str
     display_name: str
     role: str
+    territories: list[str] = Field(default_factory=list)
+    version: int
     status: str
     last_login_at: str | None = None
     deactivated_at: str | None = None
@@ -41,6 +45,7 @@ class CreateUserRequest(BaseModel):
     email: str = Field(min_length=3)
     display_name: str = Field(min_length=1)
     role: UserRole = UserRole.GUEST
+    territories: list[str] = Field(default_factory=list)
 
 
 class CreateUserResponse(BaseModel):
@@ -51,8 +56,14 @@ class CreateUserResponse(BaseModel):
 
 
 class UpdateUserRequest(BaseModel):
+    expected_user_version: int = Field(ge=1)
     display_name: str | None = None
     role: UserRole | None = None
+    territories: list[str] | None = None
+
+
+class TerritoryListResponse(BaseModel):
+    items: list[str]
 
 
 class PasswordResetResponse(BaseModel):
@@ -82,6 +93,14 @@ def read_users(
     return [CurrentUserResponse(**user) for user in list_users(session)]
 
 
+@router.get("/territories", response_model=TerritoryListResponse)
+def read_available_territories(
+    _: AuthSessionContext = Depends(require_minimum_role(UserRole.ADMIN)),
+    session: Session = Depends(get_db_session),
+) -> TerritoryListResponse:
+    return TerritoryListResponse(items=list_available_territories(session))
+
+
 @router.post("", response_model=CreateUserResponse, status_code=201)
 def create_user(
     payload: CreateUserRequest,
@@ -96,6 +115,7 @@ def create_user(
             email=payload.email,
             display_name=payload.display_name,
             role=payload.role,
+            territories=payload.territories,
         )
     except UserAlreadyExistsError as exc:
         raise api_error(409, "user_exists", str(exc)) from exc
@@ -122,11 +142,20 @@ def patch_user(
             session,
             actor_user_id=auth_context.user.id,
             target_user_id=user_id,
+            expected_user_version=payload.expected_user_version,
             display_name=payload.display_name,
             role=payload.role,
+            territories=payload.territories,
         )
     except UserNotFoundError as exc:
         raise api_error(404, "user_not_found", str(exc)) from exc
+    except UserVersionConflictError as exc:
+        raise api_error(
+            409,
+            "user_version_conflict",
+            str(exc),
+            {"current_user_version": exc.current_user_version},
+        ) from exc
     except UserMutationConflictError as exc:
         raise api_error(409, "user_mutation_conflict", str(exc)) from exc
     except UserLifecycleError as exc:

@@ -12,11 +12,13 @@ from app.db.models import (
     UserRole,
 )
 from app.services.auth import AuthSessionContext
+from app.services.territory_access import list_available_territories_for_actor
 from app.services.stories import (
     ActiveDatasetNotFoundError,
     DatasetVersionConflictError,
     KeywordNotFoundError,
     StoryCompletenessPermissionError,
+    StoryTerritoryPermissionError,
     ThemeCreationPermissionError,
     StoryMutationValidationError,
     StoryKeywordNotFoundError,
@@ -40,6 +42,8 @@ from app.services.stories import (
     list_active_stories,
     replace_story_keyword,
     replace_story_trope,
+    serialize_story_theme_for_actor,
+    serialize_story_trope_for_actor,
     update_story,
     validate_story_trope,
 )
@@ -69,6 +73,10 @@ class StorySummaryResponse(BaseModel):
 class StoryListResponse(BaseModel):
     items: list[StorySummaryResponse]
     total: int
+
+
+class TerritoryListResponse(BaseModel):
+    items: list[str]
 
 
 class StoryTropeResponse(BaseModel):
@@ -279,6 +287,8 @@ def _raise_story_service_error(exc: Exception) -> None:
         raise api_error(400, "story_mutation_invalid", str(exc)) from exc
     if isinstance(exc, StoryCompletenessPermissionError):
         raise api_error(403, "story_completeness_forbidden", str(exc)) from exc
+    if isinstance(exc, StoryTerritoryPermissionError):
+        raise api_error(403, "story_territory_forbidden", str(exc)) from exc
     if isinstance(exc, ThemeCreationPermissionError):
         raise api_error(403, "theme_creation_forbidden", str(exc)) from exc
     raise exc
@@ -286,10 +296,30 @@ def _raise_story_service_error(exc: Exception) -> None:
 
 @router.get("", response_model=StoryListResponse)
 def read_stories(
-    _: object = Depends(require_minimum_role(UserRole.GUEST)),
+    auth_context: AuthSessionContext = Depends(require_minimum_role(UserRole.GUEST)),
     session: Session = Depends(get_db_session),
 ) -> StoryListResponse:
-    return StoryListResponse(**list_active_stories(session))
+    return StoryListResponse(
+        **list_active_stories(
+            session,
+            actor_role=auth_context.user.role,
+            actor_territories=auth_context.user.territories,
+        )
+    )
+
+
+@router.get("/territories", response_model=TerritoryListResponse)
+def read_story_territories(
+    auth_context: AuthSessionContext = Depends(require_minimum_role(UserRole.CONTRIBUTOR)),
+    session: Session = Depends(get_db_session),
+) -> TerritoryListResponse:
+    return TerritoryListResponse(
+        items=list_available_territories_for_actor(
+            session,
+            actor_role=auth_context.user.role,
+            actor_territories=auth_context.user.territories,
+        )
+    )
 
 
 @router.post("", response_model=CreateStoryResponse, status_code=201)
@@ -307,12 +337,20 @@ def create_story_record(
             keywords=payload.keywords,
             actor_user_id=auth_context.user.id,
             actor_role=auth_context.user.role,
+            actor_territories=auth_context.user.territories,
         )
     except Exception as exc:
         _raise_story_service_error(exc)
 
     return CreateStoryResponse(
-        story=StoryDetailResponse(**get_story_detail(session, story.id)),
+        story=StoryDetailResponse(
+            **get_story_detail(
+                session,
+                story.id,
+                actor_role=auth_context.user.role,
+                actor_territories=auth_context.user.territories,
+            )
+        ),
         dataset_version=dataset.version,
         queued_job=_queued_job_summary(job),
     )
@@ -334,12 +372,20 @@ def update_story_record(
             completeness=payload.completeness,
             actor_user_id=auth_context.user.id,
             actor_role=auth_context.user.role,
+            actor_territories=auth_context.user.territories,
         )
     except Exception as exc:
         _raise_story_service_error(exc)
 
     return CreateStoryResponse(
-        story=StoryDetailResponse(**get_story_detail(session, story.id)),
+        story=StoryDetailResponse(
+            **get_story_detail(
+                session,
+                story.id,
+                actor_role=auth_context.user.role,
+                actor_territories=auth_context.user.territories,
+            )
+        ),
         dataset_version=dataset.version,
         queued_job=_queued_job_summary(job),
     )
@@ -348,11 +394,18 @@ def update_story_record(
 @router.get("/{story_id}", response_model=StoryDetailResponse)
 def read_story(
     story_id: str,
-    _: object = Depends(require_minimum_role(UserRole.GUEST)),
+    auth_context: AuthSessionContext = Depends(require_minimum_role(UserRole.GUEST)),
     session: Session = Depends(get_db_session),
 ) -> StoryDetailResponse:
     try:
-        return StoryDetailResponse(**get_story_detail(session, story_id))
+        return StoryDetailResponse(
+            **get_story_detail(
+                session,
+                story_id,
+                actor_role=auth_context.user.role,
+                actor_territories=auth_context.user.territories,
+            )
+        )
     except Exception as exc:
         _raise_story_service_error(exc)
 
@@ -360,11 +413,18 @@ def read_story(
 @router.get("/{story_id}/tropes", response_model=StoryTropesResponse)
 def read_story_tropes(
     story_id: str,
-    _: object = Depends(require_minimum_role(UserRole.GUEST)),
+    auth_context: AuthSessionContext = Depends(require_minimum_role(UserRole.GUEST)),
     session: Session = Depends(get_db_session),
 ) -> StoryTropesResponse:
     try:
-        return StoryTropesResponse(**get_story_tropes(session, story_id))
+        return StoryTropesResponse(
+            **get_story_tropes(
+                session,
+                story_id,
+                actor_role=auth_context.user.role,
+                actor_territories=auth_context.user.territories,
+            )
+        )
     except Exception as exc:
         _raise_story_service_error(exc)
 
@@ -372,11 +432,18 @@ def read_story_tropes(
 @router.get("/{story_id}/keywords", response_model=StoryKeywordsResponse)
 def read_story_keywords(
     story_id: str,
-    _: object = Depends(require_minimum_role(UserRole.GUEST)),
+    auth_context: AuthSessionContext = Depends(require_minimum_role(UserRole.GUEST)),
     session: Session = Depends(get_db_session),
 ) -> StoryKeywordsResponse:
     try:
-        return StoryKeywordsResponse(**get_story_keywords(session, story_id))
+        return StoryKeywordsResponse(
+            **get_story_keywords(
+                session,
+                story_id,
+                actor_role=auth_context.user.role,
+                actor_territories=auth_context.user.territories,
+            )
+        )
     except Exception as exc:
         _raise_story_service_error(exc)
 
@@ -384,11 +451,18 @@ def read_story_keywords(
 @router.get("/{story_id}/themes", response_model=StoryThemesResponse)
 def read_story_themes(
     story_id: str,
-    _: object = Depends(require_minimum_role(UserRole.GUEST)),
+    auth_context: AuthSessionContext = Depends(require_minimum_role(UserRole.GUEST)),
     session: Session = Depends(get_db_session),
 ) -> StoryThemesResponse:
     try:
-        return StoryThemesResponse(**get_story_themes(session, story_id))
+        return StoryThemesResponse(
+            **get_story_themes(
+                session,
+                story_id,
+                actor_role=auth_context.user.role,
+                actor_territories=auth_context.user.territories,
+            )
+        )
     except Exception as exc:
         _raise_story_service_error(exc)
 
@@ -410,6 +484,7 @@ def create_story_trope(
             origin=payload.origin,
             actor_user_id=auth_context.user.id,
             actor_role=auth_context.user.role,
+            actor_territories=auth_context.user.territories,
         )
     except Exception as exc:
         _raise_story_service_error(exc)
@@ -419,14 +494,13 @@ def create_story_trope(
         story_version=story.version,
         dataset_version=dataset.version,
         trope=StoryTropeResponse(
-            id=link.trope.id,
-            version=link.trope.version,
-            text=link.trope.text,
-            story_count=int(link.trope.cached_story_count or 0),
-            confirmation_status=link.trope.confirmation_status,
-            origin=link.origin.value,
-            status=link.status.value,
-            position=link.position,
+            **serialize_story_trope_for_actor(
+                session,
+                link,
+                dataset_id=dataset.id,
+                actor_role=auth_context.user.role,
+                actor_territories=auth_context.user.territories,
+            )
         ),
         queued_job=_queued_job_summary(job),
     )
@@ -448,6 +522,7 @@ def create_story_keyword(
             text=payload.text,
             actor_user_id=auth_context.user.id,
             actor_role=auth_context.user.role,
+            actor_territories=auth_context.user.territories,
         )
     except Exception as exc:
         _raise_story_service_error(exc)
@@ -481,6 +556,7 @@ def create_story_theme(
             text=payload.text,
             actor_user_id=auth_context.user.id,
             actor_role=auth_context.user.role,
+            actor_territories=auth_context.user.territories,
         )
     except Exception as exc:
         _raise_story_service_error(exc)
@@ -490,12 +566,13 @@ def create_story_theme(
         story_version=story.version,
         dataset_version=dataset.version,
         theme=StoryThemeResponse(
-            id=link.theme.id,
-            version=link.theme.version,
-            text=link.theme.text,
-            story_count=int(link.theme.cached_story_count or 0),
-            confirmation_status=link.theme.confirmation_status,
-            position=link.position,
+            **serialize_story_theme_for_actor(
+                session,
+                link,
+                dataset_id=dataset.id,
+                actor_role=auth_context.user.role,
+                actor_territories=auth_context.user.territories,
+            )
         ),
         queued_job=_queued_job_summary(job),
     )
@@ -519,6 +596,7 @@ def update_story_trope(
             text=payload.text,
             actor_user_id=auth_context.user.id,
             actor_role=auth_context.user.role,
+            actor_territories=auth_context.user.territories,
         )
     except Exception as exc:
         _raise_story_service_error(exc)
@@ -528,14 +606,13 @@ def update_story_trope(
         story_version=story.version,
         dataset_version=dataset.version,
         trope=StoryTropeResponse(
-            id=link.trope.id,
-            version=link.trope.version,
-            text=link.trope.text,
-            story_count=int(link.trope.cached_story_count or 0),
-            confirmation_status=link.trope.confirmation_status,
-            origin=link.origin.value,
-            status=link.status.value,
-            position=link.position,
+            **serialize_story_trope_for_actor(
+                session,
+                link,
+                dataset_id=dataset.id,
+                actor_role=auth_context.user.role,
+                actor_territories=auth_context.user.territories,
+            )
         ),
         queued_job=_queued_job_summary(job),
     )
@@ -559,6 +636,7 @@ def update_story_keyword(
             text=payload.text,
             actor_user_id=auth_context.user.id,
             actor_role=auth_context.user.role,
+            actor_territories=auth_context.user.territories,
         )
     except Exception as exc:
         _raise_story_service_error(exc)
@@ -592,6 +670,7 @@ def remove_story_trope(
             expected_story_version=payload.expected_story_version,
             actor_user_id=auth_context.user.id,
             actor_role=auth_context.user.role,
+            actor_territories=auth_context.user.territories,
         )
     except Exception as exc:
         _raise_story_service_error(exc)
@@ -621,6 +700,7 @@ def remove_story_keyword(
             expected_story_version=payload.expected_story_version,
             actor_user_id=auth_context.user.id,
             actor_role=auth_context.user.role,
+            actor_territories=auth_context.user.territories,
         )
     except Exception as exc:
         _raise_story_service_error(exc)
@@ -649,6 +729,8 @@ def remove_story_theme(
             theme_id,
             expected_story_version=payload.expected_story_version,
             actor_user_id=auth_context.user.id,
+            actor_role=auth_context.user.role,
+            actor_territories=auth_context.user.territories,
         )
     except Exception as exc:
         _raise_story_service_error(exc)
@@ -678,6 +760,7 @@ def approve_story_trope(
             expected_story_version=payload.expected_story_version,
             actor_user_id=auth_context.user.id,
             actor_role=auth_context.user.role,
+            actor_territories=auth_context.user.territories,
         )
     except Exception as exc:
         _raise_story_service_error(exc)
@@ -687,14 +770,13 @@ def approve_story_trope(
         story_version=story.version,
         dataset_version=dataset.version,
         trope=StoryTropeResponse(
-            id=link.trope.id,
-            version=link.trope.version,
-            text=link.trope.text,
-            story_count=int(link.trope.cached_story_count or 0),
-            confirmation_status=link.trope.confirmation_status,
-            origin=link.origin.value,
-            status=link.status.value,
-            position=link.position,
+            **serialize_story_trope_for_actor(
+                session,
+                link,
+                dataset_id=dataset.id,
+                actor_role=auth_context.user.role,
+                actor_territories=auth_context.user.territories,
+            )
         ),
         queued_job=_queued_job_summary(job),
     )

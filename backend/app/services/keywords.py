@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from sqlalchemy import case, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
@@ -23,6 +25,7 @@ from app.db.models import (
 from app.services.audit import record_audit_event
 from app.services.reviews import queue_term_review_item
 from app.services.stories import sync_story_derived_fields
+from app.services.territory_access import can_access_story_fields
 
 
 TITLE_FIELDS = [
@@ -58,6 +61,8 @@ def list_canonical_keywords(
     unused_only: bool = False,
     query: str | None = None,
     limit: int = 100,
+    actor_role: UserRole | None = None,
+    actor_territories: Iterable[object] | None = None,
 ) -> list[dict]:
     active_dataset = _get_active_dataset(session)
     if active_dataset is None:
@@ -73,8 +78,46 @@ def list_canonical_keywords(
     ).where(Keyword.dataset_id == active_dataset.id)
     if query_text:
         statement = statement.where(func.lower(Keyword.text).contains(query_text.lower()))
-    if unused_only:
+    scope_story_counts = actor_role == UserRole.CONTRIBUTOR
+    if unused_only and not scope_story_counts:
         statement = statement.where(Keyword.cached_story_count == 0)
+
+    ordered_statement = statement.order_by(Keyword.text.asc(), Keyword.id.asc())
+    if not (scope_story_counts and unused_only):
+        ordered_statement = ordered_statement.limit(limit)
+    rows = session.execute(ordered_statement).all()
+    visible_story_counts_by_keyword_id: dict[str, int] = {}
+    if scope_story_counts and rows:
+        keyword_ids = [row.id for row in rows]
+        visible_story_counts_by_keyword_id = {keyword_id: 0 for keyword_id in keyword_ids}
+        story_rows = session.execute(
+            select(
+                StoryKeyword.keyword_id.label("keyword_id"),
+                Story.fields_json.label("fields_json"),
+            )
+            .select_from(StoryKeyword)
+            .join(Story, Story.id == StoryKeyword.story_id)
+            .where(
+                Story.dataset_id == active_dataset.id,
+                StoryKeyword.keyword_id.in_(keyword_ids),
+            )
+        ).all()
+        for story_row in story_rows:
+            if can_access_story_fields(
+                story_row.fields_json,
+                actor_role=actor_role,
+                actor_territories=actor_territories,
+            ):
+                visible_story_counts_by_keyword_id[story_row.keyword_id] = (
+                    visible_story_counts_by_keyword_id.get(story_row.keyword_id, 0) + 1
+                )
+
+    if scope_story_counts and unused_only:
+        rows = [
+            row
+            for row in rows
+            if visible_story_counts_by_keyword_id.get(row.id, 0) == 0
+        ][:limit]
 
     return [
         {
@@ -82,9 +125,13 @@ def list_canonical_keywords(
             "version": row.version,
             "text": row.text,
             "confirmation_status": row.confirmation_status.value,
-            "story_count": int(row.story_count or 0),
+            "story_count": (
+                visible_story_counts_by_keyword_id.get(row.id, 0)
+                if scope_story_counts
+                else int(row.story_count or 0)
+            ),
         }
-        for row in session.execute(statement.order_by(Keyword.text.asc(), Keyword.id.asc()).limit(limit)).all()
+        for row in rows
     ]
 
 
@@ -94,6 +141,7 @@ def ensure_canonical_keyword(
     *,
     actor_user_id: str | None = None,
     actor_role: UserRole | None = None,
+    actor_territories: Iterable[object] | None = None,
 ) -> tuple[dict, bool]:
     active_dataset = _get_active_dataset(session)
     if active_dataset is None:
@@ -111,7 +159,12 @@ def ensure_canonical_keyword(
         )
     )
     if keyword is not None:
-        return _serialize_keyword_summary(keyword), False
+        return _serialize_keyword_summary_for_actor(
+            session,
+            keyword,
+            actor_role=actor_role,
+            actor_territories=actor_territories,
+        ), False
 
     keyword = Keyword(
         dataset_id=active_dataset.id,
@@ -155,12 +208,28 @@ def ensure_canonical_keyword(
         )
         if keyword is None:
             raise
-        return _serialize_keyword_summary(keyword), False
+        return _serialize_keyword_summary_for_actor(
+            session,
+            keyword,
+            actor_role=actor_role,
+            actor_territories=actor_territories,
+        ), False
 
-    return _serialize_keyword_summary(keyword), True
+    return _serialize_keyword_summary_for_actor(
+        session,
+        keyword,
+        actor_role=actor_role,
+        actor_territories=actor_territories,
+    ), True
 
 
-def get_keyword_detail(session: Session, keyword_id: str) -> dict:
+def get_keyword_detail(
+    session: Session,
+    keyword_id: str,
+    *,
+    actor_role: UserRole | None = None,
+    actor_territories: Iterable[object] | None = None,
+) -> dict:
     active_dataset = _require_active_dataset(session)
     keyword = _get_active_keyword(session, active_dataset.id, keyword_id)
     stories = session.scalars(
@@ -178,15 +247,26 @@ def get_keyword_detail(session: Session, keyword_id: str) -> dict:
         )
     ).all()
 
+    visible_stories = [
+        story
+        for story in stories
+        if can_access_story_fields(
+            story.fields_json,
+            actor_role=actor_role,
+            actor_territories=actor_territories,
+        )
+    ]
+
     return {
         **_serialize_keyword_summary(keyword),
+        "story_count": len(visible_stories),
         "stories": [
             {
                 "id": story.id,
                 "title": _story_title(story),
                 "source_row_number": story.source_row_number,
             }
-            for story in stories
+            for story in visible_stories
         ],
     }
 
@@ -546,6 +626,36 @@ def _serialize_keyword_summary(keyword: Keyword) -> dict:
         "confirmation_status": keyword.confirmation_status.value,
         "story_count": int(keyword.cached_story_count or 0),
     }
+
+
+def _serialize_keyword_summary_for_actor(
+    session: Session,
+    keyword: Keyword,
+    *,
+    actor_role: UserRole | None,
+    actor_territories: Iterable[object] | None,
+) -> dict:
+    summary = _serialize_keyword_summary(keyword)
+    if actor_role != UserRole.CONTRIBUTOR:
+        return summary
+
+    story_fields = session.scalars(
+        select(Story.fields_json)
+        .join(StoryKeyword, StoryKeyword.story_id == Story.id)
+        .where(
+            Story.dataset_id == keyword.dataset_id,
+            StoryKeyword.keyword_id == keyword.id,
+        )
+    ).all()
+    summary["story_count"] = sum(
+        can_access_story_fields(
+            fields,
+            actor_role=actor_role,
+            actor_territories=actor_territories,
+        )
+        for fields in story_fields
+    )
+    return summary
 
 
 def _delete_keyword_artifacts(session: Session, keyword_id: str) -> None:

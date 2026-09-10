@@ -92,23 +92,37 @@ def read_keywords(
     unused_only: bool = Query(default=False),
     q: str | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=5000),
-    _: object = Depends(require_minimum_role(UserRole.GUEST)),
+    auth_context: AuthSessionContext = Depends(require_minimum_role(UserRole.GUEST)),
     session: Session = Depends(get_db_session),
 ) -> list[KeywordListItemResponse]:
     return [
         KeywordListItemResponse(**item)
-        for item in list_canonical_keywords(session, unused_only=unused_only, query=q, limit=limit)
+        for item in list_canonical_keywords(
+            session,
+            unused_only=unused_only,
+            query=q,
+            limit=limit,
+            actor_role=auth_context.user.role,
+            actor_territories=auth_context.user.territories,
+        )
     ]
 
 
 @router.get("/{keyword_id}", response_model=KeywordDetailResponse)
 def read_keyword_detail(
     keyword_id: str,
-    _: object = Depends(require_minimum_role(UserRole.GUEST)),
+    auth_context: AuthSessionContext = Depends(require_minimum_role(UserRole.GUEST)),
     session: Session = Depends(get_db_session),
 ) -> KeywordDetailResponse:
     try:
-        return KeywordDetailResponse(**get_keyword_detail(session, keyword_id))
+        return KeywordDetailResponse(
+            **get_keyword_detail(
+                session,
+                keyword_id,
+                actor_role=auth_context.user.role,
+                actor_territories=auth_context.user.territories,
+            )
+        )
     except KeywordLookupNotFoundError as exc:
         raise api_error(404, "keyword_not_found", str(exc)) from exc
 
@@ -125,6 +139,7 @@ def create_canonical_keyword(
             payload.text,
             actor_user_id=auth_context.user.id,
             actor_role=auth_context.user.role,
+            actor_territories=auth_context.user.territories,
         )
     except KeywordMutationValidationError as exc:
         raise api_error(400, "keyword_mutation_invalid", str(exc)) from exc

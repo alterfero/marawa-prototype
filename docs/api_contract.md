@@ -398,6 +398,14 @@ Access:
 Purpose:
 - list stories in the active dataset.
 
+### `GET /api/stories/territories`
+
+Access:
+- contributor, admin
+
+Purpose:
+- list existing territory labels available to the current user when entering a story; contributor results are limited to the territories assigned by an admin.
+
 ### `GET /api/stories/{story_id}`
 
 Access:
@@ -417,6 +425,7 @@ Purpose:
 Contract notes:
 - contributor-created stories save immediately;
 - contributor-created stories also create review work for admins.
+- contributors must use an existing territory assigned by an admin; an admin may introduce a new territory by saving a story with a new territory label.
 
 ### `PATCH /api/stories/{story_id}`
 
@@ -765,7 +774,7 @@ Contract notes:
 - Tropes, keywords, and themes are dataset-scoped.
 - Anonymous access is limited to exploration.
 - Guests are read-only.
-- Contributors write stories and new terms.
+- Contributors write stories and new terms within their admin-assigned, existing territories.
 - Admins own dataset actions, user management, curation, and review.
 - Contributor-created content is visible immediately and unmarked in the normal UI.
 - Important auth, admin, review, dataset, and write actions must be auditable.

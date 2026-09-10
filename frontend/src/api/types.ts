@@ -18,6 +18,8 @@ export interface CurrentUser {
   email: string;
   display_name: string;
   role: UserRole;
+  territories: string[];
+  version: number;
   status: UserStatus;
   last_login_at: string | null;
   deactivated_at: string | null;
@@ -836,6 +838,10 @@ export interface PasswordResetResponse {
 export interface UserLifecycleResponse {
   user: CurrentUser;
   revoked_session_count?: number | null;
+}
+
+export interface TerritoryListResponse {
+  items: string[];
 }
 
 export interface TropeSequenceGraphLink {

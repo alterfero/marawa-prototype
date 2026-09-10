@@ -10,10 +10,12 @@ import {
   getDatasetStatus,
   getErrorMessage,
   getStory,
+  getStoryTerritories,
   searchKeywords,
   searchTropes,
   updateStory,
 } from "../api/client";
+import { useAuth } from "../auth";
 import {
   applyLocationDraftToFields,
   buildLocationDraft,
@@ -39,6 +41,99 @@ interface DraftTerm {
   id: string;
   text: string;
   story_count: number;
+}
+
+function normalizeTerritoryOptions(territories: readonly string[]): string[] {
+  const labelsByKey = new Map<string, string>();
+  for (const territory of territories) {
+    const label = territory.replace(/\ufeff/g, "").trim();
+    const key = label.replace(/\s+/g, " ").toLowerCase();
+    if (key && !labelsByKey.has(key)) {
+      labelsByKey.set(key, label);
+    }
+  }
+  return [...labelsByKey.entries()]
+    .sort(([leftKey, leftLabel], [rightKey, rightLabel]) => leftKey.localeCompare(rightKey) || leftLabel.localeCompare(rightLabel))
+    .map(([, label]) => label);
+}
+
+function TerritoryField({
+  contributor,
+  disabled,
+  loading,
+  onChange,
+  options,
+  value,
+}: {
+  contributor: boolean;
+  disabled: boolean;
+  loading: boolean;
+  onChange: (value: string) => void;
+  options: readonly string[];
+  value: string;
+}) {
+  const inputId = "create-entry-territory";
+  const datalistId = "create-entry-territory-options";
+
+  if (contributor) {
+    const hasSelectedOption = options.includes(value);
+    return (
+      <label className="field">
+        <span>territory</span>
+        <select
+          aria-describedby={`${inputId}-help`}
+          aria-invalid={!loading && Boolean(value) && !hasSelectedOption}
+          className="input"
+          disabled={disabled || loading || !options.length}
+          id={inputId}
+          onChange={(event) => onChange(event.target.value)}
+          required
+          value={value}
+        >
+          <option value="">
+            {loading ? "Loading territories..." : options.length ? "Select a territory" : "No territories are available"}
+          </option>
+          {options.map((territory) => (
+            <option key={territory} value={territory}>
+              {territory}
+            </option>
+          ))}
+        </select>
+        <p className="muted" id={`${inputId}-help`}>
+          {loading
+            ? "Loading the territories you are allowed to contribute to."
+            : options.length
+              ? "Choose one of the territories you are allowed to contribute to."
+              : "No existing territories are currently available for your contributor access."}
+        </p>
+      </label>
+    );
+  }
+
+  return (
+    <label className="field">
+      <span>territory</span>
+      <input
+        aria-describedby={`${inputId}-help`}
+        className="input"
+        disabled={disabled}
+        id={inputId}
+        list={datalistId}
+        onChange={(event) => onChange(event.target.value)}
+        value={value}
+      />
+      <datalist id={datalistId}>
+        {options.map((territory) => (
+          <option key={territory} value={territory} />
+        ))}
+      </datalist>
+      <p className="muted" id={`${inputId}-help`}>
+        {loading
+          ? "Loading existing territories..."
+          : "Choose an existing territory or enter a new territory label."}
+      </p>
+    </label>
+  );
 }
 
 function extractConflictVersion(error: ApiError): number | null {
@@ -81,9 +176,12 @@ function buildErrorNotice(title: string, error: unknown): PageNotice {
 
 export function CreateEntryPage() {
   const maintenance = useDatasetMaintenance();
+  const { user } = useAuth();
   const hashSearch = useHashSearch();
   const [datasetStatus, setDatasetStatus] = useState<DatasetStatus | null>(null);
   const [statusLoading, setStatusLoading] = useState(true);
+  const [territoryOptions, setTerritoryOptions] = useState<string[]>([]);
+  const [territoryOptionsLoading, setTerritoryOptionsLoading] = useState(true);
   const [fields, setFields] = useState<Record<string, string>>(() => buildBlankStoryFields());
   const [locationDraft, setLocationDraft] = useState<LocationDraft | null>(null);
   const [draftKeywords, setDraftKeywords] = useState<DraftTerm[]>([]);
@@ -101,22 +199,31 @@ export function CreateEntryPage() {
   const storyIdParam = new URLSearchParams(hashSearch).get("story_id");
 
   const datasetVersion = datasetStatus?.active_dataset_version ?? null;
+  const isContributor = user?.role === "contributor";
   const draftKeywordMarkers = new Set(draftKeywords.map((keyword) => normalizeDraftText(keyword.text)));
   const draftTropeMarkers = new Set(draftTropes.map((trope) => normalizeDraftText(trope.text)));
   const recordingYearInterval = fields[DATE_OF_RECORDING_FIELD] || "";
   const hasInvalidRecordingYearInterval =
     Boolean(recordingYearInterval) && !isValidRecordingYearInterval(recordingYearInterval);
-  const cannotCreateStory = savedStory === null && (statusLoading || datasetVersion == null);
+  const hasValidContributorTerritory = !isContributor || territoryOptions.includes(fields["territory"] || "");
+  const cannotCreateStory =
+    savedStory === null &&
+    (statusLoading ||
+      datasetVersion == null ||
+      (isContributor && (territoryOptionsLoading || !hasValidContributorTerritory)));
   const interactionDisabled = busy || entryLoading;
 
   async function loadStatus() {
     try {
       setStatusLoading(true);
-      const nextStatus = await getDatasetStatus();
+      setTerritoryOptionsLoading(true);
+      const [nextStatus, territoryResponse] = await Promise.all([getDatasetStatus(), getStoryTerritories()]);
       setDatasetStatus(nextStatus);
+      setTerritoryOptions(normalizeTerritoryOptions(territoryResponse.items));
       return nextStatus;
     } finally {
       setStatusLoading(false);
+      setTerritoryOptionsLoading(false);
     }
   }
 
@@ -139,7 +246,7 @@ export function CreateEntryPage() {
 
   useEffect(() => {
     void loadStatus().catch((caughtError) => {
-      setNotice(buildErrorNotice("Could not load dataset status", caughtError));
+      setNotice(buildErrorNotice("Could not load dataset status or territory options", caughtError));
     });
   }, []);
 
@@ -267,6 +374,20 @@ export function CreateEntryPage() {
   }
 
   function renderMetadataField(field: string) {
+    if (field === "territory") {
+      return (
+        <TerritoryField
+          contributor={isContributor}
+          disabled={interactionDisabled}
+          loading={territoryOptionsLoading}
+          onChange={(value) => updateField(field, value)}
+          options={territoryOptions}
+          key={field}
+          value={fields[field] || ""}
+        />
+      );
+    }
+
     return (
       <StoryFieldInput
         disabled={interactionDisabled}
@@ -489,6 +610,16 @@ export function CreateEntryPage() {
         tone: "warning",
         title: "No active dataset",
         body: "Upload a dataset before creating a new entry.",
+      });
+      return;
+    }
+    if (savedStory === null && isContributor && (territoryOptionsLoading || !hasValidContributorTerritory)) {
+      setNotice({
+        tone: "warning",
+        title: "Select an allowed territory",
+        body: territoryOptionsLoading
+          ? "Wait for your allowed territories to finish loading before creating a new entry."
+          : "Choose an existing territory you are allowed to contribute to before creating a new entry.",
       });
       return;
     }
