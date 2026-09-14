@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 
 import {
   addStoryKeyword,
@@ -41,6 +41,92 @@ interface DraftTerm {
   id: string;
   text: string;
   story_count: number;
+}
+
+interface EntryDraftRecovery {
+  version: 1;
+  storyId: string | null;
+  fields: Record<string, string>;
+  tropes: string[];
+  keywords: string[];
+}
+
+const ENTRY_DRAFT_RECOVERY_KEY = "marawa:create-entry-draft:v1";
+
+function sameFields(left: Record<string, string>, right: Record<string, string>): boolean {
+  const fields = new Set([...Object.keys(left), ...Object.keys(right)]);
+  return [...fields].every((field) => (left[field] || "") === (right[field] || ""));
+}
+
+function sameTerms(left: readonly { text: string }[], right: readonly { text: string }[]): boolean {
+  const normalizeTerms = (terms: readonly { text: string }[]) => terms.map((term) => normalizeDraftText(term.text));
+  const leftTerms = normalizeTerms(left);
+  const rightTerms = normalizeTerms(right);
+  return leftTerms.length === rightTerms.length && leftTerms.every((term, index) => term === rightTerms[index]);
+}
+
+function isStringRecord(value: unknown): value is Record<string, string> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.values(value).every((item) => typeof item === "string")
+  );
+}
+
+function isEntryDraftRecovery(value: unknown): value is EntryDraftRecovery {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+
+  const draft = value as Record<string, unknown>;
+  return (
+    draft.version === 1 &&
+    (typeof draft.storyId === "string" || draft.storyId === null) &&
+    isStringRecord(draft.fields) &&
+    Array.isArray(draft.tropes) &&
+    draft.tropes.every((term) => typeof term === "string") &&
+    Array.isArray(draft.keywords) &&
+    draft.keywords.every((term) => typeof term === "string")
+  );
+}
+
+function readEntryDraftRecovery(): EntryDraftRecovery | null {
+  try {
+    const storedValue: unknown = JSON.parse(window.sessionStorage.getItem(ENTRY_DRAFT_RECOVERY_KEY) || "null");
+    return isEntryDraftRecovery(storedValue) ? storedValue : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeEntryDraftRecovery(draft: EntryDraftRecovery): void {
+  try {
+    window.sessionStorage.setItem(ENTRY_DRAFT_RECOVERY_KEY, JSON.stringify(draft));
+  } catch {
+    // Draft recovery is optional and must never prevent data entry.
+  }
+}
+
+function clearEntryDraftRecovery(): void {
+  try {
+    window.sessionStorage.removeItem(ENTRY_DRAFT_RECOVERY_KEY);
+  } catch {
+    // Draft recovery is optional and must never prevent data entry.
+  }
+}
+
+function recoveryTerms(terms: readonly string[], kind: "trope" | "keyword"): DraftTerm[] {
+  const seen = new Set<string>();
+  return terms.flatMap((text, index) => {
+    const trimmedText = text.trim();
+    const marker = normalizeDraftText(trimmedText);
+    if (!marker || seen.has(marker)) {
+      return [];
+    }
+    seen.add(marker);
+    return [{ id: `recovery:${kind}:${index}`, text: trimmedText, story_count: 0 }];
+  });
 }
 
 function normalizeTerritoryOptions(territories: readonly string[]): string[] {
@@ -196,7 +282,13 @@ export function CreateEntryPage() {
   const [entryLoading, setEntryLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<PageNotice | null>(null);
+  const [recoveryReady, setRecoveryReady] = useState(false);
+  const [initialRecovery] = useState<EntryDraftRecovery | null>(() => readEntryDraftRecovery());
   const storyIdParam = new URLSearchParams(hashSearch).get("story_id");
+  const recoveredDraftRef = useRef<EntryDraftRecovery | null>(initialRecovery);
+  const recoveryRestoredRef = useRef(false);
+  const allowNavigationRef = useRef(false);
+  const lastCreateHashRef = useRef(window.location.hash);
 
   const datasetVersion = datasetStatus?.active_dataset_version ?? null;
   const isContributor = user?.role === "contributor";
@@ -206,12 +298,39 @@ export function CreateEntryPage() {
   const hasInvalidRecordingYearInterval =
     Boolean(recordingYearInterval) && !isValidRecordingYearInterval(recordingYearInterval);
   const hasValidContributorTerritory = !isContributor || territoryOptions.includes(fields["territory"] || "");
+  const isDirty =
+    !sameFields(fields, savedStory?.fields || buildBlankStoryFields()) ||
+    !sameTerms(draftTropes, savedStory?.tropes || []) ||
+    !sameTerms(draftKeywords, savedStory?.keywords || []);
   const cannotCreateStory =
     savedStory === null &&
     (statusLoading ||
       datasetVersion == null ||
       (isContributor && (territoryOptionsLoading || !hasValidContributorTerritory)));
   const interactionDisabled = busy || entryLoading;
+  const isSaveDisabled =
+    interactionDisabled ||
+    maintenance.active ||
+    cannotCreateStory ||
+    hasInvalidRecordingYearInterval ||
+    (savedStory !== null && !isDirty);
+
+  function discardDraftRecovery() {
+    recoveredDraftRef.current = null;
+    clearEntryDraftRecovery();
+  }
+
+  function restoreDraft(recovery: EntryDraftRecovery) {
+    setFields({ ...buildBlankStoryFields(), ...recovery.fields });
+    setDraftTropes(recoveryTerms(recovery.tropes, "trope"));
+    setDraftKeywords(recoveryTerms(recovery.keywords, "keyword"));
+    setKeywordQuery("");
+    setKeywordResults([]);
+    setKeywordSearchStatus("idle");
+    setTropeQuery("");
+    setTropeResults([]);
+    setTropeSearchStatus("idle");
+  }
 
   async function loadStatus() {
     try {
@@ -227,7 +346,7 @@ export function CreateEntryPage() {
     }
   }
 
-  function resetDraft() {
+  function resetDraftState() {
     setFields(buildBlankStoryFields());
     setLocationDraft(null);
     setDraftKeywords([]);
@@ -239,7 +358,21 @@ export function CreateEntryPage() {
     setTropeResults([]);
     setTropeSearchStatus("idle");
     setSavedStory(null);
+  }
+
+  function confirmDiscardDraft(): boolean {
+    return window.confirm("Discard your unsaved changes? They can no longer be saved after you leave this entry.");
+  }
+
+  function handleResetDraft() {
+    if (isDirty && !confirmDiscardDraft()) {
+      return;
+    }
+
+    discardDraftRecovery();
+    resetDraftState();
     if (storyIdParam) {
+      allowNavigationRef.current = true;
       window.location.hash = routeHref("/create");
     }
   }
@@ -251,18 +384,42 @@ export function CreateEntryPage() {
   }, []);
 
   useEffect(() => {
-    if (!storyIdParam) {
+    const recovery = recoveredDraftRef.current;
+    const storyIdToLoad = storyIdParam || recovery?.storyId;
+    setRecoveryReady(false);
+
+    if (!storyIdToLoad) {
       setEntryLoading(false);
-      resetDraft();
+      if (recovery && !recoveryRestoredRef.current) {
+        restoreDraft(recovery);
+        recoveryRestoredRef.current = true;
+        setNotice({
+          tone: "success",
+          title: "Recovered unsaved draft",
+          body: "Your entry has been restored from this browser. Save it when you are ready.",
+        });
+      } else {
+        resetDraftState();
+      }
+      setRecoveryReady(true);
       return;
     }
 
     let cancelled = false;
     setEntryLoading(true);
-    void getStory(storyIdParam)
+    void getStory(storyIdToLoad)
       .then((story) => {
         if (!cancelled) {
           loadSavedStoryIntoDraft(story);
+          if (recovery?.storyId === story.id && !recoveryRestoredRef.current) {
+            restoreDraft(recovery);
+            recoveryRestoredRef.current = true;
+            setNotice({
+              tone: "success",
+              title: "Recovered unsaved changes",
+              body: "Your changes have been restored from this browser. Save them when you are ready.",
+            });
+          }
         }
       })
       .catch((caughtError) => {
@@ -273,6 +430,7 @@ export function CreateEntryPage() {
       .finally(() => {
         if (!cancelled) {
           setEntryLoading(false);
+          setRecoveryReady(true);
         }
       });
 
@@ -280,6 +438,112 @@ export function CreateEntryPage() {
       cancelled = true;
     };
   }, [storyIdParam]);
+
+  useEffect(() => {
+    if (!recoveryReady) {
+      return;
+    }
+
+    if (!isDirty) {
+      discardDraftRecovery();
+      return;
+    }
+
+    const recovery: EntryDraftRecovery = {
+      version: 1,
+      storyId: savedStory?.id || null,
+      fields,
+      tropes: draftTropes.map((trope) => trope.text),
+      keywords: draftKeywords.map((keyword) => keyword.text),
+    };
+    recoveredDraftRef.current = recovery;
+    writeEntryDraftRecovery(recovery);
+  }, [draftKeywords, draftTropes, fields, isDirty, recoveryReady, savedStory?.id]);
+
+  useEffect(() => {
+    if (!isDirty) {
+      return;
+    }
+
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [isDirty]);
+
+  useEffect(() => {
+    const handleDocumentClick = (event: MouseEvent) => {
+      if (
+        !isDirty ||
+        event.defaultPrevented ||
+        event.button !== 0 ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.shiftKey ||
+        event.altKey
+      ) {
+        return;
+      }
+
+      const element = event.target instanceof Element ? event.target : null;
+      const link = element?.closest<HTMLAnchorElement>("a[href]");
+      const href = link?.getAttribute("href");
+      if (!link || !href?.startsWith("#") || href === window.location.hash || link.target === "_blank") {
+        return;
+      }
+
+      if (!confirmDiscardDraft()) {
+        event.preventDefault();
+        return;
+      }
+
+      allowNavigationRef.current = true;
+      discardDraftRecovery();
+    };
+
+    const handleHashChange = () => {
+      const nextHash = window.location.hash;
+      if (nextHash === lastCreateHashRef.current) {
+        return;
+      }
+
+      if (!isDirty) {
+        discardDraftRecovery();
+        if (nextHash.startsWith("#/create")) {
+          lastCreateHashRef.current = nextHash;
+        }
+        return;
+      }
+
+      if (allowNavigationRef.current) {
+        allowNavigationRef.current = false;
+        if (nextHash.startsWith("#/create")) {
+          lastCreateHashRef.current = nextHash;
+        }
+        return;
+      }
+
+      if (confirmDiscardDraft()) {
+        discardDraftRecovery();
+        if (nextHash.startsWith("#/create")) {
+          lastCreateHashRef.current = nextHash;
+        }
+        return;
+      }
+
+      window.location.hash = lastCreateHashRef.current;
+    };
+
+    document.addEventListener("click", handleDocumentClick, true);
+    window.addEventListener("hashchange", handleHashChange);
+    return () => {
+      document.removeEventListener("click", handleDocumentClick, true);
+      window.removeEventListener("hashchange", handleHashChange);
+    };
+  }, [isDirty]);
 
   useEffect(() => {
     const trimmedQuery = keywordQuery.trim();
@@ -737,25 +1001,39 @@ export function CreateEntryPage() {
   }
 
   return (
-    <form className="page-stack" onSubmit={(event) => void handleSaveAll(event)}>
+    <form className="page-stack create-entry-page" onSubmit={(event) => void handleSaveAll(event)}>
       <section className="panel">
         <div className="panel-header">
           <div>
             <h1>Create new entry</h1>
           </div>
           <div className="button-row wrap-row">
-            <button className="button button-ghost" disabled={interactionDisabled} onClick={() => resetDraft()} type="button">
+            <button className="button button-ghost" disabled={interactionDisabled} onClick={handleResetDraft} type="button">
               {savedStory ? "Start another entry" : "Reset draft"}
             </button>
             <button className="button button-ghost" disabled={interactionDisabled || statusLoading} onClick={() => void loadStatus()} type="button">
               {statusLoading ? "Refreshing..." : "Refresh dataset"}
             </button>
-            <button className="button" disabled={interactionDisabled || maintenance.active || cannotCreateStory || hasInvalidRecordingYearInterval} type="submit">
-              {busy ? "Saving..." : savedStory ? "Save all changes" : "Save new entry"}
+            <button className="button" disabled={isSaveDisabled} type="submit">
+              {busy ? "Saving..." : savedStory ? (isDirty ? "Save changes" : "All changes saved") : "Save new entry"}
             </button>
           </div>
         </div>
       </section>
+
+      {(isDirty || savedStory) && (
+        <section aria-label="Entry save status" className={`entry-save-bar ${isDirty ? "entry-save-bar-dirty" : "entry-save-bar-saved"}`}>
+          <div aria-live="polite">
+            <strong>{isDirty ? "Unsaved changes" : "All changes saved"}</strong>
+            <p>{isDirty ? "Your latest entry changes are only in this browser until you save." : "This entry is safely stored in the dataset."}</p>
+          </div>
+          {isDirty ? (
+            <button className="button" disabled={isSaveDisabled} type="submit">
+              {busy ? "Saving..." : savedStory ? "Save changes" : "Save entry"}
+            </button>
+          ) : null}
+        </section>
+      )}
 
       {notice && (
         <section
