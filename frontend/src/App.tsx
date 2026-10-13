@@ -21,6 +21,8 @@ import { ThemeCurationPage } from "./pages/ThemeCurationPage";
 import { KeywordCurationPage } from "./pages/KeywordCurationPage";
 import { KeywordManagementView } from "./pages/KeywordManagementView";
 import { SemanticGraphsPage } from "./pages/SemanticGraphsPage";
+import { UsagePage } from "./pages/UsagePage";
+import { useUsageActivity } from "./usage";
 
 const SIDEBAR_STATUS_POLL_INTERVAL_MS = 5000;
 const REBUILD_JOB_POLL_INTERVAL_MS = 2000;
@@ -48,6 +50,7 @@ const NAV_ITEMS: NavItem[] = [
   { route: "/keyword-curation", label: "Keyword curation", minimumRole: "admin" },
   { route: "/semantic-graphs", label: "Semantic graphs", minimumRole: "admin" },
   { route: "/users", label: "Users", minimumRole: "admin" },
+  { route: "/usage", label: "Usage", minimumRole: "admin" },
 ];
 
 function minimumRoleForRoute(route: AppRoute): UserRole | null {
@@ -66,6 +69,7 @@ function minimumRoleForRoute(route: AppRoute): UserRole | null {
     case "/keyword-curation":
     case "/semantic-graphs":
     case "/users":
+    case "/usage":
       return "admin";
     default:
       return null;
@@ -164,6 +168,8 @@ function CurrentPage({
       return <SemanticGraphsPage />;
     case "/users":
       return <AdminUsersPage />;
+    case "/usage":
+      return <UsagePage />;
     case "/exploration":
       return <ExplorationPage />;
     default:
@@ -175,6 +181,7 @@ export default function App() {
   const route = useHashRoute();
   const hashSearch = useHashSearch();
   const { status: authStatus, user, logout } = useAuth();
+  useUsageActivity(authStatus !== "loading", user?.id);
   const [datasetStatus, setDatasetStatus] = useState<DatasetStatus | null>(null);
   const [statusUnavailable, setStatusUnavailable] = useState(false);
   const [rebuildBusy, setRebuildBusy] = useState(false);

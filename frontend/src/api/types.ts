@@ -894,3 +894,17 @@ export interface SemanticGraphResponse {
   links: SemanticGraphLink[];
   warnings: string[];
 }
+export interface UsageHour {
+  hour_start: string;
+  total_visitors: number;
+  registered_users: { id: string; display_name: string; email: string }[];
+  unregistered_guests: number;
+}
+
+export interface UsageReport {
+  start: string;
+  end: string;
+  first_recorded_at: string | null;
+  generated_at: string;
+  hours: UsageHour[];
+}

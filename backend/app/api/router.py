@@ -17,6 +17,7 @@ from app.api.routes.themes import router as themes_router
 from app.api.routes.time_machine import router as time_machine_router
 from app.api.routes.tropes import router as tropes_router
 from app.api.routes.visualizations import router as visualizations_router
+from app.api.routes.usage import router as usage_router
 
 
 api_router = APIRouter(dependencies=[Depends(enforce_dataset_maintenance_lock)])
@@ -35,3 +36,4 @@ api_router.include_router(themes_router)
 api_router.include_router(time_machine_router)
 api_router.include_router(tropes_router)
 api_router.include_router(visualizations_router)
+api_router.include_router(usage_router)

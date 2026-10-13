@@ -15,6 +15,7 @@ export type AppRoute =
   | "/keyword-curation"
   | "/semantic-graphs"
   | "/users"
+  | "/usage"
   | "/exploration";
 
 const DEFAULT_ROUTE: AppRoute = "/exploration";
@@ -33,6 +34,7 @@ const KNOWN_ROUTES: AppRoute[] = [
   "/keyword-curation",
   "/semantic-graphs",
   "/users",
+  "/usage",
   "/exploration",
 ];
 

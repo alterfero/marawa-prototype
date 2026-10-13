@@ -1,4 +1,5 @@
 import type {
+  UsageReport,
   AuthSessionResponse,
   CanonicalKeywordListItem,
   CreateKeywordResponse,
@@ -171,6 +172,26 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function getDatasetExportUrl(format: "legacy" | "full" = "full"): string {
   return buildUrl(`/dataset/export.csv?format=${format}`);
+}
+
+export function getUsage(start: string, end: string, signal?: AbortSignal): Promise<UsageReport> {
+  return request(`/admin/usage?${new URLSearchParams({ start, end })}`, { signal });
+}
+
+export function getUsageExportUrl(range?: { start: string; end: string }): string {
+  return buildUrl(`/admin/usage/export.csv${range ? `?${new URLSearchParams(range)}` : ""}`);
+}
+
+let activityRequest: Promise<void> = Promise.resolve();
+
+export function recordUsageActivity(): Promise<void> {
+  const send = () => request<void>("/usage/activity", { method: "POST", headers: { "X-Usage-Activity": "1" } });
+  // Serialize first visits and account transitions so every request sees the latest cookies.
+  activityRequest = activityRequest.catch(() => undefined).then(async () => {
+    if (navigator.locks) await navigator.locks.request("marawa-usage", send);
+    else await send();
+  });
+  return activityRequest;
 }
 
 export function getErrorMessage(error: unknown): string {

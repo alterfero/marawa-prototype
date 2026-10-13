@@ -35,6 +35,7 @@ from app.db.models import (
     UserRole,
     UserSession,
     UserStatus,
+    UsageActivity,
 )
 from app.db.session import SessionLocal, build_engine, build_session_factory, engine
 
@@ -73,6 +74,7 @@ __all__ = [
     "UserRole",
     "UserSession",
     "UserStatus",
+    "UsageActivity",
     "build_engine",
     "build_session_factory",
     "engine",

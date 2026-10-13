@@ -167,5 +167,14 @@ Use the production maintenance window to:
 - Single Railway web replica: the current architecture relies on an in-process job runner and local artifact storage.
 - No story deletion: stories can be replaced through dataset upload, but individual stories are not deleted through the app.
 - No self-signup: accounts are admin-created or invite-only.
+
+### Usage history
+
+- Admins can open **Usage** to view unique active visitors per UTC hour, scroll through the histogram, zoom the bars, inspect registered users and unregistered guest counts, and download CSV history. Both reporting endpoints enforce admin access.
+- A visible browser sends a small activity heartbeat at most once per minute while the visitor has interacted within the last five minutes. Hidden and idle tabs do not keep recording visits; simply having a valid login session does not count as activity.
+- Registered accounts count once per hour across browsers and tabs, including accounts with the registered `guest` role. Unregistered guests are estimated using a signed, HttpOnly browser cookie lasting one year. Different browsers, private browsing, blocked cookies, and cleared cookies can affect guest estimates.
+- If a browser signs in during an hour, its anonymous observations are excluded from that hour's guest count. Shared browsers using multiple accounts still preserve each account. Names and email addresses are stored as historical snapshots; usage does not store IP addresses, URLs, or browsing content.
+- The `usage_activity` table retains history across restarts, imports, and dataset recovery. Alembic creates it on startup. Collection begins with this version; historical sessions cannot reliably reconstruct prior activity. Records are retained indefinitely and should be included in normal database backups.
+- Date ranges are UTC, include the start, exclude the end, and support up to 31 days per view. Range CSV contains empty hours; **Download all history** streams every recorded hour without a date limit. CSV columns are `hour_start_utc`, `hour_end_utc`, `total_visitors`, `registered_user_count`, `unregistered_guests`, and `registered_users_json` (account IDs, names, and emails). This is separate from the unchanged story CSV format.
 - Pending contributor content is visible immediately and is not marked in the normal UI.
 - CSV remains a compatibility surface, not the live working store.

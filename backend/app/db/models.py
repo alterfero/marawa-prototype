@@ -229,6 +229,21 @@ class UserSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     user: Mapped["User"] = relationship(back_populates="sessions", foreign_keys=[user_id])
 
 
+class UsageActivity(Base):
+    """Hourly observations, independent of dataset replacement and account edits."""
+
+    __tablename__ = "usage_activity"
+
+    hour_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
+    browser_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    # An account UUID or "anonymous". Snapshot identities must survive account changes.
+    identity_key: Mapped[str] = mapped_column(String(36), primary_key=True)
+    display_name: Mapped[str | None] = mapped_column(String(255))
+    email: Mapped[str | None] = mapped_column(String(320))
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class InviteResetToken(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "invite_reset_tokens"
 
