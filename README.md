@@ -154,6 +154,7 @@ Use the production maintenance window to:
 ## Exploration UX
 
 - Non-admin users use the public single-trope exploration workflow: search for one trope, select it, and inspect original plus related stories on the map.
+- Matched tropes in individual marker pop-ins are links in this workflow. Selecting one rebuilds the map around that trope while keeping the current similarity threshold.
 - Admin users use exploration filter sets instead of the public single-trope card.
 - Each admin filter set can combine:
   - a sentence-based vectorized trope search;

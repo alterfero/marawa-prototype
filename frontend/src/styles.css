@@ -1797,6 +1797,21 @@ p {
   padding-right: 0.25rem;
 }
 
+.map-popup-trope-link {
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+.map-popup-trope-link:hover,
+.map-popup-trope-link:focus-visible {
+  background: rgba(31, 113, 119, 0.16);
+}
+
+.map-popup-trope-link:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
 .map-bundle-popup-list {
   display: grid;
   gap: 0.5rem;

@@ -272,11 +272,13 @@ function escapeHtml(value: string): string {
     .replace(/'/g, "&#39;");
 }
 
-function markerPopupHtml(marker: ExplorationMarker): string {
+function markerPopupHtml(marker: ExplorationMarker, canSelectTrope: boolean): string {
   const matchedTropes = marker.matched_tropes.length
     ? marker.matched_tropes
         .map(
-          (trope) => `<span class="pill">${escapeHtml(trope.text)}</span>`,
+          (trope) => canSelectTrope
+            ? `<a class="pill map-popup-trope-link" href="${escapeHtml(routeHref("/exploration", { selected_trope_id: trope.id }))}" title="Explore ${escapeHtml(trope.text)}">${escapeHtml(trope.text)}</a>`
+            : `<span class="pill">${escapeHtml(trope.text)}</span>`,
         )
         .join("")
     : `<p class="muted">No matched tropes in this network response.</p>`;
@@ -1255,10 +1257,12 @@ function ExplorationMap({
   markers,
   connections,
   filterSetLegends,
+  canSelectTrope = false,
 }: {
   markers: VisibleExplorationMarker[];
   connections: RenderableConnection[];
   filterSetLegends?: FilterSetLegend[];
+  canSelectTrope?: boolean;
 }) {
   const mapViewId = useId();
   const markerSizeId = useId();
@@ -1392,15 +1396,30 @@ function ExplorationMap({
             opacity: 0.92,
             sticky: true,
           })
-          .bindPopup(markerPopupHtml(marker), {
+          .bindPopup(markerPopupHtml(marker, canSelectTrope), {
             maxWidth: 320,
           })
           .addTo(activeOverlayLayer);
       });
     }
 
+    let popupIsAutoPanning = false;
+    function handlePopupAutoPan() {
+      popupIsAutoPanning = true;
+    }
+    function handleMapMoveEnd() {
+      if (popupIsAutoPanning) {
+        // Recreating the markers here would close the popup that caused this pan.
+        popupIsAutoPanning = false;
+        return;
+      }
+      renderMarkerOverlay();
+    }
+
     renderMarkerOverlay();
-    map.on("moveend zoomend", renderMarkerOverlay);
+    map.on("autopanstart", handlePopupAutoPan);
+    map.on("moveend", handleMapMoveEnd);
+    map.on("zoomend", renderMarkerOverlay);
 
     densityLayer.setGroups(densityGroups);
     densityLayer.setVisible(renderMode === "density");
@@ -1410,9 +1429,11 @@ function ExplorationMap({
     });
 
     return () => {
-      map.off("moveend zoomend", renderMarkerOverlay);
+      map.off("autopanstart", handlePopupAutoPan);
+      map.off("moveend", handleMapMoveEnd);
+      map.off("zoomend", renderMarkerOverlay);
     };
-  }, [dataSignature, densitySignature, markerOpacity, markerRadius, renderMode]);
+  }, [canSelectTrope, dataSignature, densitySignature, markerOpacity, markerRadius, renderMode]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -2495,7 +2516,11 @@ export function ExplorationPage() {
             {showNoStoriesForSelectedFilters ? (
               <p className="muted">No stories corresponding to the filters selected</p>
             ) : (
-              <ExplorationMap connections={visibleConnections} markers={visibleMarkers} />
+              <ExplorationMap
+                canSelectTrope={canUseSingleTropeExploration}
+                connections={visibleConnections}
+                markers={visibleMarkers}
+              />
             )}
           </section>
 
