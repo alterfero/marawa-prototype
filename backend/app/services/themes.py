@@ -23,7 +23,6 @@ from app.db.models import (
 )
 from app.services.audit import record_audit_event
 from app.services.stories import sync_story_derived_fields
-from app.services.territory_access import can_access_story_fields
 
 if TYPE_CHECKING:
     from app.services.search_service import SearchService
@@ -88,25 +87,20 @@ def list_canonical_themes(
     ).where(Theme.dataset_id == active_dataset.id)
     if query_text:
         statement = statement.where(func.lower(Theme.text).contains(query_text.lower()))
-    scope_story_counts = actor_role == UserRole.CONTRIBUTOR
-    if unused_only and not scope_story_counts:
+    if unused_only:
         statement = statement.where(Theme.cached_story_count == 0)
 
     ordered_statement = statement.order_by(Theme.text.asc(), Theme.id.asc())
-    if not (scope_story_counts and unused_only):
-        ordered_statement = ordered_statement.limit(limit)
+    ordered_statement = ordered_statement.limit(limit)
     rows = session.execute(ordered_statement).all()
     story_ids_by_theme_id: dict[str, list[str]] = {}
-    visible_story_counts_by_theme_id: dict[str, int] = {}
-    if (include_story_ids or scope_story_counts) and rows:
+    if include_story_ids and rows:
         theme_ids = [row.id for row in rows]
         story_ids_by_theme_id = {theme_id: [] for theme_id in theme_ids}
-        visible_story_counts_by_theme_id = {theme_id: 0 for theme_id in theme_ids}
         story_rows = session.execute(
             select(
                 StoryTheme.theme_id.label("theme_id"),
                 Story.id.label("story_id"),
-                Story.fields_json.label("fields_json"),
             )
             .select_from(StoryTheme)
             .join(Story, Story.id == StoryTheme.story_id)
@@ -123,24 +117,7 @@ def list_canonical_themes(
             )
         ).all()
         for story_row in story_rows:
-            if not can_access_story_fields(
-                story_row.fields_json,
-                actor_role=actor_role,
-                actor_territories=actor_territories,
-            ):
-                continue
-            visible_story_counts_by_theme_id[story_row.theme_id] = (
-                visible_story_counts_by_theme_id.get(story_row.theme_id, 0) + 1
-            )
-            if include_story_ids:
-                story_ids_by_theme_id.setdefault(story_row.theme_id, []).append(story_row.story_id)
-
-    if scope_story_counts and unused_only:
-        rows = [
-            row
-            for row in rows
-            if visible_story_counts_by_theme_id.get(row.id, 0) == 0
-        ][:limit]
+            story_ids_by_theme_id.setdefault(story_row.theme_id, []).append(story_row.story_id)
 
     return [
         {
@@ -148,11 +125,7 @@ def list_canonical_themes(
             "version": row.version,
             "text": row.text,
             "confirmation_status": row.confirmation_status.value,
-            "story_count": (
-                visible_story_counts_by_theme_id.get(row.id, 0)
-                if scope_story_counts
-                else int(row.story_count or 0)
-            ),
+            "story_count": int(row.story_count or 0),
             "story_ids": story_ids_by_theme_id.get(row.id, []),
         }
         for row in rows
@@ -225,26 +198,16 @@ def get_theme_detail(
         )
     ).all()
 
-    visible_stories = [
-        story
-        for story in stories
-        if can_access_story_fields(
-            story.fields_json,
-            actor_role=actor_role,
-            actor_territories=actor_territories,
-        )
-    ]
-
     return {
         **_serialize_theme_summary(theme),
-        "story_count": len(visible_stories),
+        "story_count": len(stories),
         "stories": [
             {
                 "id": story.id,
                 "title": _story_title(story),
                 "source_row_number": story.source_row_number,
             }
-            for story in visible_stories
+            for story in stories
         ],
     }
 

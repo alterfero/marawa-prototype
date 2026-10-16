@@ -27,7 +27,6 @@ from app.db.models import (
 from app.services.audit import record_audit_event
 from app.services.reviews import queue_term_review_item
 from app.services.stories import sync_story_derived_fields
-from app.services.territory_access import can_access_story_fields
 
 
 TITLE_FIELDS = [
@@ -137,12 +136,7 @@ def ensure_canonical_trope(
         )
     )
     if trope is not None:
-        return _serialize_trope_summary_for_actor(
-            session,
-            trope,
-            actor_role=actor_role,
-            actor_territories=actor_territories,
-        ), False
+        return _serialize_trope_summary(trope), False
 
     trope = Trope(
         dataset_id=active_dataset.id,
@@ -186,19 +180,9 @@ def ensure_canonical_trope(
         )
         if trope is None:
             raise
-        return _serialize_trope_summary_for_actor(
-            session,
-            trope,
-            actor_role=actor_role,
-            actor_territories=actor_territories,
-        ), False
+        return _serialize_trope_summary(trope), False
 
-    return _serialize_trope_summary_for_actor(
-        session,
-        trope,
-        actor_role=actor_role,
-        actor_territories=actor_territories,
-    ), True
+    return _serialize_trope_summary(trope), True
 
 
 def get_trope_detail(
@@ -236,29 +220,19 @@ def get_trope_detail(
         )
     ).all()
 
-    visible_stories = [
-        story
-        for story in stories
-        if can_access_story_fields(
-            story.fields_json,
-            actor_role=actor_role,
-            actor_territories=actor_territories,
-        )
-    ]
-
     return {
         "id": trope.id,
         "version": trope.version,
         "text": trope.text,
         "confirmation_status": trope.confirmation_status.value,
-        "story_count": len(visible_stories),
+        "story_count": len(stories),
         "stories": [
             {
                 "id": story.id,
                 "title": _story_title(story),
                 "source_row_number": story.source_row_number,
             }
-            for story in visible_stories
+            for story in stories
         ],
     }
 
@@ -522,36 +496,6 @@ def _serialize_trope_summary(trope: Trope) -> dict:
         "confirmation_status": trope.confirmation_status.value,
         "story_count": int(trope.cached_story_count or 0),
     }
-
-
-def _serialize_trope_summary_for_actor(
-    session: Session,
-    trope: Trope,
-    *,
-    actor_role: UserRole | None,
-    actor_territories: Iterable[object] | None,
-) -> dict:
-    summary = _serialize_trope_summary(trope)
-    if actor_role != UserRole.CONTRIBUTOR:
-        return summary
-
-    story_fields = session.scalars(
-        select(Story.fields_json)
-        .join(StoryTrope, StoryTrope.story_id == Story.id)
-        .where(
-            Story.dataset_id == trope.dataset_id,
-            StoryTrope.trope_id == trope.id,
-        )
-    ).all()
-    summary["story_count"] = sum(
-        can_access_story_fields(
-            fields,
-            actor_role=actor_role,
-            actor_territories=actor_territories,
-        )
-        for fields in story_fields
-    )
-    return summary
 
 
 def _delete_trope_artifacts(session: Session, trope_id: str) -> None:

@@ -60,7 +60,8 @@ def _item_by_text(payload: dict, text: str) -> dict:
     return next(item for item in payload["string_match_items"] if item["text"].lower() == text.lower())
 
 
-def test_contributor_search_only_returns_terms_with_visible_stories(monkeypatch, tmp_path) -> None:
+@pytest.mark.parametrize("territories", [[], ["Tahiti"]])
+def test_contributor_search_includes_all_territories(monkeypatch, tmp_path, territories) -> None:
     configure_auth_env(monkeypatch)
     app = _build_app(tmp_path)
 
@@ -93,7 +94,7 @@ def test_contributor_search_only_returns_terms_with_visible_stories(monkeypatch,
             display_name="Scoped Contributor",
             role=UserRole.CONTRIBUTOR,
             password="contributor-password",
-            territories=["Tahiti"],
+            territories=territories,
         )
         authenticate_role(
             admin_client,
@@ -115,22 +116,17 @@ def test_contributor_search_only_returns_terms_with_visible_stories(monkeypatch,
                 "moorea scope keyword",
             ),
         ]
-        for path, query, shared_text, visible_text, hidden_text in search_cases:
+        for path, query, shared_text, visible_text, outside_text in search_cases:
             contributor_search = _search(contributor_client, path, query)
             admin_search = _search(admin_client, path, query)
             guest_search = _search(guest_client, path, query)
 
-            assert _item_by_text(contributor_search, shared_text)["story_count"] == 1
+            assert contributor_search == guest_search == admin_search
+            assert _item_by_text(contributor_search, shared_text)["story_count"] == 2
             assert _item_by_text(contributor_search, visible_text)["story_count"] == 1
-            assert hidden_text.lower() not in {
-                item["text"].lower() for item in contributor_search["items"]
-            }
-            assert hidden_text.lower() not in {
-                item["text"].lower() for item in contributor_search["string_match_items"]
-            }
-            assert all(item["story_count"] == 1 for item in contributor_search["items"])
+            assert _item_by_text(contributor_search, outside_text)["story_count"] == 1
 
             assert _item_by_text(admin_search, shared_text)["story_count"] == 2
-            assert _item_by_text(admin_search, hidden_text)["story_count"] == 1
+            assert _item_by_text(admin_search, outside_text)["story_count"] == 1
             assert _item_by_text(guest_search, shared_text)["story_count"] == 2
-            assert _item_by_text(guest_search, hidden_text)["story_count"] == 1
+            assert _item_by_text(guest_search, outside_text)["story_count"] == 1

@@ -55,9 +55,10 @@ Stories enter the system through a legacy-compatible CSV import, are edited and 
 ### Contributor
 
 - Has all `guest` permissions.
+- May browse, search, and explore all stories, including stories outside assigned territories or with no territory recorded.
 - May create stories.
 - May edit stories.
-- May only work in territories assigned by an admin and choose from territories that already exist in the active dataset.
+- May create and edit stories only in territories assigned by an admin and choose from territories that already exist in the active dataset. Contributors with no assigned territories retain read access but cannot create or edit stories.
 - May add, replace, and remove trope, keyword, and theme assignments on stories.
 - May create new canonical tropes and canonical keywords.
 - Contributor-created content saves immediately but also generates admin review work.

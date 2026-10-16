@@ -149,7 +149,7 @@ function changedStoryFields(current: Record<string, string>, baseline: Record<st
 const SOURCE_AND_PROVENANCE_FIELDS =
   LEGACY_METADATA_SECTIONS.find((section) => section.title === "Source and provenance")?.fields ?? [];
 
-export function StoriesPage({ canEdit }: { canEdit: boolean }) {
+export function StoriesPage({ canEdit: canEditStories }: { canEdit: boolean }) {
   const { user } = useAuth();
   const maintenance = useDatasetMaintenance();
   const hashSearch = useHashSearch();
@@ -183,6 +183,7 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
   const [notice, setNotice] = useState<PageNotice | null>(null);
   const selectedStoryParam = new URLSearchParams(hashSearch).get("selected_story_id");
   const { pinnedStoryIds, togglePinnedStory } = useStoryPin(stories);
+  const canEdit = canEditStories && detail?.id === selectedStoryId && detail?.can_edit === true;
 
   const matchingStories = stories.filter(
     (story) => storyMatchesQuery(story, storyQuery) && storyMatchesFieldFilters(story, appliedFilters),
@@ -574,6 +575,9 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
     successNotice: PageNotice,
     onSuccess?: () => void,
   ) {
+    if (!canEdit) {
+      return;
+    }
     try {
       setBusy(true);
       setNotice(null);
@@ -1155,10 +1159,12 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
       <section className="panel">
         <div className="panel-header">
           <div>
-            <h1>{canEdit ? "Stories and story editing" : "Stories"}</h1>
+            <h1>{canEditStories ? "Stories and story editing" : "Stories"}</h1>
             <p className="muted">
-              {canEdit
-                ? "Browse stories, update fields, and manage trope, theme, and keyword assignments."
+              {canEditStories
+                ? user?.role === "contributor"
+                  ? "Browse all stories. Edit fields and assignments in your assigned territories."
+                  : "Browse stories, update fields, and manage trope, theme, and keyword assignments."
                 : "Browse story details, tropes, themes, and keywords in read-only mode."}
             </p>
           </div>
@@ -1172,6 +1178,14 @@ export function StoriesPage({ canEdit }: { canEdit: boolean }) {
         <section className={`notice ${notice.tone === "error" ? "notice-error" : "notice-success"}`}>
           <strong className="notice-title">{notice.title}</strong>
           {notice.body ? <p>{notice.body}</p> : null}
+        </section>
+      ) : null}
+
+      {user?.role === "contributor" && detail?.id === selectedStoryId && !canEdit ? (
+        <section className="notice" role="status">
+          {user.territories.length === 0
+            ? "You can browse all stories. An administrator must assign you a territory before you can edit stories."
+            : "This story is read-only because its territory is not assigned to you. You can browse and explore all stories."}
         </section>
       ) : null}
 

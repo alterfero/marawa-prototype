@@ -60,7 +60,8 @@ def _upload_active_dataset(client: TestClient, rows: list[dict[str, str]]) -> No
         session.commit()
 
 
-def test_authenticated_contributor_exploration_is_territory_scoped(monkeypatch, tmp_path) -> None:
+@pytest.mark.parametrize("territories", [[], ["Tahiti"]])
+def test_authenticated_contributor_exploration_includes_all_territories(monkeypatch, tmp_path, territories) -> None:
     configure_auth_env(monkeypatch)
     app = _build_app(tmp_path)
 
@@ -79,7 +80,7 @@ def test_authenticated_contributor_exploration_is_territory_scoped(monkeypatch, 
                 "email": "contributor@example.com",
                 "display_name": "Scoped Contributor",
                 "role": "contributor",
-                "territories": ["Tahiti"],
+                "territories": territories,
             },
         )
         assert invite_response.status_code == 201
@@ -104,13 +105,19 @@ def test_authenticated_contributor_exploration_is_territory_scoped(monkeypatch, 
         )
         anonymous_response = anonymous_client.post("/api/exploration/network", json=payload)
 
+        trope_id = candidate_response.json()["selected_trope_candidates"][0]["id"]
+        map_response = contributor_client.post("/api/exploration/network", json={"selected_trope_id": trope_id})
+        anonymous_map = anonymous_client.post("/api/exploration/network", json={"selected_trope_id": trope_id})
+
     assert contributor_response.status_code == 200
-    assert [marker["title"] for marker in contributor_response.json()["original_markers"]] == ["Tahiti Story"]
+    assert contributor_response.json() == anonymous_response.json()
+    assert map_response.status_code == 200
+    assert map_response.json() == anonymous_map.json()
     assert candidate_response.status_code == 200
     candidates = candidate_response.json()["selected_trope_candidates"]
     assert len(candidates) == 1
     assert candidates[0]["text"] == "Shared Trope"
-    assert candidates[0]["story_count"] == 1
+    assert candidates[0]["story_count"] == 2
     assert anonymous_response.status_code == 200
     assert {marker["title"] for marker in anonymous_response.json()["original_markers"]} == {
         "Tahiti Story",
@@ -118,7 +125,8 @@ def test_authenticated_contributor_exploration_is_territory_scoped(monkeypatch, 
     }
 
 
-def test_contributor_trope_sequence_graph_is_territory_scoped(monkeypatch, tmp_path) -> None:
+@pytest.mark.parametrize("territories", [[], ["Tahiti"]])
+def test_contributor_trope_sequence_graph_includes_all_territories(monkeypatch, tmp_path, territories) -> None:
     configure_auth_env(monkeypatch)
     app = _build_app(tmp_path)
 
@@ -149,7 +157,7 @@ def test_contributor_trope_sequence_graph_is_territory_scoped(monkeypatch, tmp_p
                 "email": "graph-contributor@example.com",
                 "display_name": "Scoped Contributor",
                 "role": "contributor",
-                "territories": ["Tahiti"],
+                "territories": territories,
             },
         )
         assert invite_response.status_code == 201
@@ -168,4 +176,4 @@ def test_contributor_trope_sequence_graph_is_territory_scoped(monkeypatch, tmp_p
         )
 
     assert response.status_code == 200
-    assert {node["story_title"] for node in response.json()["nodes"]} == {"Tahiti Story"}
+    assert {node["story_title"] for node in response.json()["nodes"]} == {"Tahiti Story", "Moorea Story"}

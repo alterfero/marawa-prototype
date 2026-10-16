@@ -398,6 +398,10 @@ Access:
 Purpose:
 - list stories in the active dataset.
 
+Contract notes:
+- Contributors browse the entire active dataset regardless of territory assignments. The same global read access applies to story details, assignment reads, term searches and counts, exploration, and visualizations.
+- Territory assignments restrict story mutations, including completeness and assignment changes. Both the current and requested territory must be assigned when moving a story.
+
 ### `GET /api/stories/territories`
 
 Access:
@@ -413,6 +417,9 @@ Access:
 
 Purpose:
 - fetch one story detail record.
+
+Contract notes:
+- `can_edit` is true for admins and for contributors assigned to the story's territory, and false for guests and other contributors. Clients use it to display editing controls; every mutation independently enforces access using the current account assignments.
 
 ### `POST /api/stories`
 
@@ -774,7 +781,7 @@ Contract notes:
 - Tropes, keywords, and themes are dataset-scoped.
 - Anonymous access is limited to exploration.
 - Guests are read-only.
-- Contributors write stories and new terms within their admin-assigned, existing territories.
+- Contributors browse all stories and terms. Story creation and editing are restricted to their admin-assigned, existing territories; no assignments means read-only story access.
 - Admins own dataset actions, user management, curation, and review.
 - Contributor-created content is visible immediately and unmarked in the normal UI.
 - Important auth, admin, review, dataset, and write actions must be auditable.

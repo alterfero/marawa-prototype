@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from app.core.csv_schema import CSV_COLUMNS
+from app.core.csv_schema import CSV_COLUMNS, KEYWORD_FIELD, THEME_FIELD, TROPE_FIELD
 from app.db import Dataset, DatasetStatus, build_engine, build_session_factory
 from app.main import create_app
 from tests.auth_helpers import authenticate_admin, configure_auth_env, redeem_token
@@ -199,7 +199,7 @@ def test_admin_user_territory_updates_require_a_current_user_version(monkeypatch
         assert current_user["version"] == user["version"] + 1
 
 
-def test_contributor_story_access_is_limited_to_assigned_territories(monkeypatch, tmp_path) -> None:
+def test_contributor_reads_all_stories_but_only_edits_assigned_territories(monkeypatch, tmp_path) -> None:
     configure_auth_env(monkeypatch)
     app = build_app(tmp_path, "contributor-territory-stories.db")
 
@@ -225,8 +225,8 @@ def test_contributor_story_access_is_limited_to_assigned_territories(monkeypatch
 
         list_response = contributor_client.get("/api/stories")
         assert list_response.status_code == 200
-        assert list_response.json()["total"] == 1
-        assert [story["title"] for story in list_response.json()["items"]] == ["Tahiti Story"]
+        assert list_response.json()["total"] == 2
+        assert [story["title"] for story in list_response.json()["items"]] == ["Tahiti Story", "Moorea Story"]
         tahiti_story = list_response.json()["items"][0]
 
         admin_stories = admin_client.get("/api/stories").json()["items"]
@@ -235,14 +235,14 @@ def test_contributor_story_access_is_limited_to_assigned_territories(monkeypatch
         allowed_detail = contributor_client.get(f"/api/stories/{tahiti_story['id']}")
         assert allowed_detail.status_code == 200
         assert allowed_detail.json()["fields"]["territory"] == "Tahiti"
+        assert allowed_detail.json()["can_edit"] is True
 
-        denied_detail = contributor_client.get(f"/api/stories/{moorea_story['id']}")
-        assert denied_detail.status_code == 403
-        assert denied_detail.json()["code"] == "story_territory_forbidden"
+        readonly_detail = contributor_client.get(f"/api/stories/{moorea_story['id']}")
+        assert readonly_detail.status_code == 200
+        assert readonly_detail.json()["can_edit"] is False
 
-        denied_assignment_read = contributor_client.get(f"/api/stories/{moorea_story['id']}/tropes")
-        assert denied_assignment_read.status_code == 403
-        assert denied_assignment_read.json()["code"] == "story_territory_forbidden"
+        for kind in ("tropes", "keywords", "themes"):
+            assert contributor_client.get(f"/api/stories/{moorea_story['id']}/{kind}").status_code == 200
 
         denied_create = contributor_client.post(
             "/api/stories",
@@ -296,7 +296,7 @@ def test_contributor_story_access_is_limited_to_assigned_territories(monkeypatch
 
         visible_after_mutations = contributor_client.get("/api/stories")
         assert visible_after_mutations.status_code == 200
-        assert [story["territory"] for story in visible_after_mutations.json()["items"]] == ["Tahiti", "Tahiti"]
+        assert [story["territory"] for story in visible_after_mutations.json()["items"]] == ["Tahiti", "Moorea", "Tahiti"]
 
 
 def test_only_admins_can_create_a_new_territory(monkeypatch, tmp_path) -> None:
@@ -370,7 +370,7 @@ def test_only_admins_can_create_a_new_territory(monkeypatch, tmp_path) -> None:
         assert allowed_create.json()["story"]["fields"]["territory"] == "New Atoll"
 
 
-def test_unassigned_contributor_defaults_to_no_story_access(monkeypatch, tmp_path) -> None:
+def test_unassigned_contributor_can_read_but_cannot_create_or_edit_stories(monkeypatch, tmp_path) -> None:
     configure_auth_env(monkeypatch)
     app = build_app(tmp_path, "unassigned-contributor-territory.db")
 
@@ -397,11 +397,19 @@ def test_unassigned_contributor_defaults_to_no_story_access(monkeypatch, tmp_pat
         )
 
         story = admin_client.get("/api/stories").json()["items"][0]
-        assert contributor_client.get("/api/stories").json() == {"items": [], "total": 0}
+        assert contributor_client.get("/api/stories").json()["items"] == [story]
 
         detail_response = contributor_client.get(f"/api/stories/{story['id']}")
-        assert detail_response.status_code == 403
-        assert detail_response.json()["code"] == "story_territory_forbidden"
+        assert detail_response.status_code == 200
+        assert detail_response.json()["can_edit"] is False
+        assert contributor_client.get("/api/stories/territories").json() == {"items": []}
+
+        edit_response = contributor_client.patch(
+            f"/api/stories/{story['id']}",
+            json={"expected_story_version": story["version"], "completeness": "pending review"},
+        )
+        assert edit_response.status_code == 403
+        assert edit_response.json()["code"] == "story_territory_forbidden"
 
         create_response = contributor_client.post(
             "/api/stories",
@@ -412,3 +420,85 @@ def test_unassigned_contributor_defaults_to_no_story_access(monkeypatch, tmp_pat
         )
         assert create_response.status_code == 403
         assert create_response.json()["code"] == "story_territory_forbidden"
+
+
+@pytest.mark.parametrize("territories", [[], ["Tahiti"]])
+@pytest.mark.parametrize("story_territory", ["Moorea", ""])
+def test_readable_story_outside_assigned_territories_rejects_every_mutation(
+    monkeypatch, tmp_path, territories, story_territory
+) -> None:
+    configure_auth_env(monkeypatch)
+    app = build_app(tmp_path, "readonly-story.db")
+
+    with TestClient(app) as admin_client, TestClient(app) as contributor_client:
+        authenticate_admin(admin_client)
+        row = make_row(title="Read-only story", territory=story_territory)
+        row[TROPE_FIELD] = "§§ Original Trope"
+        row[KEYWORD_FIELD] = "original keyword"
+        row[THEME_FIELD] = "§§ Original Theme"
+        upload_active_dataset(admin_client, [row, make_row(title="Assigned story", territory="Tahiti")])
+        invitation = create_contributor(admin_client, email="reader@example.com", territories=territories)
+        redeem_token(contributor_client, token=invitation["invite_token"], new_password="contributor-password")
+
+        stories = contributor_client.get("/api/stories").json()
+        assert stories["total"] == 2
+        story_id = stories["items"][0]["id"]
+        story_path = f"/api/stories/{story_id}"
+        original = contributor_client.get(story_path).json()
+        assert original["can_edit"] is False
+        assert admin_client.get(story_path).json()["can_edit"] is True
+        version = {"expected_story_version": original["version"]}
+        requests = [
+            ("PATCH", story_path, {"fields": {"Story title (Eng)": "Blocked title"}}),
+            ("PATCH", story_path, {"fields": {"territory": "Tahiti"}}),
+            ("PATCH", story_path, {"completeness": "pending review"}),
+        ]
+        for kind, id_field in (("tropes", "trope_id"), ("keywords", "keyword_id"), ("themes", "theme_id")):
+            assignment_path = f"{story_path}/{kind}/{original[kind][0]['id']}"
+            assert contributor_client.get(f"{story_path}/{kind}").status_code == 200
+            requests.extend([
+                ("POST", f"{story_path}/{kind}", {id_field: original[kind][0]["id"]}),
+                ("DELETE", assignment_path, {}),
+            ])
+            if kind != "themes":
+                requests.append(("PUT", assignment_path, {"text": "Blocked replacement"}))
+            if kind == "tropes":
+                requests.append(("POST", f"{assignment_path}/validate", {}))
+
+        for method, path, payload in requests:
+            response = contributor_client.request(method, path, json={**version, **payload})
+            assert response.status_code == 403, (method, path, response.json())
+            assert response.json()["code"] == "story_territory_forbidden"
+        assert contributor_client.get(story_path).json() == original
+
+
+def test_territory_assignment_changes_update_edit_access_in_existing_session(monkeypatch, tmp_path) -> None:
+    configure_auth_env(monkeypatch)
+    app = build_app(tmp_path, "updated-territory-access.db")
+
+    with TestClient(app) as admin_client, TestClient(app) as contributor_client:
+        authenticate_admin(admin_client)
+        upload_active_dataset(admin_client, [make_row(title="Tahiti Story", territory="Tahiti")])
+        invitation = create_contributor(admin_client, email="updated@example.com", territories=[])
+        auth = redeem_token(contributor_client, token=invitation["invite_token"], new_password="contributor-password")
+        user = auth["user"]
+        story = contributor_client.get("/api/stories").json()["items"][0]
+        story_path = f"/api/stories/{story['id']}"
+        assert contributor_client.get(story_path).json()["can_edit"] is False
+
+        for territories, expected_can_edit in [([" \ufeffTAHITI "], True), ([], False)]:
+            update = admin_client.patch(
+                f"/api/admin/users/{user['id']}",
+                json={"expected_user_version": user["version"], "territories": territories},
+            )
+            assert update.status_code == 200
+            user = update.json()
+            assert contributor_client.get(story_path).json()["can_edit"] is expected_can_edit
+            response = contributor_client.patch(
+                story_path,
+                json={"expected_story_version": story["version"], "fields": {"1-sentence summary": "Updated"}},
+            )
+            assert response.status_code == (200 if expected_can_edit else 403)
+            if expected_can_edit:
+                story = response.json()["story"]
+        assert contributor_client.get("/api/stories").json()["total"] == 1

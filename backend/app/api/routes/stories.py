@@ -113,6 +113,7 @@ class StoryDetailResponse(BaseModel):
     completeness: StoryCompleteness
     created_at: str
     updated_at: str
+    can_edit: bool
     fields: dict[str, str]
     tropes: list[StoryTropeResponse]
     themes: list[StoryThemeResponse]

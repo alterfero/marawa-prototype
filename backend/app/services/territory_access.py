@@ -82,15 +82,17 @@ def find_existing_territory_label(
     return _territory_labels_by_key(session, dataset_id=dataset_id).get(requested_key)
 
 
-def can_access_story_fields(
+def can_edit_story_fields(
     fields: Mapping[str, object] | None,
     *,
     actor_role: UserRole | None,
     actor_territories: Iterable[object] | None,
 ) -> bool:
-    """Return whether a caller may see a story represented by legacy fields."""
-    if actor_role != UserRole.CONTRIBUTOR:
+    """Return whether a caller may edit a story; reading is not territory restricted."""
+    if actor_role == UserRole.ADMIN:
         return True
+    if actor_role != UserRole.CONTRIBUTOR:
+        return False
 
     allowed_territory_keys = _allowed_territory_keys(actor_territories)
     story_territory_key = territory_key((fields or {}).get("territory", ""))

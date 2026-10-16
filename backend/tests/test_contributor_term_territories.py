@@ -86,7 +86,8 @@ def _assert_detail_scope(response, story_ids: list[str]) -> None:
     assert [story["id"] for story in body["stories"]] == story_ids
 
 
-def test_contributor_term_story_reads_are_limited_to_assigned_territories(monkeypatch, tmp_path) -> None:
+@pytest.mark.parametrize("territories", [[], ["Tahiti"]])
+def test_contributor_term_story_reads_include_all_territories(monkeypatch, tmp_path, territories) -> None:
     configure_auth_env(monkeypatch)
     app = _build_app(tmp_path)
 
@@ -106,7 +107,7 @@ def test_contributor_term_story_reads_are_limited_to_assigned_territories(monkey
             display_name="Scoped Contributor",
             role=UserRole.CONTRIBUTOR,
             password="contributor-password",
-            territories=["Tahiti"],
+            territories=territories,
         )
         authenticate_role(
             admin_client,
@@ -176,17 +177,17 @@ def test_contributor_term_story_reads_are_limited_to_assigned_territories(monkey
     assert admin_theme["story_ids"] == all_story_ids
     assert admin_keyword["story_count"] == 2
 
-    assert contributor_trope["story_count"] == 1
-    assert contributor_trope["story_ids"] == [tahiti_story_id]
-    assert contributor_theme["story_count"] == 1
-    assert contributor_theme["story_ids"] == [tahiti_story_id]
-    assert contributor_keyword["story_count"] == 1
+    assert contributor_trope["story_count"] == 2
+    assert contributor_trope["story_ids"] == all_story_ids
+    assert contributor_theme["story_count"] == 2
+    assert contributor_theme["story_ids"] == all_story_ids
+    assert contributor_keyword["story_count"] == 2
     assert contributor_duplicate_trope.status_code == 200
     assert contributor_duplicate_trope.json()["created"] is False
-    assert contributor_duplicate_trope.json()["trope"]["story_count"] == 1
+    assert contributor_duplicate_trope.json()["trope"]["story_count"] == 2
     assert contributor_duplicate_keyword.status_code == 200
     assert contributor_duplicate_keyword.json()["created"] is False
-    assert contributor_duplicate_keyword.json()["keyword"]["story_count"] == 1
+    assert contributor_duplicate_keyword.json()["keyword"]["story_count"] == 2
 
     assert guest_trope["story_count"] == 2
     assert guest_trope["story_ids"] == all_story_ids
@@ -194,9 +195,9 @@ def test_contributor_term_story_reads_are_limited_to_assigned_territories(monkey
     assert guest_theme["story_ids"] == all_story_ids
     assert guest_keyword["story_count"] == 2
 
-    _assert_detail_scope(contributor_trope_detail, [tahiti_story_id])
-    _assert_detail_scope(contributor_theme_detail, [tahiti_story_id])
-    _assert_detail_scope(contributor_keyword_detail, [tahiti_story_id])
+    _assert_detail_scope(contributor_trope_detail, all_story_ids)
+    _assert_detail_scope(contributor_theme_detail, all_story_ids)
+    _assert_detail_scope(contributor_keyword_detail, all_story_ids)
     _assert_detail_scope(guest_trope_detail, all_story_ids)
     _assert_detail_scope(guest_theme_detail, all_story_ids)
     _assert_detail_scope(guest_keyword_detail, all_story_ids)
@@ -205,7 +206,7 @@ def test_contributor_term_story_reads_are_limited_to_assigned_territories(monkey
     _assert_detail_scope(admin_keyword_detail, all_story_ids)
 
 
-def test_contributor_unused_term_lists_use_assigned_territory_usage(monkeypatch, tmp_path) -> None:
+def test_contributor_unused_term_lists_use_all_territory_usage(monkeypatch, tmp_path) -> None:
     configure_auth_env(monkeypatch)
     app = _build_app(tmp_path)
 
@@ -266,19 +267,11 @@ def test_contributor_unused_term_lists_use_assigned_territory_usage(monkeypatch,
         guest_keywords = guest_client.get("/api/keywords", params={"unused_only": True})
 
     assert contributor_tropes.status_code == 200
-    assert [(item["text"], item["story_count"]) for item in contributor_tropes.json()] == [
-        ("B outside trope", 0)
-    ]
-    assert contributor_tropes.json()[0]["story_ids"] == []
+    assert contributor_tropes.json() == []
     assert contributor_themes.status_code == 200
-    assert [(item["text"], item["story_count"]) for item in contributor_themes.json()] == [
-        ("B outside theme", 0)
-    ]
-    assert contributor_themes.json()[0]["story_ids"] == []
+    assert contributor_themes.json() == []
     assert contributor_keywords.status_code == 200
-    assert [(item["text"], item["story_count"]) for item in contributor_keywords.json()] == [
-        ("b outside keyword", 0)
-    ]
+    assert contributor_keywords.json() == []
 
     assert admin_tropes.status_code == 200
     assert admin_themes.status_code == 200

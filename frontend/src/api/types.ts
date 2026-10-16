@@ -206,6 +206,7 @@ export interface StoryDetail {
   completeness: StoryCompleteness;
   created_at: string;
   updated_at: string;
+  can_edit: boolean;
   fields: Record<string, string>;
   tropes: StoryTrope[];
   themes: StoryTheme[];

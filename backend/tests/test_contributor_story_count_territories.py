@@ -72,7 +72,7 @@ def _term_by_text(items: list[dict], text: str) -> dict:
     return next(item for item in items if item["text"] == text)
 
 
-def test_story_term_counts_only_include_contributor_territories(monkeypatch, tmp_path) -> None:
+def test_story_term_counts_include_all_territories_for_contributors(monkeypatch, tmp_path) -> None:
     configure_auth_env(monkeypatch)
     app = _build_app(tmp_path)
 
@@ -135,10 +135,10 @@ def test_story_term_counts_only_include_contributor_territories(monkeypatch, tmp
         assert contributor_themes.status_code == 200
         assert admin_detail.status_code == 200
         assert guest_detail.status_code == 200
-        assert _term_by_text(contributor_detail.json()["tropes"], "Shared Trope")["story_count"] == 1
-        assert _term_by_text(contributor_detail.json()["themes"], "Shared Theme")["story_count"] == 1
-        assert _term_by_text(contributor_tropes.json()["items"], "Shared Trope")["story_count"] == 1
-        assert _term_by_text(contributor_themes.json()["items"], "Shared Theme")["story_count"] == 1
+        assert _term_by_text(contributor_detail.json()["tropes"], "Shared Trope")["story_count"] == 2
+        assert _term_by_text(contributor_detail.json()["themes"], "Shared Theme")["story_count"] == 2
+        assert _term_by_text(contributor_tropes.json()["items"], "Shared Trope")["story_count"] == 2
+        assert _term_by_text(contributor_themes.json()["items"], "Shared Theme")["story_count"] == 2
         assert _term_by_text(admin_detail.json()["tropes"], "Shared Trope")["story_count"] == 2
         assert _term_by_text(admin_detail.json()["themes"], "Shared Theme")["story_count"] == 2
         assert _term_by_text(guest_detail.json()["tropes"], "Shared Trope")["story_count"] == 2
@@ -152,7 +152,7 @@ def test_story_term_counts_only_include_contributor_territories(monkeypatch, tmp
             },
         )
         assert added_trope.status_code == 201
-        assert added_trope.json()["trope"]["story_count"] == 1
+        assert added_trope.json()["trope"]["story_count"] == 2
 
         added_theme = contributor_client.post(
             f"/api/stories/{tahiti_story['id']}/themes",
@@ -162,7 +162,7 @@ def test_story_term_counts_only_include_contributor_territories(monkeypatch, tmp
             },
         )
         assert added_theme.status_code == 201
-        assert added_theme.json()["theme"]["story_count"] == 1
+        assert added_theme.json()["theme"]["story_count"] == 2
 
         replaced_trope = contributor_client.put(
             f"/api/stories/{tahiti_story['id']}/tropes/{shared_trope['id']}",
@@ -172,7 +172,7 @@ def test_story_term_counts_only_include_contributor_territories(monkeypatch, tmp
             },
         )
         assert replaced_trope.status_code == 200
-        assert replaced_trope.json()["trope"]["story_count"] == 1
+        assert replaced_trope.json()["trope"]["story_count"] == 2
 
         admin_after_mutations = admin_client.get(f"/api/stories/{tahiti_story['id']}")
         guest_after_mutations = guest_client.get(f"/api/stories/{tahiti_story['id']}")
@@ -186,6 +186,6 @@ def test_story_term_counts_only_include_contributor_territories(monkeypatch, tmp
         assert _term_by_text(guest_after_mutations.json()["tropes"], "Mutation Trope")["story_count"] == 2
         assert _term_by_text(guest_after_mutations.json()["tropes"], "Replacement Trope")["story_count"] == 2
         assert _term_by_text(guest_after_mutations.json()["themes"], "Mutation Theme")["story_count"] == 2
-        assert _term_by_text(contributor_after_mutations.json()["tropes"], "Mutation Trope")["story_count"] == 1
-        assert _term_by_text(contributor_after_mutations.json()["tropes"], "Replacement Trope")["story_count"] == 1
-        assert _term_by_text(contributor_after_mutations.json()["themes"], "Mutation Theme")["story_count"] == 1
+        assert _term_by_text(contributor_after_mutations.json()["tropes"], "Mutation Trope")["story_count"] == 2
+        assert _term_by_text(contributor_after_mutations.json()["tropes"], "Replacement Trope")["story_count"] == 2
+        assert _term_by_text(contributor_after_mutations.json()["themes"], "Mutation Theme")["story_count"] == 2

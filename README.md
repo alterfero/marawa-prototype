@@ -148,7 +148,7 @@ Use the production maintenance window to:
 
 - Anonymous users may access only the exploration page and its minimum supporting API surface.
 - Authenticated `guest` users can browse the dataset read-only.
-- Authenticated `contributor` users can create and edit stories and create new tropes and keywords. Theme creation and catalog editing are admin-only.
+- Authenticated `contributor` users can browse and explore all stories, create and edit stories in their assigned territories, and create new tropes and keywords. Contributors without assigned territories retain read-only story access. Theme creation and catalog editing are admin-only.
 - Authenticated `admin` users can manage users, import and export CSV, run dataset actions, curate terms, and resolve review work.
 
 ## Exploration UX

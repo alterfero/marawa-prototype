@@ -12,7 +12,6 @@ from sqlalchemy.orm import Session, selectinload
 from app.core.coordinates import parse_space_coord
 from app.core.csv_schema import THEME_FIELD
 from app.core.parsing import clean_text, split_themes
-from app.core.territories import normalize_territories, territory_key
 from app.db.models import (
     Dataset,
     DatasetStatus,
@@ -198,12 +197,7 @@ def build_exploration_response(
     if active_dataset is None:
         raise ExplorationNotFoundError("No active dataset is available for exploration.")
 
-    territory_scope = _territory_scope_for_actor(actor_role, actor_territories)
-    stories = _load_active_story_entries(
-        session,
-        active_dataset.id,
-        territory_scope=territory_scope,
-    )
+    stories = _load_active_story_entries(session, active_dataset.id)
     active_story_counts_by_trope_id = _story_counts_by_trope_id(stories)
     active_story_counts_by_theme_id = _story_counts_by_term_id(stories, "themes")
     active_story_counts_by_keyword_id = _story_counts_by_term_id(stories, "keywords")
@@ -215,7 +209,6 @@ def build_exploration_response(
                 session,
                 active_dataset.id,
                 selected_trope_id,
-                visible_trope_ids=set(active_story_counts_by_trope_id) if territory_scope is not None else None,
             )
             if selected_trope is None:
                 raise ExplorationNotFoundError("Selected trope not found in the active dataset.")
@@ -308,7 +301,6 @@ def build_exploration_response(
         session,
         active_dataset.id,
         selected_trope_id,
-        visible_trope_ids=set(active_story_counts_by_trope_id) if territory_scope is not None else None,
     )
     if selected_trope is None:
         raise ExplorationNotFoundError("Selected trope not found in the active dataset.")
@@ -334,8 +326,6 @@ def _get_active_trope(
     session: Session,
     dataset_id: str,
     trope_id: str,
-    *,
-    visible_trope_ids: set[str] | None = None,
 ) -> Trope | None:
     trope = session.scalar(
         select(Trope)
@@ -347,7 +337,7 @@ def _get_active_trope(
         )
         .group_by(Trope.id)
     )
-    if trope is None or (visible_trope_ids is not None and trope.id not in visible_trope_ids):
+    if trope is None:
         return None
     return trope
 
@@ -372,8 +362,6 @@ def _serialize_candidate(item: dict) -> dict:
 def _load_active_story_entries(
     session: Session,
     dataset_id: str,
-    *,
-    territory_scope: set[str] | None = None,
 ) -> list[StoryEntry]:
     stories = session.scalars(
         select(Story)
@@ -383,12 +371,6 @@ def _load_active_story_entries(
         .options(selectinload(Story.keyword_links).selectinload(StoryKeyword.keyword))
         .order_by(Story.source_row_number, Story.created_at, Story.id)
     ).all()
-    if territory_scope is not None:
-        stories = [
-            story
-            for story in stories
-            if territory_key((story.fields_json or {}).get("territory", "")) in territory_scope
-        ]
     return [
         StoryEntry(
             story_id=story.id,
@@ -446,20 +428,6 @@ def _load_active_story_entries(
         )
         for story in stories
     ]
-
-
-def _territory_scope_for_actor(
-    actor_role: UserRole | None,
-    actor_territories: Iterable[object] | None,
-) -> set[str] | None:
-    """Return a contributor's allowed territory keys, or ``None`` when unrestricted."""
-    if actor_role != UserRole.CONTRIBUTOR:
-        return None
-    return {
-        key
-        for key in (territory_key(territory) for territory in normalize_territories(actor_territories))
-        if key
-    }
 
 
 def _normalize_filter_value(value: str) -> str:

@@ -307,7 +307,8 @@ export function CreateEntryPage() {
     (statusLoading ||
       datasetVersion == null ||
       (isContributor && (territoryOptionsLoading || !hasValidContributorTerritory)));
-  const interactionDisabled = busy || entryLoading;
+  const readOnlyStory = savedStory !== null && !savedStory.can_edit;
+  const interactionDisabled = busy || entryLoading || readOnlyStory;
   const isSaveDisabled =
     interactionDisabled ||
     maintenance.active ||
@@ -861,6 +862,9 @@ export function CreateEntryPage() {
     successBody: string;
     includeTerms: boolean;
   }) {
+    if (readOnlyStory) {
+      return;
+    }
     if (DATE_OF_RECORDING_FIELD in fieldsToSave && hasInvalidRecordingYearInterval) {
       setNotice({
         tone: "error",
@@ -1008,7 +1012,7 @@ export function CreateEntryPage() {
             <h1>Create new entry</h1>
           </div>
           <div className="button-row wrap-row">
-            <button className="button button-ghost" disabled={interactionDisabled} onClick={handleResetDraft} type="button">
+            <button className="button button-ghost" disabled={busy || entryLoading} onClick={handleResetDraft} type="button">
               {savedStory ? "Start another entry" : "Reset draft"}
             </button>
             <button className="button button-ghost" disabled={interactionDisabled || statusLoading} onClick={() => void loadStatus()} type="button">
@@ -1050,6 +1054,12 @@ export function CreateEntryPage() {
         <section className="notice notice-warning">
           <strong className="notice-title">No active dataset loaded</strong>
           <p>Upload a CSV from the Dataset page before creating manual story entries.</p>
+        </section>
+      ) : null}
+
+      {readOnlyStory ? (
+        <section className="notice" role="status">
+          This story is read-only. You can edit stories only in your assigned territories, or start another entry.
         </section>
       ) : null}
 

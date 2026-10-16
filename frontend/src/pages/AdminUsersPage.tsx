@@ -93,9 +93,9 @@ function TerritoryAccessField({
 
   return (
     <fieldset className="field field-span-full territory-access-field" disabled={disabled}>
-      <legend>Story territories</legend>
+      <legend>Territories for story editing</legend>
       <p className="field-help">
-        Contributors can only view, enter, and edit stories in checked territories. Leaving every territory unchecked grants no story access.
+        Contributors can browse and explore all stories. They can create and edit stories only in checked territories. Leaving every territory unchecked keeps story access read-only.
       </p>
       {territories.length ? (
         <div className="territory-access-options">
