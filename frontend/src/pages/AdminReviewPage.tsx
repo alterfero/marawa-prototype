@@ -14,7 +14,7 @@ import {
 } from "../api/client";
 import type { ReviewItem, ReviewStatus, SearchItem, StoryDetail } from "../api/types";
 import { TermCard } from "../components/TermCard";
-import { LONG_TEXT_FIELDS } from "../constants/csv";
+import { getStoryFieldLabel, LONG_TEXT_FIELDS, normalizeDraftText, splitThemeText, THEME_FIELD } from "../constants/csv";
 import { useDatasetMaintenance } from "../maintenance";
 
 interface PageNotice {
@@ -155,7 +155,7 @@ function reviewStatusLabel(item: ReviewItem): string {
 function reviewHeadline(item: ReviewItem): string {
   const fieldReview = parseStoryFieldReview(item);
   if (fieldReview) {
-    return fieldReview.field_name;
+    return getStoryFieldLabel(fieldReview.field_name);
   }
 
   const tropeReview = parseStoryTropeReview(item);
@@ -261,7 +261,7 @@ function isLegacyStoryReviewItem(item: ReviewItem): boolean {
 function editableDraftLabel(item: ReviewItem): string {
   const fieldReview = parseStoryFieldReview(item);
   if (fieldReview) {
-    return fieldReview.field_name;
+    return getStoryFieldLabel(fieldReview.field_name);
   }
   if (parseStoryTropeReview(item)) {
     return "Trope text";
@@ -403,7 +403,8 @@ function StoryReviewChangeCard({
 
   useEffect(() => {
     if (fieldReview) {
-      setEditableDraft(storyDetail?.fields[fieldReview.field_name] ?? fieldReview.current_value);
+      const value = storyDetail?.fields[fieldReview.field_name] ?? fieldReview.current_value;
+      setEditableDraft(fieldReview.field_name === THEME_FIELD ? splitThemeText(value).join("\n") : value);
       return;
     }
     if (tropeReview) {
@@ -450,7 +451,10 @@ function StoryReviewChangeCard({
 
       if (fieldReview) {
         const currentValue = storyDetail.fields[fieldReview.field_name] || "";
-        if (editableDraft !== currentValue) {
+        const changed = fieldReview.field_name === THEME_FIELD
+          ? splitThemeText(editableDraft).map(normalizeDraftText).join("\n") !== splitThemeText(currentValue).map(normalizeDraftText).join("\n")
+          : editableDraft !== currentValue;
+        if (changed) {
           await updateStory({
             story_id: storyDetail.id,
             expected_story_version: storyDetail.version,
@@ -1003,6 +1007,8 @@ export function AdminReviewPage() {
     const nextSelectionId = await loadItems(preferredSelectionId ?? selectedSelectionId);
     if (!nextSelectionId) {
       setStoryDetail(null);
+    } else if (selectedSelection?.kind === "story" && nextSelectionId === selectedSelection.id) {
+      await loadStoryDetail(selectedSelection.story_id);
     }
   }
 

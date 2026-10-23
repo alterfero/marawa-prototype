@@ -204,3 +204,34 @@ The backend should distinguish at least these import failures:
 - empty dataset
 
 These categories should surface clearly through the API and import job status.
+
+## Injecting into an existing dataset
+
+The Dataset page offers **Inject CSV into this dataset** separately from replacement upload.
+
+1. Select a legacy or full Marawa CSV and run **Check CSV**. This saves a durable review without changing stories or terms.
+2. Review messages, each with a severity, code, data row, physical line range, column where applicable, offending value excerpt, and correction guidance. Download the text issue report if useful. Correct the CSV externally, select the corrected file, and recheck it. All errors block application; warnings require explicit acknowledgement.
+3. For each duplicate entry, choose **Keep both**, **Keep original**, or **Keep injected**. The comparison shows all populated fields and full-export metadata. With multiple candidates, select which original to retain or update. Other matching stories stay intact.
+4. Apply the reviewed injection. The active dataset is updated atomically, with an audit record and a durable full-rebuild job for search and computed artifacts. No story is deleted. Replacing an original preserves its ID and source-row identity, increments its version, and replaces its fields, completeness, and ordered term assignments.
+
+An entry is a duplicate only when both a non-empty title and a non-empty abstract match the same database story or earlier CSV entry after normalizing capitalization and whitespace. Any of the three title language columns and either abstract language column can supply the matching values. Abstracts have no minimum length; empty abstracts never establish a duplicate. Other fields, source-row numbers, and term statuses do not determine duplicate identity. Fuzzy spelling and semantic similarity are not used.
+
+When there is only a title collision, injection automatically appends the first available positive integer to each colliding title, for example `The legend of Titua 1`, with no warning or duplicate choice. Existing titles stay as they are. Generated titles avoid titles in the database, earlier generated titles, and explicit titles anywhere in the incoming CSV. Matching titles repeated in multiple language columns of one entry receive the same numbered form. The effective title appears in the preview and is used in the database and export. Repeated entries within the file are checked using both their original and effective titles, so numbering does not hide a true title-and-abstract duplicate; subsequent copies use the same effective title for review. Choosing Keep both for a true duplicate explicitly permits retaining both copies with that title.
+
+Decisions apply in CSV order. An earlier row resolves to its newly added story, updated original, or retained original; later rows targeting it resolve against that same story. A later **Keep injected** can therefore replace an earlier choice's result. The UI explains this before application.
+
+Injection is deliberately stricter about cell counts than replacement import: every nonblank row must have exactly as many cells as the header, including trailing empty cells. Invalid UTF-8, CSV syntax, missing/duplicate headers, invalid metadata, and missing catalog terms are errors. A CSV syntax error stops parsing at its physical line; subsequent entries require another check after correction. Blank rows are ignored. Unsupported columns, unrecognized coordinates/URLs, and missing titles produce warnings. Same-width cell shifts cannot always be detected; field comparisons and warnings support manual review.
+
+For full exports, new terms retain confirmation/review status and unused catalog terms are included. Shared tropes, themes, and keywords silently retain the database's current confirmation and review statuses. Differences in incoming statuses do not produce warnings or require acknowledgement, including in previously saved reviews. New story assignments preserve full-export provenance and validation state; legacy assignments use the existing CSV import defaults. Incoming source-row numbers are ignored, including missing or malformed values. Newly added stories receive consecutive unused numbers after the dataset’s highest source-row number, allocated only when an entry is actually added. This produces no warnings and does not affect duplicate detection. Story source-row provenance remains unchanged when updating an original.
+
+Recording dates during injection accept only a plain four-digit year or a properly formatted `[year1, year2]` interval within the supported 1800–2050 bounds, with year1 ≤ year2. A plain year becomes `[year, year]`. Other formats (including free-form dates, ISO calendar dates, unbracketed ranges, and reversed intervals) are silently left blank, with no date errors or warnings.
+
+The server stores reviews and applied results in `csv_injections`. Pending reviews created under earlier validation rules must be checked again; completed results remain available. The current browser tab remembers the review ID and duplicate choices across refreshes. A changed dataset version or selected story version rejects application and requires a fresh review. Repeating an already completed application returns the saved result. An all-skipped legacy injection leaves the dataset version and search artifacts unchanged.
+
+API:
+
+- `POST /api/dataset/injections/preview` — multipart `file`; returns issues and duplicate candidates, including when validation fails.
+- `GET /api/dataset/injections/{id}` — retrieve the saved review and any completed result.
+- `POST /api/dataset/injections/{id}/apply` — JSON `decisions` (`row_number`, `action`, `target_key`) and `acknowledge_warnings`. Target keys are server-provided `story:<id>` or `row:<number>` values. Actions are `keep_both`, `keep_original`, and `keep_injected`; none is preselected.
+
+These endpoints follow the existing dataset administration access controls and maintenance restrictions. A completed request can be retried during its queued rebuild.

@@ -299,6 +299,36 @@ def test_contributor_reads_all_stories_but_only_edits_assigned_territories(monke
         assert [story["territory"] for story in visible_after_mutations.json()["items"]] == ["Tahiti", "Moorea", "Tahiti"]
 
 
+@pytest.mark.parametrize("role", ["admin", "contributor"])
+@pytest.mark.parametrize("territory_fields", [{}, {"territory": ""}, {"territory": " \ufeff\t "}])
+def test_story_creation_requires_a_territory(monkeypatch, tmp_path, role, territory_fields) -> None:
+    configure_auth_env(monkeypatch)
+    app = build_app(tmp_path, "required-story-territory.db")
+
+    with TestClient(app) as admin_client, TestClient(app) as contributor_client:
+        authenticate_admin(admin_client)
+        upload_active_dataset(admin_client, [make_row(title="Existing Story", territory="Tahiti")])
+        invitation = create_contributor(admin_client, email="required@example.com", territories=["Tahiti"])
+        redeem_token(contributor_client, token=invitation["invite_token"], new_password="contributor-password")
+        client = admin_client if role == "admin" else contributor_client
+
+        response = client.post(
+            "/api/stories",
+            json={
+                "expected_dataset_version": 1,
+                "fields": {"Story title (Eng)": "Missing territory", **territory_fields},
+            },
+        )
+
+        assert response.status_code == 400
+        assert response.json() == {
+            "code": "story_mutation_invalid",
+            "message": "Territory is required. Choose a territory you are authorized to add stories in.",
+        }
+        assert client.get("/api/stories").json()["total"] == 1
+        assert client.get("/api/dataset/status").json()["active_dataset_version"] == 1
+
+
 def test_only_admins_can_create_a_new_territory(monkeypatch, tmp_path) -> None:
     configure_auth_env(monkeypatch)
     app = build_app(tmp_path, "contributor-new-territory.db")
@@ -502,3 +532,13 @@ def test_territory_assignment_changes_update_edit_access_in_existing_session(mon
             if expected_can_edit:
                 story = response.json()["story"]
         assert contributor_client.get("/api/stories").json()["total"] == 1
+
+        denied_create = contributor_client.post(
+            "/api/stories",
+            json={
+                "expected_dataset_version": contributor_client.get("/api/dataset/status").json()["active_dataset_version"],
+                "fields": {"Story title (Eng)": "Stale territory choice", "territory": "Tahiti"},
+            },
+        )
+        assert denied_create.status_code == 403
+        assert denied_create.json()["code"] == "story_territory_forbidden"

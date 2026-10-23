@@ -717,3 +717,14 @@ class TermSimilarityCache(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     target_term_id: Mapped[str] = mapped_column(String(36), nullable=False)
     similarity_score: Mapped[float] = mapped_column(Float, nullable=False)
     metadata_json: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+
+
+class CSVInjection(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "csv_injections"
+
+    dataset_id: Mapped[str | None] = mapped_column(ForeignKey("datasets.id", ondelete="SET NULL"))
+    dataset_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_filename: Mapped[str | None] = mapped_column(String(512))
+    plan_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    report_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    result_json: Mapped[dict | None] = mapped_column(JSON)

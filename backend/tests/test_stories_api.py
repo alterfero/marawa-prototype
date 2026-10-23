@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.core.csv_schema import CSV_COLUMNS, DATE_OF_RECORDING_FIELD, KEYWORD_FIELD, TROPE_FIELD
-from app.db import Dataset, DatasetStatus, build_engine, build_session_factory
+from app.db import Dataset, DatasetStatus, Story, build_engine, build_session_factory
 from app.main import create_app
 from tests.auth_helpers import authenticate_admin, configure_auth_env
 
@@ -296,7 +296,40 @@ def test_manual_story_can_be_saved_section_by_section_and_revised(client: TestCl
     assert revised_story["fields"]["species"] == "fish"
 
 
-@pytest.mark.parametrize("recording_date", ["[1799, 1801]", "[1971, 1971]", "[1980, 1971]", "1971-1980"])
+@pytest.mark.parametrize("year1, year2", [(1800, 1800), (2024, 2024), (2050, 2050), (1971, 1980)])
+def test_create_story_accepts_single_years_and_periods(client: TestClient, year1: int, year2: int) -> None:
+    upload_dataset(client, [make_row(title="Imported Story")])
+    recording_date = f"[{year1}, {year2}]"
+
+    response = client.post(
+        "/api/stories",
+        json={
+            "expected_dataset_version": 1,
+            "fields": {
+                "Story title (Eng)": "Manual Story",
+                "territory": "Tahiti",
+                DATE_OF_RECORDING_FIELD: recording_date,
+            },
+        },
+    )
+
+    assert response.status_code == 201
+    story = response.json()["story"]
+    assert story["fields"][DATE_OF_RECORDING_FIELD] == recording_date
+    assert client.get(f"/api/stories/{story['id']}").json()["fields"][DATE_OF_RECORDING_FIELD] == recording_date
+    with client.app.state.session_factory() as session:
+        stored_story = session.get(Story, story["id"])
+        assert (stored_story.recording_year_start, stored_story.recording_year_end) == (year1, year2)
+
+    export_response = client.get("/api/dataset/export.csv")
+    assert export_response.status_code == 200
+    reader = csv.DictReader(io.StringIO(export_response.content.decode("utf-8-sig")))
+    assert reader.fieldnames == CSV_COLUMNS
+    exported_story = next(row for row in reader if row["Story title (Eng)"] == "Manual Story")
+    assert exported_story[DATE_OF_RECORDING_FIELD] == recording_date
+
+
+@pytest.mark.parametrize("recording_date", ["[1799, 1801]", "[2050, 2051]", "[1980, 1971]", "[1971, ]", "[1971.5, 1980]", "1971-1980"])
 def test_create_story_rejects_invalid_recording_year_interval(client: TestClient, recording_date: str) -> None:
     upload_dataset(client, [make_row(title="Imported Story")])
 
@@ -306,6 +339,7 @@ def test_create_story_rejects_invalid_recording_year_interval(client: TestClient
             "expected_dataset_version": 1,
             "fields": {
                 "Story title (Eng)": "Manual Story",
+                "territory": "Tahiti",
                 DATE_OF_RECORDING_FIELD: recording_date,
             },
         },
@@ -314,7 +348,7 @@ def test_create_story_rejects_invalid_recording_year_interval(client: TestClient
     assert response.status_code == 400
     assert response.json() == {
         "code": "story_mutation_invalid",
-        "message": "Date of recording must be a year interval in [year1, year2] format, with years between 1800 and 2050 and year2 greater than year1.",
+        "message": "Date of recording must use [begin year, end year] format, with whole years between 1800 and 2050 and the end year no earlier than the begin year. Use equal years for a single year.",
     }
 
 
@@ -339,13 +373,13 @@ def test_story_date_update_enforces_year_intervals_without_blocking_legacy_impor
         f"/api/stories/{story['id']}",
         json={
             "expected_story_version": 2,
-            "fields": {DATE_OF_RECORDING_FIELD: "[2024, 2024]"},
+            "fields": {DATE_OF_RECORDING_FIELD: "[2024, 2023]"},
         },
     )
     assert invalid_update.status_code == 400
     assert invalid_update.json() == {
         "code": "story_mutation_invalid",
-        "message": "Date of recording must be a year interval in [year1, year2] format, with years between 1800 and 2050 and year2 greater than year1.",
+        "message": "Date of recording must use [begin year, end year] format, with whole years between 1800 and 2050 and the end year no earlier than the begin year. Use equal years for a single year.",
     }
 
     valid_update = client.patch(
@@ -358,6 +392,29 @@ def test_story_date_update_enforces_year_intervals_without_blocking_legacy_impor
     assert valid_update.status_code == 200
     assert valid_update.json()["story"]["fields"][DATE_OF_RECORDING_FIELD] == "[1971, 1980]"
 
+    single_year_update = client.patch(
+        f"/api/stories/{story['id']}",
+        json={
+            "expected_story_version": 3,
+            "fields": {DATE_OF_RECORDING_FIELD: "[2024, 2024]"},
+        },
+    )
+    assert single_year_update.status_code == 200
+    assert single_year_update.json()["story"]["fields"][DATE_OF_RECORDING_FIELD] == "[2024, 2024]"
+    with client.app.state.session_factory() as session:
+        stored_story = session.get(Story, story["id"])
+        assert (stored_story.recording_year_start, stored_story.recording_year_end) == (2024, 2024)
+
+    clear_date = client.patch(
+        f"/api/stories/{story['id']}",
+        json={"expected_story_version": 4, "fields": {DATE_OF_RECORDING_FIELD: ""}},
+    )
+    assert clear_date.status_code == 200
+    assert clear_date.json()["story"]["fields"][DATE_OF_RECORDING_FIELD] == ""
+    with client.app.state.session_factory() as session:
+        stored_story = session.get(Story, story["id"])
+        assert (stored_story.recording_year_start, stored_story.recording_year_end) == (None, None)
+
 
 def test_create_story_returns_409_for_stale_expected_dataset_version(client: TestClient) -> None:
     upload_dataset(client, [make_row(title="Imported Story")])
@@ -366,7 +423,7 @@ def test_create_story_returns_409_for_stale_expected_dataset_version(client: Tes
         "/api/stories",
         json={
             "expected_dataset_version": 1,
-            "fields": {"Story title (Eng)": "Manual Story"},
+            "fields": {"Story title (Eng)": "Manual Story", "territory": "Tahiti"},
             "tropes": ["Moon Bride"],
             "keywords": ["breadfruit"],
         },
@@ -377,7 +434,7 @@ def test_create_story_returns_409_for_stale_expected_dataset_version(client: Tes
         "/api/stories",
         json={
             "expected_dataset_version": 1,
-            "fields": {"Story title (Eng)": "Second Manual Story"},
+            "fields": {"Story title (Eng)": "Second Manual Story", "territory": "Tahiti"},
             "tropes": ["Night Canoe"],
             "keywords": [],
         },

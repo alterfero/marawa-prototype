@@ -26,7 +26,7 @@ import {
 } from "../components/StoryFieldWidgets";
 import { TermCard } from "../components/TermCard";
 import { TropeCard } from "../components/TropeCard";
-import { buildBlankStoryFields, DATE_OF_RECORDING_FIELD, LEGACY_METADATA_SECTIONS, normalizeDraftText } from "../constants/csv";
+import { buildBlankStoryFields, DATE_OF_RECORDING_FIELD, LEGACY_METADATA_SECTIONS, normalizeDraftText, splitThemeText, THEME_FIELD } from "../constants/csv";
 import type { CreateStoryResponse, DatasetStatus, SearchItem, StoryDetail } from "../api/types";
 import { useDatasetMaintenance } from "../maintenance";
 import { routeHref, useHashSearch } from "../router";
@@ -55,7 +55,9 @@ const ENTRY_DRAFT_RECOVERY_KEY = "marawa:create-entry-draft:v1";
 
 function sameFields(left: Record<string, string>, right: Record<string, string>): boolean {
   const fields = new Set([...Object.keys(left), ...Object.keys(right)]);
-  return [...fields].every((field) => (left[field] || "") === (right[field] || ""));
+  return [...fields].every((field) => field === THEME_FIELD
+    ? splitThemeText(left[field] || "").map(normalizeDraftText).join("\n") === splitThemeText(right[field] || "").map(normalizeDraftText).join("\n")
+    : (left[field] || "") === (right[field] || ""));
 }
 
 function sameTerms(left: readonly { text: string }[], right: readonly { text: string }[]): boolean {
@@ -165,7 +167,7 @@ function TerritoryField({
     const hasSelectedOption = options.includes(value);
     return (
       <label className="field">
-        <span>territory</span>
+        <strong>Territory (required)</strong>
         <select
           aria-describedby={`${inputId}-help`}
           aria-invalid={!loading && Boolean(value) && !hasSelectedOption}
@@ -177,7 +179,7 @@ function TerritoryField({
           value={value}
         >
           <option value="">
-            {loading ? "Loading territories..." : options.length ? "Select a territory" : "No territories are available"}
+            {loading ? "Loading territories..." : options.length ? "Select an authorized territory" : "No authorized territories are available"}
           </option>
           {options.map((territory) => (
             <option key={territory} value={territory}>
@@ -189,8 +191,8 @@ function TerritoryField({
           {loading
             ? "Loading the territories you are allowed to contribute to."
             : options.length
-              ? "Choose one of the territories you are allowed to contribute to."
-              : "No existing territories are currently available for your contributor access."}
+              ? "Required before saving. Choose one of the territories you are authorized to add stories in."
+              : "You cannot create a story yet. Ask an administrator to assign you an existing territory."}
         </p>
       </label>
     );
@@ -198,7 +200,7 @@ function TerritoryField({
 
   return (
     <label className="field">
-      <span>territory</span>
+      <strong>Territory (required)</strong>
       <input
         aria-describedby={`${inputId}-help`}
         className="input"
@@ -206,6 +208,7 @@ function TerritoryField({
         id={inputId}
         list={datalistId}
         onChange={(event) => onChange(event.target.value)}
+        required
         value={value}
       />
       <datalist id={datalistId}>
@@ -216,7 +219,7 @@ function TerritoryField({
       <p className="muted" id={`${inputId}-help`}>
         {loading
           ? "Loading existing territories..."
-          : "Choose an existing territory or enter a new territory label."}
+          : "Required before saving. As an administrator, choose an existing territory or enter a new territory label."}
       </p>
     </label>
   );
@@ -297,22 +300,31 @@ export function CreateEntryPage() {
   const recordingYearInterval = fields[DATE_OF_RECORDING_FIELD] || "";
   const hasInvalidRecordingYearInterval =
     Boolean(recordingYearInterval) && !isValidRecordingYearInterval(recordingYearInterval);
-  const hasValidContributorTerritory = !isContributor || territoryOptions.includes(fields["territory"] || "");
+  const hasValidTerritory = isContributor
+    ? territoryOptions.includes(fields["territory"] || "")
+    : Boolean((fields["territory"] || "").replace(/\ufeff/g, "").trim());
+  const territorySelectionRequired = !hasValidTerritory || (isContributor && territoryOptionsLoading);
+  const territorySelectionHelp = isContributor
+    ? territoryOptionsLoading
+      ? "Wait for your authorized territories to finish loading."
+      : territoryOptions.length
+        ? "Select a territory you are authorized to add stories in under Source and provenance. A territory is mandatory before saving any section."
+        : "You cannot create a story yet. Ask an administrator to assign you an existing territory."
+    : "Choose an existing territory or enter a new territory under Source and provenance. A territory is mandatory before saving any section.";
   const isDirty =
     !sameFields(fields, savedStory?.fields || buildBlankStoryFields()) ||
     !sameTerms(draftTropes, savedStory?.tropes || []) ||
     !sameTerms(draftKeywords, savedStory?.keywords || []);
   const cannotCreateStory =
     savedStory === null &&
-    (statusLoading ||
-      datasetVersion == null ||
-      (isContributor && (territoryOptionsLoading || !hasValidContributorTerritory)));
+    (statusLoading || datasetVersion == null);
   const readOnlyStory = savedStory !== null && !savedStory.can_edit;
   const interactionDisabled = busy || entryLoading || readOnlyStory;
   const isSaveDisabled =
     interactionDisabled ||
     maintenance.active ||
     cannotCreateStory ||
+    territorySelectionRequired ||
     hasInvalidRecordingYearInterval ||
     (savedStory !== null && !isDirty);
 
@@ -764,6 +776,7 @@ export function CreateEntryPage() {
       interactionDisabled ||
       maintenance.active ||
       cannotCreateStory ||
+      territorySelectionRequired ||
       (includesRecordingYearInterval && hasInvalidRecordingYearInterval)
     );
   }
@@ -868,8 +881,8 @@ export function CreateEntryPage() {
     if (DATE_OF_RECORDING_FIELD in fieldsToSave && hasInvalidRecordingYearInterval) {
       setNotice({
         tone: "error",
-        title: "Invalid recording-year interval",
-        body: "Enter two years from 1800 to 2050, with year 2 greater than year 1, before saving.",
+        title: "Invalid recording date",
+        body: "Enter a whole year from 1800 to 2050, or a period with both years in that range and the end year no earlier than the begin year.",
       });
       return;
     }
@@ -881,13 +894,11 @@ export function CreateEntryPage() {
       });
       return;
     }
-    if (savedStory === null && isContributor && (territoryOptionsLoading || !hasValidContributorTerritory)) {
+    if (territorySelectionRequired) {
       setNotice({
         tone: "warning",
-        title: "Select an allowed territory",
-        body: territoryOptionsLoading
-          ? "Wait for your allowed territories to finish loading before creating a new entry."
-          : "Choose an existing territory you are allowed to contribute to before creating a new entry.",
+        title: "Territory is required",
+        body: territorySelectionHelp,
       });
       return;
     }
@@ -909,7 +920,7 @@ export function CreateEntryPage() {
         }
         result = await createStory({
           expected_dataset_version: datasetVersion,
-          fields: fieldsToSave,
+          fields: { ...fieldsToSave, territory: fields["territory"] || "" },
           tropes: includeTerms ? draftTropes.map((trope) => trope.text) : [],
           keywords: includeTerms ? draftKeywords.map((keyword) => keyword.text) : [],
         });
@@ -1024,6 +1035,25 @@ export function CreateEntryPage() {
           </div>
         </div>
       </section>
+
+      {!readOnlyStory && territorySelectionRequired ? (
+        <section className="notice notice-warning" role="status" aria-label="Territory required">
+          <strong className="notice-title">Territory is required before saving</strong>
+          <p>{territorySelectionHelp}</p>
+          <button
+            className="button button-ghost"
+            disabled={interactionDisabled || (isContributor && (territoryOptionsLoading || !territoryOptions.length))}
+            onClick={() => {
+              const territoryInput = document.getElementById("create-entry-territory");
+              territoryInput?.scrollIntoView({ behavior: "smooth", block: "center" });
+              territoryInput?.focus({ preventScroll: true });
+            }}
+            type="button"
+          >
+            Choose territory
+          </button>
+        </section>
+      ) : null}
 
       {(isDirty || savedStory) && (
         <section aria-label="Entry save status" className={`entry-save-bar ${isDirty ? "entry-save-bar-dirty" : "entry-save-bar-saved"}`}>

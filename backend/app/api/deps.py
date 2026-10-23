@@ -130,6 +130,11 @@ def enforce_dataset_maintenance_lock(
     if not relative_path.startswith(_DATASET_MUTATION_PREFIXES):
         return
 
+    # Injection applies enforce maintenance in their transaction after checking for
+    # an already-applied result, so a lost response can be retried during rebuild.
+    if relative_path.startswith("/dataset/injections/") and relative_path.endswith("/apply"):
+        return
+
     maintenance = get_dataset_maintenance_status(session)
     if not maintenance["active"]:
         return

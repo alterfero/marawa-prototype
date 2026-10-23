@@ -59,6 +59,7 @@ export const LEGACY_METADATA_SECTIONS: Array<{ title: string; fields: string[] }
 ];
 
 export const LONG_TEXT_FIELDS = new Set([
+  THEME_FIELD,
   "1-sentence summary",
   "Abstract (Eng)",
   "Abstract (Fr)",
@@ -108,4 +109,9 @@ export function dedupeDraftValues(values: string[]): string[] {
 
 export function splitKeywordText(value: string): string[] {
   return dedupeDraftValues(value.split(/[;\n]+/));
+}
+
+export function splitThemeText(value: string): string[] {
+  const parts = value.includes("§§") ? value.split("§§") : value.split(/[;\n]+/);
+  return dedupeDraftValues(parts.map((part) => part.replace(/^[\s;]+|[\s;]+$/g, "")));
 }

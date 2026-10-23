@@ -4,14 +4,13 @@ import csv
 import hashlib
 import io
 import json
-from contextlib import contextmanager
 from dataclasses import dataclass
-from threading import Lock
 from typing import Any
 
 from sqlalchemy import case, select
 from sqlalchemy.orm import Session, selectinload
 
+from app.core.csv_reader import allow_large_csv_fields as _allow_large_csv_fields
 from app.core.csv_schema import (
     CSV_COLUMNS,
     CSV_IMPORT_ALIASES,
@@ -58,10 +57,6 @@ class CSVImportValidationError(ValueError):
     """Raised when an uploaded CSV does not match the supported legacy contract."""
 
 
-_CSV_FIELD_LIMIT_LOCK = Lock()
-_MAX_CSV_FIELD_SIZE = 64 * 1024 * 1024
-
-
 @dataclass(frozen=True)
 class _CSVImportRow:
     source_row_number: int
@@ -82,23 +77,6 @@ class DatasetComparisonValues:
 
 def _normalize_header(fieldnames: list[str | None]) -> list[str]:
     return [clean_text(name) for name in fieldnames if name is not None]
-
-
-@contextmanager
-def _allow_large_csv_fields():
-    """Temporarily allow a full-export metadata cell up to the upload-size ceiling.
-
-    ``csv.field_size_limit`` is process-global, so the lock keeps concurrent
-    uploads from changing the limit while another CSV is being parsed.
-    """
-
-    with _CSV_FIELD_LIMIT_LOCK:
-        original_limit = csv.field_size_limit()
-        try:
-            csv.field_size_limit(max(original_limit, _MAX_CSV_FIELD_SIZE))
-            yield
-        finally:
-            csv.field_size_limit(original_limit)
 
 
 def _resolve_import_columns(fieldnames: list[str]) -> list[str | None]:

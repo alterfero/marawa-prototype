@@ -1,7 +1,7 @@
 import L from "leaflet";
 import { useEffect, useRef, useState } from "react";
 
-import { DATE_OF_RECORDING_FIELD, getStoryFieldLabel, LONG_TEXT_FIELDS } from "../constants/csv";
+import { DATE_OF_RECORDING_FIELD, getStoryFieldLabel, LONG_TEXT_FIELDS, splitThemeText, THEME_FIELD } from "../constants/csv";
 import { normalizeLongitude } from "../map/antimeridian";
 
 export interface LocationDraft {
@@ -127,7 +127,7 @@ export function isValidRecordingYearInterval(value: string): boolean {
   ) {
     return false;
   }
-  return year2 > year1;
+  return year2 >= year1;
 }
 
 function recordingYearInputs(value: string): [string, string] {
@@ -136,9 +136,6 @@ function recordingYearInputs(value: string): [string, string] {
 }
 
 function formatRecordingYearInputs(year1: string, year2: string): string {
-  if (!year1 && !year2) {
-    return "";
-  }
   return `[${year1}, ${year2}]`;
 }
 
@@ -235,6 +232,103 @@ export function applyLocationDraftToFields(fields: Record<string, string>, locat
   };
 }
 
+function RecordingYearInput({
+  value,
+  disabled,
+  inputId,
+  onChange,
+}: {
+  value: string;
+  disabled: boolean;
+  inputId: string;
+  onChange: (value: string) => void;
+}) {
+  const [yearMode, setYearMode] = useState<{ value: string; period: boolean } | null>(null);
+  const [year1, year2] = recordingYearInputs(value);
+  // Keep the checkbox choice during local edits, and infer it for loaded dates.
+  const selectPeriod = yearMode?.value === value ? yearMode.period : Boolean(value) && (!year1 || year1 !== year2);
+  const dateError = value && !isValidRecordingYearInterval(value)
+    ? selectPeriod
+      ? "Enter both years from 1800 to 2050, with the end year no earlier than the begin year."
+      : "Enter a whole year from 1800 to 2050."
+    : null;
+  const describedBy = dateError ? `${inputId}-help ${inputId}-error` : `${inputId}-help`;
+
+  function changeYears(beginYear: string, endYear: string, period = selectPeriod) {
+    const nextValue = period
+      ? formatRecordingYearInputs(beginYear, endYear)
+      : beginYear ? formatRecordingYearInputs(beginYear, beginYear) : "";
+    setYearMode({ value: nextValue, period });
+    onChange(nextValue);
+  }
+
+  return (
+    <div className="field field-span-full" role="group" aria-labelledby={`${inputId}-label`}>
+      <span id={`${inputId}-label`}>{getStoryFieldLabel(DATE_OF_RECORDING_FIELD)}</span>
+      <label className="checkbox-row">
+        <input
+          checked={selectPeriod}
+          disabled={disabled}
+          onChange={(event) => changeYears(year1, "", event.target.checked)}
+          type="checkbox"
+        />
+        <span>select a period</span>
+      </label>
+      <div className="year-interval-inputs">
+        <label className="field" htmlFor={`${inputId}-year1`}>
+          <span>{selectPeriod ? "Begin year" : "Year"}</span>
+          <input
+            aria-describedby={describedBy}
+            aria-invalid={Boolean(dateError)}
+            className="input"
+            disabled={disabled}
+            id={`${inputId}-year1`}
+            inputMode="numeric"
+            max={MAX_RECORDING_YEAR}
+            min={MIN_RECORDING_YEAR}
+            onChange={(event) => changeYears(event.target.value, year2)}
+            placeholder={selectPeriod ? "Begin year" : "Year"}
+            step="1"
+            type="number"
+            value={year1}
+          />
+        </label>
+        {selectPeriod ? (
+          <label className="field" htmlFor={`${inputId}-year2`}>
+            <span>End year</span>
+            <input
+              aria-describedby={describedBy}
+              aria-invalid={Boolean(dateError)}
+              className="input"
+              disabled={disabled}
+              id={`${inputId}-year2`}
+              inputMode="numeric"
+              max={MAX_RECORDING_YEAR}
+              min={MIN_RECORDING_YEAR}
+              onChange={(event) => changeYears(year1, event.target.value)}
+              placeholder="End year"
+              step="1"
+              type="number"
+              value={year2}
+            />
+          </label>
+        ) : null}
+        {value ? (
+          <button className="button button-ghost" disabled={disabled} onClick={() => changeYears("", "", false)} type="button">
+            Clear date
+          </button>
+        ) : null}
+      </div>
+      <p className="muted" id={`${inputId}-help`}>
+        {selectPeriod
+          ? "Enter whole years from 1800 to 2050. The end year must be no earlier than the begin year."
+          : "Enter a whole year from 1800 to 2050."}
+      </p>
+      {dateError ? <p className="form-error" id={`${inputId}-error`} role="alert">{dateError}</p> : null}
+    </div>
+  );
+}
+
 export function StoryFieldInput({
   field,
   value,
@@ -254,55 +348,28 @@ export function StoryFieldInput({
   const fieldLabel = getStoryFieldLabel(field);
 
   if (field === DATE_OF_RECORDING_FIELD) {
-    const [year1, year2] = recordingYearInputs(value);
-    const intervalError =
-      value && !isValidRecordingYearInterval(value)
-        ? "Correct the highlighted years before saving."
-        : null;
+    return (
+      <RecordingYearInput disabled={disabled} inputId={inputId} onChange={onChange} value={value} />
+    );
+  }
 
+  if (field === THEME_FIELD) {
     return (
       <div className="field field-span-full">
-        <label htmlFor={`${inputId}-year1`}>{fieldLabel}</label>
-        <div className="year-interval-inputs">
-          <input
-            aria-describedby={intervalError ? `${inputId}-help ${inputId}-error` : `${inputId}-help`}
-            aria-invalid={Boolean(intervalError)}
-            className="input"
-            disabled={disabled}
-            id={`${inputId}-year1`}
-            inputMode="numeric"
-            max={MAX_RECORDING_YEAR}
-            min={MIN_RECORDING_YEAR}
-            onChange={(event) => onChange(formatRecordingYearInputs(event.target.value, year2))}
-            placeholder="Year 1"
-            step="1"
-            type="number"
-            value={year1}
-          />
-          <span aria-hidden="true">to</span>
-          <input
-            aria-describedby={intervalError ? `${inputId}-help ${inputId}-error` : `${inputId}-help`}
-            aria-invalid={Boolean(intervalError)}
-            className="input"
-            disabled={disabled}
-            id={`${inputId}-year2`}
-            inputMode="numeric"
-            max={MAX_RECORDING_YEAR}
-            min={MIN_RECORDING_YEAR}
-            onChange={(event) => onChange(formatRecordingYearInputs(year1, event.target.value))}
-            placeholder="Year 2"
-            step="1"
-            type="number"
-            value={year2}
-          />
-          {value ? (
-            <button className="button button-ghost" disabled={disabled} onClick={() => onChange("")} type="button">
-              Clear years
-            </button>
-          ) : null}
-        </div>
-        <p className="muted" id={`${inputId}-help`}>Enter whole years from 1800 to 2050, with year 2 greater than year 1.</p>
-        {intervalError ? <p className="form-error" id={`${inputId}-error`} role="alert">{intervalError}</p> : null}
+        <label htmlFor={inputId}>{fieldLabel}</label>
+        <textarea
+          aria-describedby={`${inputId}-help`}
+          className="input input-textarea"
+          disabled={disabled}
+          id={inputId}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder="Enter one theme per line"
+          rows={4}
+          value={value.includes("§§") ? splitThemeText(value).join("\n") : value}
+        />
+        <p className="muted" id={`${inputId}-help`}>
+          Add or edit this story’s themes, one per line or separated by semicolons. Existing themes are reused.
+        </p>
       </div>
     );
   }

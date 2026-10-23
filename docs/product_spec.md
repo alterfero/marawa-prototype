@@ -60,6 +60,7 @@ Stories enter the system through a legacy-compatible CSV import, are edited and 
 - May edit stories.
 - May create and edit stories only in territories assigned by an admin and choose from territories that already exist in the active dataset. Contributors with no assigned territories retain read access but cannot create or edit stories.
 - May add, replace, and remove trope, keyword, and theme assignments on stories.
+- May create and edit a story's themes through the story editor. Theme changes are reviewed per story; shared theme renames and curation remain admin actions.
 - May create new canonical tropes and canonical keywords.
 - Contributor-created content saves immediately but also generates admin review work.
 
@@ -80,6 +81,7 @@ Stories enter the system through a legacy-compatible CSV import, are edited and 
 ## Review Model
 
 - Contributor story creates and edits save immediately and create review flags for admins.
+- Theme creation and edits on a story create a before/after review item. Admins may approve, edit and approve, or reject to restore the previous theme assignments. Newly proposed themes left unused by the decision are removed; themes still used by other stories are retained.
 - Contributor-created canonical tropes save immediately in a `pending_review` state.
 - Contributor-created canonical keywords save immediately in a `pending_review` state.
 - Pending contributor content is visible immediately in the normal UI with no review marker.

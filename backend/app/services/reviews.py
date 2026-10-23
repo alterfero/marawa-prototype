@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from sqlalchemy import case, delete, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
+from app.core.csv_schema import THEME_FIELD
 from app.core.parsing import clean_text
 from app.db.models import (
     AssignmentStatus,
@@ -14,13 +15,16 @@ from app.db.models import (
     ReviewType,
     Story,
     StoryKeyword,
+    StoryTheme,
     StoryTrope,
     StoryTropeOrigin,
     TermEmbedding,
     TermKind,
     TermReviewStatus,
     TermSimilarityCache,
+    Theme,
     Trope,
+    UserRole,
 )
 from app.services.audit import record_audit_event
 
@@ -59,6 +63,7 @@ def queue_story_field_review_item(
     field_name: str,
     previous_value: str,
     current_value: str,
+    created_theme_ids: list[str] | None = None,
 ) -> ReviewItem | None:
     previous_marker = clean_text(previous_value)
     current_marker = clean_text(current_value)
@@ -75,6 +80,8 @@ def queue_story_field_review_item(
         "previous_value": previous_marker,
         "current_value": current_marker,
     }
+    if field_name == THEME_FIELD:
+        metadata["created_theme_ids"] = list(created_theme_ids or [])
     return _create_review_item(
         session,
         dataset_id=dataset_id,
@@ -288,6 +295,7 @@ def approve_review_item(
         keyword.review_status = TermReviewStatus.APPROVED
         keyword.updated_by_user_id = actor_user_id
 
+    _remove_unused_review_themes(session, review_item)
     resolution_note = clean_text(note)
     _resolve_review_item(
         review_item,
@@ -357,6 +365,7 @@ def reject_review_item(
     else:
         raise ReviewValidationError("Unsupported review type.")
 
+    _remove_unused_review_themes(session, review_item)
     _resolve_review_item(
         review_item,
         actor_user_id=actor_user_id,
@@ -385,6 +394,34 @@ def _require_pending_review_item(session: Session, review_id: str) -> ReviewItem
     return review_item
 
 
+def _remove_unused_review_themes(session: Session, review_item: ReviewItem) -> None:
+    """Discard newly proposed themes that the review leaves unassigned."""
+    from app.services.themes import _delete_theme_artifacts
+
+    metadata = review_item.metadata_json or {}
+    if metadata.get("field_name") != THEME_FIELD or not review_item.created_by_user_id:
+        return
+    created_ids = metadata.get("created_theme_ids") or []
+    if not created_ids:
+        return
+    session.flush()
+    unused_themes = session.scalars(
+        select(Theme).where(
+            Theme.id.in_(created_ids),
+            Theme.dataset_id == review_item.dataset_id,
+            Theme.created_by_user_id == review_item.created_by_user_id,
+            ~Theme.story_links.any(),
+        )
+    ).all()
+    for theme in unused_themes:
+        _delete_theme_artifacts(session, theme.id)
+        session.delete(theme)
+    if unused_themes:
+        dataset = session.get(Dataset, review_item.dataset_id)
+        if dataset is not None:
+            dataset.version += 1
+
+
 def _reject_story_review_item(
     session: Session,
     *,
@@ -397,6 +434,7 @@ def _reject_story_review_item(
             selectinload(Story.dataset),
             selectinload(Story.trope_links).selectinload(StoryTrope.trope),
             selectinload(Story.keyword_links).selectinload(StoryKeyword.keyword),
+            selectinload(Story.theme_links).selectinload(StoryTheme.theme),
         )
     )
     if story is None:
@@ -500,7 +538,7 @@ def _reject_story_field_change(
     review_item: ReviewItem,
     story: Story,
 ) -> dict[str, object]:
-    from app.services.stories import sync_story_derived_fields
+    from app.services.stories import _refresh_theme_cached_story_count, _replace_story_themes_from_text, sync_story_derived_fields
 
     metadata = review_item.metadata_json or {}
     field_name = clean_text(metadata.get("field_name", ""))
@@ -520,6 +558,16 @@ def _reject_story_field_change(
         **(story.fields_json or {}),
         field_name: previous_value,
     }
+    if field_name == THEME_FIELD:
+        affected_theme_ids = _replace_story_themes_from_text(
+            session,
+            dataset_id=story.dataset_id,
+            story=story,
+            value=previous_value,
+            actor_role=UserRole.ADMIN,
+        )
+        for theme_id in affected_theme_ids:
+            _refresh_theme_cached_story_count(session, story.dataset_id, theme_id)
     sync_story_derived_fields(story)
     story.version += 1
     dataset.version += 1

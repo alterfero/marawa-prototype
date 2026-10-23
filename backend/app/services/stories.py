@@ -253,6 +253,10 @@ def create_story(
     active_dataset = _require_active_dataset(session)
     _assert_dataset_version(active_dataset, expected_dataset_version)
     normalized_fields = _normalize_story_fields(fields)
+    if not normalized_fields["territory"]:
+        raise StoryMutationValidationError(
+            "Territory is required. Choose a territory you are authorized to add stories in."
+        )
     canonical_territory = _assert_fields_territory_access(
         session,
         normalized_fields,
@@ -280,6 +284,7 @@ def create_story(
     affected_theme_ids: set[str] = set()
     newly_created_tropes: list[Trope] = []
     newly_created_keywords: list[Keyword] = []
+    newly_created_theme_ids: list[str] = []
 
     for position, trope_text in enumerate(_normalize_term_list(tropes)):
         trope, created = _resolve_trope(
@@ -327,6 +332,7 @@ def create_story(
             value=story.fields_json.get(THEME_FIELD, ""),
             actor_user_id=actor_user_id,
             actor_role=actor_role,
+            created_theme_ids=newly_created_theme_ids,
         )
     )
 
@@ -349,7 +355,7 @@ def create_story(
     )
     if actor_role == UserRole.CONTRIBUTOR and actor_user_id:
         for column in CSV_COLUMNS:
-            if column in {TROPE_FIELD, KEYWORD_FIELD, THEME_FIELD}:
+            if column in {TROPE_FIELD, KEYWORD_FIELD}:
                 continue
             value = clean_text((story.fields_json or {}).get(column, ""))
             if not value:
@@ -363,6 +369,7 @@ def create_story(
                 field_name=column,
                 previous_value="",
                 current_value=value,
+                created_theme_ids=newly_created_theme_ids if column == THEME_FIELD else None,
             )
         for link in _ordered_trope_links(story):
             queue_story_trope_review_item(
@@ -444,6 +451,7 @@ def update_story(
 
     story_fields = _build_story_fields(story)
     previous_field_values: dict[str, str] = {}
+    newly_created_theme_ids: list[str] = []
     if field_updates:
         previous_field_values = {column: story_fields.get(column, "") for column in field_updates}
         story_fields.update(field_updates)
@@ -468,6 +476,7 @@ def update_story(
                 value=field_updates[THEME_FIELD],
                 actor_user_id=actor_user_id,
                 actor_role=actor_role,
+                created_theme_ids=newly_created_theme_ids,
             )
             for theme_id in affected_theme_ids:
                 _refresh_theme_cached_story_count(session, active_dataset.id, theme_id)
@@ -498,7 +507,8 @@ def update_story(
                 review_type=ReviewType.STORY_UPDATED,
                 field_name=column,
                 previous_value=previous_value,
-                current_value=story_fields.get(column, ""),
+                current_value=(story.fields_json or {}).get(column, ""),
+                created_theme_ids=newly_created_theme_ids if column == THEME_FIELD else None,
             )
     record_audit_event(
         session,
@@ -715,7 +725,8 @@ def add_story_theme(
     )
     _assert_story_version(story, expected_story_version)
 
-    theme, _ = _resolve_theme(
+    previous_themes = _build_story_fields(story)[THEME_FIELD]
+    theme, created = _resolve_theme(
         session,
         active_dataset.id,
         theme_id=theme_id,
@@ -739,6 +750,18 @@ def add_story_theme(
         story_id=story.id,
         reason="story_theme_added",
     )
+    if actor_role == UserRole.CONTRIBUTOR and actor_user_id:
+        queue_story_field_review_item(
+            session,
+            dataset_id=active_dataset.id,
+            story=story,
+            actor_user_id=actor_user_id,
+            review_type=ReviewType.STORY_UPDATED,
+            field_name=THEME_FIELD,
+            previous_value=previous_themes,
+            current_value=story.fields_json[THEME_FIELD],
+            created_theme_ids=[theme.id] if created else [],
+        )
     record_audit_event(
         session,
         event_type="story.theme_added",
@@ -1113,6 +1136,7 @@ def delete_story_theme(
     if link is None:
         raise StoryThemeNotFoundError("Theme assignment not found on this story.")
 
+    previous_themes = _build_story_fields(story)[THEME_FIELD]
     removed_theme_id = link.theme_id
     story.theme_links.remove(link)
     session.flush()
@@ -1126,6 +1150,17 @@ def delete_story_theme(
         story_id=story.id,
         reason="story_theme_deleted",
     )
+    if actor_role == UserRole.CONTRIBUTOR and actor_user_id:
+        queue_story_field_review_item(
+            session,
+            dataset_id=active_dataset.id,
+            story=story,
+            actor_user_id=actor_user_id,
+            review_type=ReviewType.STORY_UPDATED,
+            field_name=THEME_FIELD,
+            previous_value=previous_themes,
+            current_value=story.fields_json[THEME_FIELD],
+        )
     record_audit_event(
         session,
         event_type="story.theme_deleted",
@@ -1329,10 +1364,10 @@ def _normalize_story_field_updates(fields: Mapping[str, object] | None) -> dict[
 def _validate_recording_year_interval(value: str) -> YearInterval | None:
     if not value:
         return None
-    interval = parse_year_interval(value, require_increasing=True)
+    interval = parse_year_interval(value)
     if interval is None:
         raise StoryMutationValidationError(
-            "Date of recording must be a year interval in [year1, year2] format, with years between 1800 and 2050 and year2 greater than year1."
+            "Date of recording must use [begin year, end year] format, with whole years between 1800 and 2050 and the end year no earlier than the begin year. Use equal years for a single year."
         )
     return interval
 
@@ -1490,8 +1525,8 @@ def _resolve_theme(
     if theme is not None:
         return theme, False
 
-    if actor_role != UserRole.ADMIN:
-        raise ThemeCreationPermissionError("Only admins can create themes.")
+    if actor_role not in {UserRole.ADMIN, UserRole.CONTRIBUTOR}:
+        raise ThemeCreationPermissionError("Only contributors and admins can create story themes.")
 
     theme = Theme(
         dataset_id=dataset_id,
@@ -1512,6 +1547,7 @@ def _replace_story_themes_from_text(
     value: object,
     actor_user_id: str | None = None,
     actor_role: UserRole | None = None,
+    created_theme_ids: list[str] | None = None,
 ) -> set[str]:
     previous_theme_ids = {link.theme_id for link in story.theme_links}
     theme_texts = split_themes(clean_text(value))
@@ -1519,7 +1555,7 @@ def _replace_story_themes_from_text(
     next_theme_ids: set[str] = set()
 
     for theme_text in theme_texts:
-        theme, _ = _resolve_theme(
+        theme, created = _resolve_theme(
             session,
             dataset_id,
             text=theme_text,
@@ -1528,6 +1564,8 @@ def _replace_story_themes_from_text(
         )
         resolved_themes.append(theme)
         next_theme_ids.add(theme.id)
+        if created and created_theme_ids is not None:
+            created_theme_ids.append(theme.id)
 
     story.theme_links[:] = []
     session.flush()

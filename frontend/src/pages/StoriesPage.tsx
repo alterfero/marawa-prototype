@@ -615,8 +615,8 @@ export function StoriesPage({ canEdit: canEditStories }: { canEdit: boolean }) {
     if (hasInvalidRecordingYearInterval) {
       setNotice({
         tone: "error",
-        title: "Invalid recording-year interval",
-        body: "Enter two years from 1800 to 2050, with year 2 greater than year 1, before saving.",
+        title: "Invalid recording date",
+        body: "Enter a whole year from 1800 to 2050, or a period with both years in that range and the end year no earlier than the begin year.",
       });
       return;
     }

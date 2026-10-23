@@ -222,7 +222,7 @@ def test_story_completeness_role_rules(monkeypatch, tmp_path) -> None:
     assert admin_response.json()["story"]["version"] == 3
 
 
-def test_only_admins_can_create_themes(monkeypatch, tmp_path) -> None:
+def test_contributors_manage_story_themes_but_not_shared_theme_catalog(monkeypatch, tmp_path) -> None:
     configure_auth_env(monkeypatch)
     app = build_app(tmp_path, "rbac-theme-creation.db")
 
@@ -246,7 +246,7 @@ def test_only_admins_can_create_themes(monkeypatch, tmp_path) -> None:
             json={
                 "expected_dataset_version": 1,
                 "fields": {
-                    "Story title (Eng)": "Blocked story",
+                    "Story title (Eng)": "Contributor story",
                     "territory": "Tahiti",
                     THEME_FIELD: "§§ Contributor theme",
                 },
@@ -261,11 +261,12 @@ def test_only_admins_can_create_themes(monkeypatch, tmp_path) -> None:
                 "fields": {THEME_FIELD: "§§ Contributor theme"},
             },
         )
+        assert story_field_update.status_code == 200
         story_assignment_creation = contributor_client.post(
             f"/api/stories/{story['id']}/themes",
             json={
-                "expected_story_version": story["version"],
-                "text": "Contributor theme",
+                "expected_story_version": story_field_update.json()["story"]["version"],
+                "text": "Another contributor theme",
             },
         )
 
@@ -274,12 +275,13 @@ def test_only_admins_can_create_themes(monkeypatch, tmp_path) -> None:
         existing_assignment = contributor_client.post(
             f"/api/stories/{story['id']}/themes",
             json={
-                "expected_story_version": story["version"],
+                "expected_story_version": story_assignment_creation.json()["story_version"],
                 "theme_id": admin_creation.json()["theme"]["id"],
             },
         )
 
-    for response in (direct_creation, story_creation, story_field_update, story_assignment_creation):
-        assert response.status_code == 403
-        assert response.json()["code"] in {"forbidden", "theme_creation_forbidden"}
+    assert direct_creation.status_code == 403
+    assert story_creation.status_code == 201
+    assert story_field_update.status_code == 200
+    assert story_assignment_creation.status_code == 201
     assert existing_assignment.status_code == 201

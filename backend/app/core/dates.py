@@ -29,8 +29,8 @@ def format_year_interval(year1: int, year2: int) -> str:
 def parse_year_interval(value: str, *, require_increasing: bool = False) -> YearInterval | None:
     """Parse a canonical ``[year1, year2]`` interval within supported bounds.
 
-    Equal years are retained for migrated legacy records, but newly entered or
-    edited dates pass ``require_increasing=True``.
+    Equal years represent a single recording year. Callers that specifically
+    require a multi-year period can pass ``require_increasing=True``.
     """
 
     match = YEAR_INTERVAL_RE.fullmatch(value.strip())
@@ -72,7 +72,7 @@ def normalize_imported_year_interval(value: str) -> YearInterval | None:
     return parse_year_interval(text) or extract_legacy_year_interval(text)
 
 
-def is_valid_year_interval(value: str, *, require_increasing: bool = True) -> bool:
+def is_valid_year_interval(value: str, *, require_increasing: bool = False) -> bool:
     """Return whether a value is a supported canonical recording-year interval."""
 
     return parse_year_interval(value, require_increasing=require_increasing) is not None

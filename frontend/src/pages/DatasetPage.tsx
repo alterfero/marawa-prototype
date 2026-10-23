@@ -10,6 +10,7 @@ import {
 } from "../api/client";
 import type { DatasetStatus, JobDetail, JobSummary } from "../api/types";
 import { useDatasetMaintenance } from "../maintenance";
+import { InjectionPanel } from "../components/InjectionPanel";
 import { TimeMachinePanel } from "./TimeMachinePage";
 
 const TERMINAL_JOB_STATUSES = new Set(["succeeded", "failed", "cancelled"]);
@@ -291,7 +292,7 @@ export function DatasetPage({ canManageDataset }: { canManageDataset: boolean })
         <>
           <section className="panel split-panel">
             <div className="stack">
-              <h2>Upload CSV</h2>
+              <h2>Replace dataset from CSV</h2>
               <form className="stack" onSubmit={(event) => void handleSubmit(event)}>
                 <label className="field">
                   <span>Legacy or full Marawa CSV file</span>
@@ -337,6 +338,7 @@ export function DatasetPage({ canManageDataset }: { canManageDataset: boolean })
             </div>
           </section>
 
+          <InjectionPanel disabled={mutationsLocked || backendUnavailable || status?.active_dataset_version == null} onApplied={handleRefresh} />
           {jobError ? <p className="notice-inline">Could not refresh rebuild status: {jobError}</p> : null}
           <TimeMachinePanel />
         </>

@@ -49,7 +49,7 @@ def test_postgres_smoke_migrations_and_job_runner() -> None:
 
     with engine.connect() as connection:
         version = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-    assert version == "20261013_0018"
+    assert version == "20261023_0019"
 
     user_columns = {column["name"] for column in inspector.get_columns("users")}
     assert {"territories", "version"}.issubset(user_columns)

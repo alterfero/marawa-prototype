@@ -1163,3 +1163,20 @@ export function issuePasswordReset(userId: string): Promise<PasswordResetRespons
     method: "POST",
   });
 }
+
+export function previewInjection(file: File): Promise<import("./types").InjectionPreview> {
+  const body = new FormData();
+  body.append("file", file);
+  return request("/dataset/injections/preview", { method: "POST", body });
+}
+
+export function getInjection(id: string): Promise<import("./types").InjectionPreview> {
+  return request(`/dataset/injections/${encodeURIComponent(id)}`);
+}
+
+export function applyInjection(id: string, decisions: import("./types").InjectionDecision[], acknowledgeWarnings: boolean): Promise<import("./types").InjectionResult> {
+  return request(`/dataset/injections/${encodeURIComponent(id)}/apply`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ decisions, acknowledge_warnings: acknowledgeWarnings }),
+  });
+}

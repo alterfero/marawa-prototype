@@ -22,7 +22,12 @@ def test_year_interval_parses_and_formats_canonical_csv_values() -> None:
     ["[2050, 2051]", "[1799, 1801]", "[1980, 1971]", "[1971, 1971]", "1971-1980", ""],
 )
 def test_new_year_interval_requires_an_increasing_supported_range(value: str) -> None:
-    assert is_valid_year_interval(value) is False
+    assert is_valid_year_interval(value, require_increasing=True) is False
+
+
+@pytest.mark.parametrize("year", [1800, 1998, 2050])
+def test_single_recording_year_is_a_valid_same_year_interval(year: int) -> None:
+    assert is_valid_year_interval(f"[{year}, {year}]") is True
 
 
 def test_legacy_single_date_migrates_to_a_same_year_interval() -> None:

@@ -909,3 +909,62 @@ export interface UsageReport {
   generated_at: string;
   hours: UsageHour[];
 }
+
+export interface InjectionIssue {
+  severity: "error" | "warning";
+  code: string;
+  message: string;
+  suggestion: string;
+  row_number: number | null;
+  line_start: number | null;
+  line_end: number | null;
+  column: string | null;
+  column_number: number | null;
+  value: string | null;
+}
+export interface InjectionCandidate {
+  key: string;
+  kind: "database" | "file";
+  story_id: string | null;
+  row_number: number | null;
+  version: number | null;
+  fields: Record<string, string>;
+  metadata: Record<string, unknown> | null;
+  reasons: string[];
+}
+export interface InjectionRow {
+  row_number: number;
+  line_start: number;
+  line_end: number;
+  fields: Record<string, string>;
+  metadata: Record<string, unknown> | null;
+  candidates: InjectionCandidate[];
+}
+export interface InjectionDecision {
+  row_number: number;
+  action: "keep_both" | "keep_original" | "keep_injected";
+  target_key?: string | null;
+}
+export interface InjectionResult {
+  id: string;
+  status: "applied";
+  added: number;
+  updated: number;
+  skipped: number;
+  new_terms: number;
+  dataset_version: number;
+  job_id: string | null;
+}
+export interface InjectionPreview {
+  id: string;
+  format: "full" | "legacy";
+  source_filename: string | null;
+  dataset_version: number;
+  row_count: number;
+  error_count: number;
+  warning_count: number;
+  duplicate_count: number;
+  issues: InjectionIssue[];
+  rows: InjectionRow[];
+  result?: InjectionResult | null;
+}
