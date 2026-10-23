@@ -10,14 +10,15 @@ from app.core.csv_schema import CSV_COLUMNS, DATE_OF_RECORDING_FIELD, MARAWA_STO
 from app.core.dates import parse_year_interval
 from app.core.injection import TITLE_FIELDS, TERM_FIELDS, duplicate_keys, inspect_csv, prepare_injection_titles
 from app.core.parsing import normalize_text, serialize_tropes, serialize_themes, serialize_keywords
-from app.db.models import CSVInjection, Dataset, DatasetStatus, Story, StoryCompleteness, StoryTropeOrigin, AssignmentStatus, TermReviewStatus, TropeConfirmationStatus, ThemeConfirmationStatus, KeywordConfirmationStatus, StoryTrope, StoryTheme, StoryKeyword, Trope, Theme, Keyword
+from app.db.models import CSVInjection, Dataset, DatasetStatus, Story, StoryCompleteness, StoryTropeOrigin, AssignmentStatus, ReviewType, TermKind, TermReviewStatus, TropeConfirmationStatus, ThemeConfirmationStatus, KeywordConfirmationStatus, StoryTrope, StoryTheme, StoryKeyword, Trope, Theme, Keyword
 from app.services.audit import record_audit_event
 from app.services.csv_io import CSVImportValidationError, _CSVImportRow, _parse_full_export_catalog, _parse_full_story_metadata, _row_hash, _full_story_metadata, _ordered_trope_links, _ordered_theme_links, _ordered_keyword_links
 from app.services.jobs import queue_job
 from app.services.maintenance import get_dataset_maintenance_status
+from app.services.reviews import queue_story_field_review_item, queue_story_trope_review_item, queue_story_keyword_review_item, queue_term_review_item
 
 
-_INJECTION_VALIDATION_VERSION = 3
+_INJECTION_VALIDATION_VERSION = 4
 
 
 class InjectionError(ValueError):
@@ -89,12 +90,10 @@ def preview_injection(session: Session, content: bytes, *, source_filename: str 
     plan_rows = []
     for row, metadata_row in zip(parsed.rows, metadata_rows):
         terms = {collection: splitter(row["fields"][column]) for collection, column, splitter in TERM_FIELDS}
-        completeness = "incomplete"
         assignments = [{"origin": "csv_import", "status": "validated"} for _ in terms["tropes"]]
         if parsed.is_full:
             try:
-                completeness_enum, _, _, pairs = _parse_full_story_metadata(metadata_row, terms["tropes"])
-                completeness = completeness_enum.value
+                _, _, _, pairs = _parse_full_story_metadata(metadata_row, terms["tropes"])
                 assignments = [{"origin": origin.value, "status": status.value} for origin, status in pairs]
             except CSVImportValidationError as exc:
                 parsed.issue("error", "story_metadata", str(exc), "Correct the metadata schema, completeness, and ordered trope assignments to match the story cells, or restore a fresh export.", row=row, column=MARAWA_STORY_METADATA_FIELD)
@@ -115,7 +114,9 @@ def preview_injection(session: Session, content: bytes, *, source_filename: str 
             row["fields"], candidates=row["candidates"], used_titles=used_titles, reserved_titles=reserved_titles,
         )
         used_titles.update(normalize_text(row["fields"][column]) for column in TITLE_FIELDS if row["fields"][column])
-        row["completeness"] = completeness
+        row["completeness"] = StoryCompleteness.INCOMPLETE.value
+        if row["metadata"] is not None:
+            row["metadata"] = {**row["metadata"], "completeness": StoryCompleteness.INCOMPLETE.value}
         row["terms"] = terms
         row["assignments"] = assignments
         plan_rows.append(row)
@@ -162,6 +163,64 @@ def get_injection(session: Session, injection_id: str) -> dict:
     return {"id": draft.id, **_without_obsolete_warnings(draft.report_json), "result": draft.result_json}
 
 
+def _review_snapshot(story: Story) -> dict:
+    return {
+        "fields": _story_fields(story),
+        "tropes": {link.trope.id: {
+            "id": link.trope.id, "text": link.trope.text, "position": link.position,
+            "origin": link.origin.value, "status": link.status.value,
+        } for link in _ordered_trope_links(story)},
+        "keywords": {link.keyword.id: {
+            "id": link.keyword.id, "text": link.keyword.text, "position": link.position,
+        } for link in _ordered_keyword_links(story)},
+    }
+
+
+def _queue_injected_story_review(session, *, story, before, actor_user_id, injection_id, created_theme_ids):
+    """Review final injected content with the same reversible items as contributor edits."""
+    current = _review_snapshot(story)
+    previous = before or {"fields": {}, "tropes": {}, "keywords": {}}
+    common = {
+        "dataset_id": story.dataset_id, "story": story, "actor_user_id": actor_user_id,
+        "review_type": ReviewType.STORY_CREATED if before is None else ReviewType.STORY_UPDATED,
+    }
+    items = []
+    for column in CSV_COLUMNS:
+        if column in {TROPE_FIELD, KEYWORD_FIELD}:
+            continue
+        old_value = previous["fields"].get(column, "")
+        value = current["fields"].get(column, "")
+        if value or old_value:
+            items.append(queue_story_field_review_item(
+                session, **common, field_name=column, previous_value=old_value, current_value=value,
+                include_unchanged=True, created_theme_ids=created_theme_ids if column == THEME_FIELD else None,
+            ))
+    for collection, kind, queue in (
+        ("tropes", "trope", queue_story_trope_review_item),
+        ("keywords", "keyword", queue_story_keyword_review_item),
+    ):
+        old_terms, terms = previous[collection], current[collection]
+        for term_id, term in old_terms.items():
+            if term_id not in terms:
+                items.append(queue(session, **common, assignment_action="deleted",
+                                   position=term["position"], **{f"previous_{kind}": term}))
+        for term_id, term in terms.items():
+            if term_id not in old_terms:
+                items.append(queue(session, **common, assignment_action="added",
+                                   position=term["position"], **{f"current_{kind}": term}))
+            elif kind == "trope" and any(term[key] != old_terms[term_id][key] for key in ("origin", "status")):
+                items.append(queue(session, **common, assignment_action="validated", position=term["position"],
+                                   previous_trope=old_terms[term_id], current_trope=term))
+    if not items:
+        # A row may become empty after ignored recording dates are cleared.
+        items.append(queue_story_field_review_item(
+            session, **common, field_name="Story title (Eng)", previous_value="", current_value="",
+            include_unchanged=True,
+        ))
+    for item in items:
+        item.metadata_json = {**item.metadata_json, "injection_id": injection_id}
+
+
 def apply_injection(session: Session, injection_id: str, *, decisions: list[dict], acknowledge_warnings: bool, actor_user_id: str | None = None) -> dict:
     """All writes, the result, audit event, and rebuild request commit together."""
     try:
@@ -204,6 +263,7 @@ def _apply_injection(session, injection_id, *, decisions, acknowledge_warnings, 
     caches = {}
     catalog = draft.plan_json["catalog"]
     new_term_count = 0
+    new_terms = []
     for collection, model in (("tropes", Trope), ("themes", Theme), ("keywords", Keyword)):
         cache = {t.normalized_text: t for t in session.scalars(select(model).where(model.dataset_id == dataset.id))}
         desired = dict(catalog[collection]) if catalog else {}
@@ -219,18 +279,28 @@ def _apply_injection(session, injection_id, *, decisions, acknowledge_warnings, 
                 if "confirmation_status" in attributes:
                     enum = {"tropes": TropeConfirmationStatus, "themes": ThemeConfirmationStatus, "keywords": KeywordConfirmationStatus}[collection]
                     attributes["confirmation_status"] = enum(attributes["confirmation_status"])
-                if "review_status" in attributes:
-                    attributes["review_status"] = TermReviewStatus(attributes["review_status"])
-                cache[marker] = model(dataset_id=dataset.id, **attributes)
+                if collection in {"tropes", "keywords"}:
+                    attributes["review_status"] = TermReviewStatus.PENDING_REVIEW
+                cache[marker] = model(dataset_id=dataset.id, created_by_user_id=actor_user_id, **attributes)
                 session.add(cache[marker])
+                new_terms.append((collection, cache[marker]))
                 new_term_count += 1
         caches[collection] = cache
     session.flush()
+    for collection, term in new_terms:
+        if collection in {"tropes", "keywords"}:
+            item = queue_term_review_item(
+                session, dataset_id=dataset.id, term_kind=TermKind.TROPE if collection == "tropes" else TermKind.KEYWORD,
+                subject_id=term.id, actor_user_id=actor_user_id, text=term.text,
+            )
+            item.metadata_json = {**item.metadata_json, "injection_id": draft.id}
+    created_theme_ids = [term.id for collection, term in new_terms if collection == "themes"]
     next_source_number = (
         session.scalar(select(func.max(Story.source_row_number)).where(Story.dataset_id == dataset.id)) or 0
     ) + 1
     resolved = {}
     touched_story_ids = set()
+    story_reviews = {}
     counts = {"added": 0, "updated": 0, "skipped": 0}
     changes = []
     for row in rows:
@@ -255,6 +325,7 @@ def _apply_injection(session, injection_id, *, decisions, acknowledge_warnings, 
             counts["skipped"] += 1
             continue
         story = original
+        before = _review_snapshot(story) if story is not None and story.id not in story_reviews else None
         if story is None:
             story = Story(dataset_id=dataset.id, source_row_number=next_source_number)
             next_source_number += 1
@@ -274,7 +345,7 @@ def _apply_injection(session, injection_id, *, decisions, acknowledge_warnings, 
         fields[KEYWORD_FIELD] = serialize_keywords(row["terms"]["keywords"])
         story.fields_json = fields
         story.row_hash = _row_hash(fields)
-        story.completeness = StoryCompleteness(row["completeness"])
+        story.completeness = StoryCompleteness.INCOMPLETE
         interval = parse_year_interval(fields[DATE_OF_RECORDING_FIELD])
         story.recording_year_start = interval.year1 if interval else None
         story.recording_year_end = interval.year2 if interval else None
@@ -285,8 +356,14 @@ def _apply_injection(session, injection_id, *, decisions, acknowledge_warnings, 
         for position, term in enumerate(row["terms"]["keywords"]):
             story.keyword_links.append(StoryKeyword(keyword=caches["keywords"][normalize_text(term)], position=position))
         session.flush()
+        story_reviews.setdefault(story.id, (story, before))
         resolved[f"row:{number}"] = story
         touched_story_ids.add(story.id)
+    for story, before in story_reviews.values():
+        _queue_injected_story_review(
+            session, story=story, before=before, actor_user_id=actor_user_id,
+            injection_id=draft.id, created_theme_ids=[link.theme_id for link in story.theme_links if link.theme_id in created_theme_ids],
+        )
     for collection, link, key in (("tropes", StoryTrope, StoryTrope.trope_id), ("themes", StoryTheme, StoryTheme.theme_id), ("keywords", StoryKeyword, StoryKeyword.keyword_id)):
         counts_by_term = dict(session.execute(select(key, func.count()).join(Story).where(Story.dataset_id == dataset.id).group_by(key)).all())
         for term in caches[collection].values():

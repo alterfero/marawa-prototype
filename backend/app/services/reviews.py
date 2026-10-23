@@ -58,16 +58,17 @@ def queue_story_field_review_item(
     *,
     dataset_id: str,
     story: Story,
-    actor_user_id: str,
+    actor_user_id: str | None,
     review_type: ReviewType,
     field_name: str,
     previous_value: str,
     current_value: str,
     created_theme_ids: list[str] | None = None,
+    include_unchanged: bool = False,
 ) -> ReviewItem | None:
     previous_marker = clean_text(previous_value)
     current_marker = clean_text(current_value)
-    if previous_marker == current_marker:
+    if previous_marker == current_marker and not include_unchanged:
         return None
 
     metadata = {
@@ -98,7 +99,7 @@ def queue_story_trope_review_item(
     *,
     dataset_id: str,
     story: Story,
-    actor_user_id: str,
+    actor_user_id: str | None,
     review_type: ReviewType,
     assignment_action: str,
     previous_trope: dict[str, object] | None = None,
@@ -148,7 +149,7 @@ def queue_story_keyword_review_item(
     *,
     dataset_id: str,
     story: Story,
-    actor_user_id: str,
+    actor_user_id: str | None,
     review_type: ReviewType,
     assignment_action: str,
     previous_keyword: dict[str, object] | None = None,
@@ -195,7 +196,7 @@ def queue_term_review_item(
     dataset_id: str,
     term_kind: TermKind,
     subject_id: str,
-    actor_user_id: str,
+    actor_user_id: str | None,
     text: str,
 ) -> ReviewItem:
     review_type = ReviewType.TROPE_PENDING if term_kind == TermKind.TROPE else ReviewType.KEYWORD_PENDING

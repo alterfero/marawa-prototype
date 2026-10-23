@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 
 from app.core.csv_schema import CSV_COLUMNS, DATE_OF_RECORDING_FIELD, FULL_EXPORT_COLUMNS, MARAWA_STORY_METADATA_FIELD, MARAWA_TERM_CATALOG_FIELD, KEYWORD_FIELD, THEME_FIELD, TROPE_FIELD
 from app.core.injection import duplicate_keys, inspect_csv
-from app.db.models import CSVInjection, Dataset, Job, Story, Trope, Theme, Keyword, TermReviewStatus
+from app.db.models import CSVInjection, Dataset, Job, Story, StoryCompleteness, Trope, Theme, Keyword, TermReviewStatus, ReviewItem, ReviewStatus, ReviewType
 from app.services.csv_io import export_active_dataset_to_csv_bytes, import_csv_bytes
 from app.services.injection import InjectionError, apply_injection, get_injection, preview_injection
 from tests.test_csv_io import activate_dataset, make_csv_bytes, make_session
@@ -142,6 +142,7 @@ def test_rollback_on_late_failure_leaves_no_partial_injection(tmp_path, monkeypa
             apply(session, report)
         assert session.scalar(select(func.count(Story.id))) == 1
         assert session.scalar(select(func.count(Trope.id))) == 0
+        assert session.scalar(select(func.count(ReviewItem.id))) == 0
         assert session.get(Dataset, dataset.id).version == version
 
 
@@ -208,6 +209,84 @@ def full_injection_rows(rows):
             })
         result.append(row)
     return result
+
+
+@pytest.mark.parametrize("exported_completeness", [None, "incomplete", "pending review", "complete"])
+def test_injected_stories_are_incomplete_and_queued_for_review(tmp_path, exported_completeness):
+    with make_session(tmp_path) as session:
+        setup_dataset(session)
+        rows = [{"Story title (Eng)": "Submitted", "Abstract (Eng)": "New account"}]
+        if exported_completeness is not None:
+            rows = full_injection_rows(rows)
+            metadata = json.loads(rows[0][MARAWA_STORY_METADATA_FIELD])
+            metadata["completeness"] = exported_completeness
+            rows[0][MARAWA_STORY_METADATA_FIELD] = json.dumps(metadata)
+        report = preview(session, rows, fieldnames=FULL_EXPORT_COLUMNS if exported_completeness else CSV_COLUMNS)
+        assert report["error_count"] == report["warning_count"] == 0
+        if exported_completeness:
+            assert report["rows"][0]["metadata"]["completeness"] == "incomplete"
+        assert session.scalar(select(func.count(ReviewItem.id))) == 0
+        result = apply(session, report)
+        story = session.scalar(select(Story).where(Story.source_row_number == 2))
+        assert story.completeness == StoryCompleteness.INCOMPLETE
+        items = list(session.scalars(select(ReviewItem)))
+        assert {item.metadata_json["field_name"] for item in items} == {"Story title (Eng)", "Abstract (Eng)"}
+        assert all(item.subject_id == story.id and item.status == ReviewStatus.PENDING for item in items)
+        assert all(item.review_type == ReviewType.STORY_CREATED for item in items)
+        assert all(item.metadata_json["injection_id"] == report["id"] for item in items)
+        assert apply(session, report) == result
+        assert session.scalar(select(func.count(ReviewItem.id))) == len(items)
+
+
+@pytest.mark.parametrize("action", ["keep_original", "keep_both", "keep_injected"])
+def test_duplicate_decisions_reset_only_injected_stories_and_queue_them(tmp_path, action):
+    with make_session(tmp_path) as session:
+        setup_dataset(session)
+        original = session.scalar(select(Story))
+        original.completeness = StoryCompleteness.COMPLETE
+        session.commit()
+        report = preview(session, [{"Story title (Eng)": "Original", "Abstract (Eng)": "Old text"}])
+        apply(session, report, [{"row_number": 1, "action": action, "target_key": f"story:{original.id}"}])
+        session.expire_all()
+        items = list(session.scalars(select(ReviewItem)))
+        if action == "keep_original":
+            assert original.completeness == StoryCompleteness.COMPLETE
+            assert items == []
+        else:
+            subject_ids = {item.subject_id for item in items}
+            assert len(subject_ids) == 1
+            injected = session.get(Story, subject_ids.pop())
+            assert injected.completeness == StoryCompleteness.INCOMPLETE
+            assert (injected.id == original.id) == (action == "keep_injected")
+            if action == "keep_both":
+                assert original.completeness == StoryCompleteness.COMPLETE
+
+
+def test_review_uses_final_story_after_intrafile_replacements(tmp_path):
+    with make_session(tmp_path) as session:
+        setup_dataset(session)
+        report = preview(session, [
+            {"Story title (Eng)": "New", "Abstract (Eng)": "Account", "Source": "First source", TROPE_FIELD: "first trope"},
+            {"Story title (Eng)": "New", "Abstract (Eng)": "Account", "Source": "Final source", TROPE_FIELD: "final trope"},
+        ])
+        apply(session, report, [{"row_number": 2, "action": "keep_injected", "target_key": "row:1"}])
+        items = list(session.scalars(select(ReviewItem).where(ReviewItem.subject_table == "stories")))
+        assert len(items) == 4
+        assert all(item.review_type == ReviewType.STORY_CREATED for item in items)
+        source = next(item for item in items if item.metadata_json.get("field_name") == "Source")
+        assert source.metadata_json["previous_value"] == ""
+        assert source.metadata_json["current_value"] == "Final source"
+        trope = next(item for item in items if item.metadata_json["change_kind"] == "story_trope")
+        assert trope.metadata_json["current_trope_text"] == "final trope"
+
+
+def test_story_with_only_ignored_date_still_enters_review(tmp_path):
+    with make_session(tmp_path) as session:
+        setup_dataset(session)
+        report = preview(session, [{DATE_OF_RECORDING_FIELD: "unknown"}])
+        apply(session, report)
+        story = session.scalar(select(Story).where(Story.source_row_number == 2))
+        assert session.scalar(select(ReviewItem).where(ReviewItem.subject_id == story.id)) is not None
 
 
 @pytest.mark.parametrize("full_export", [False, True])
