@@ -212,7 +212,6 @@ function LocationPickerMap({
   return (
     <div className="location-picker-map">
       <div className="map-canvas location-picker-canvas" ref={mapElementRef} />
-      <p className="muted">Click anywhere on the map to place the recording point.</p>
     </div>
   );
 }
@@ -478,15 +477,20 @@ export function StoryLocationPickerModal({
       <section
         aria-labelledby="location-picker-title"
         aria-modal="true"
-        className="modal-shell modal-shell-wide"
+        className="modal-shell modal-shell-wide location-picker-modal"
         onClick={(event) => event.stopPropagation()}
         role="dialog"
       >
         <div className="panel-header">
           <h2 id="location-picker-title">Pick recording location</h2>
-          <button className="button button-ghost" disabled={busy} onClick={onCancel} type="button">
-            Close
-          </button>
+          <div className="button-row location-picker-actions">
+            <button className="button button-ghost" disabled={busy} onClick={onCancel} type="button">
+              Cancel
+            </button>
+            <button className="button" disabled={busy || Boolean(coordinateError)} onClick={applyLocation} type="button">
+              Use location
+            </button>
+          </div>
         </div>
 
         <div className="location-picker-layout">
@@ -538,29 +542,6 @@ export function StoryLocationPickerModal({
               </p>
             </div>
 
-            <div className="button-row wrap-row">
-              <button
-                className="button button-ghost"
-                disabled={busy || (!locationDraft.place && !coordinateInput.trim())}
-                onClick={() => {
-                  setCoordinateInput("");
-                  setCoordinateError(null);
-                  onChange({
-                    place: "",
-                    coordinates: null,
-                  });
-                }}
-                type="button"
-              >
-                Clear location
-              </button>
-              <button className="button button-ghost" disabled={busy} onClick={onCancel} type="button">
-                Cancel
-              </button>
-              <button className="button" disabled={busy || Boolean(coordinateError)} onClick={applyLocation} type="button">
-                Use location
-              </button>
-            </div>
           </div>
 
           <LocationPickerMap

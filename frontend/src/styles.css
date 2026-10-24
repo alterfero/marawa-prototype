@@ -2374,7 +2374,18 @@ p {
   font-size: 0.88rem;
 }
 
+.location-picker-modal {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.button-row.location-picker-actions {
+  flex-direction: row;
+  flex-shrink: 0;
+}
+
 .location-picker-layout {
+  min-height: 0;
+  overflow-y: auto;
   display: grid;
   gap: 1rem;
   grid-template-columns: minmax(17rem, 0.55fr) minmax(0, 1fr);
