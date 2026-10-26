@@ -39,9 +39,9 @@ class SentenceTransformerBackend:
                     Path(self.cache_dir).mkdir(parents=True, exist_ok=True)
                     cache_dir = self.cache_dir
 
-                # Keep CPU loading explicit. Newer Transformers versions ignore
-                # low_cpu_mem_usage, so the lock above is also required to keep
-                # their meta-device initialization contexts from overlapping.
+                # The pinned Transformers version honors low_cpu_mem_usage=False;
+                # 4.51+ ignores it. Keep initialization serialized as well because
+                # Transformers also changes global weight-initialization hooks.
                 self._model = SentenceTransformer(
                     self.model_name,
                     cache_folder=cache_dir,

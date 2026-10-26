@@ -27,6 +27,11 @@ echo "  backend_dir=${BACKEND_DIR}"
 echo "  data_dir=${DATA_DIR:-unset}"
 echo "  session_cookie_secure=${SESSION_COOKIE_SECURE}"
 echo "  session_cookie_same_site=${SESSION_COOKIE_SAME_SITE}"
+python - <<'PY'
+from importlib.metadata import version
+for package in ("sentence-transformers", "transformers", "torch"):
+    print(f"  {package}={version(package)}")
+PY
 if [[ -n "${BOOTSTRAP_ADMIN_EMAIL:-}" && -n "${BOOTSTRAP_ADMIN_PASSWORD:-}" ]]; then
   echo "  bootstrap_admin_email=${BOOTSTRAP_ADMIN_EMAIL}"
 else

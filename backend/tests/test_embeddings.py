@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier, Event, Lock
 from types import SimpleNamespace
+from unittest.mock import patch
 
+import numpy as np
 import pytest
 
 from app.compute.embeddings import SentenceTransformerBackend
@@ -111,3 +114,32 @@ def test_failed_model_load_can_be_retried(monkeypatch) -> None:
     model = backend._load_model()
     assert backend._load_model() is model
     assert calls == 2
+
+
+@pytest.mark.skipif(
+    os.environ.get("MARAWA_TEST_REAL_EMBEDDINGS") != "1",
+    reason="Set MARAWA_TEST_REAL_EMBEDDINGS=1 to load the real embedding model.",
+)
+def test_real_model_loads_without_meta_initialization() -> None:
+    backend = SentenceTransformerBackend()
+    start = Barrier(2)
+
+    def encode():
+        start.wait(timeout=30)
+        return backend.encode_texts(["A hero crosses the sea.", "Un héros traverse la mer."])
+
+    # Check the library behavior, not just the kwargs our wrapper supplies.
+    # Transformers 4.51+ ignores low_cpu_mem_usage=False and fails this check.
+    with patch(
+        "transformers.modeling_utils.init_empty_weights",
+        side_effect=AssertionError("CPU model loading must not enter a meta-device context"),
+        create=True,
+    ):
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(encode) for _ in range(2)]
+            matrices = [future.result(timeout=180) for future in futures]
+
+    assert matrices[0].shape == (2, 768)
+    assert np.isfinite(matrices[0]).all()
+    np.testing.assert_allclose(np.linalg.norm(matrices[0], axis=1), 1, atol=1e-6)
+    np.testing.assert_allclose(matrices[0], matrices[1], atol=1e-6)

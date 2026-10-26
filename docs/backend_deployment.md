@@ -253,16 +253,33 @@ The first rebuild can be slower than later rebuilds because it may download the 
 
 ### Rebuild fails with a meta tensor error
 
-If a rebuild reports `Cannot copy out of meta tensor; no data!`, deploy the
-version that serializes embedding model initialization, restart the backend,
-and queue the rebuild again. Concurrent searches and rebuilds can otherwise
-initialize the model at the same time and interfere with Transformers' temporary
-parameter-registration hooks. CPU loading options alone do not prevent this.
+If a rebuild reports `Cannot copy out of meta tensor; no data!`, deploy with the
+pinned embedding dependencies (`sentence-transformers==3.4.1` and
+`transformers==4.50.3`), restart the backend, and queue the rebuild again.
+Transformers 4.51+ ignores `low_cpu_mem_usage=False`, so passing that option alone
+does not disable meta-device initialization. Railway startup logs print the
+installed embedding package versions; check those to confirm the new build.
 
 The loader uses a process-wide lock, including across backend instances, and
-only caches a model after successful initialization. Keep the existing model
+only caches a model after successful initialization. Concurrent constructors can
+otherwise interfere with Transformers' global initialization hooks.
+Keep the existing model
 cache. Do not replace the model's device transfer with `to_empty()`: that allocates
 uninitialized weights and does not restore the pretrained model data.
+
+Migrations preserve existing application and Uvicorn loggers. Failed jobs emit
+full Python tracebacks to the backend logs, while the app keeps
+the short error message. If a rebuild still fails, inspect the traceback and
+model-loading warnings before changing or clearing the model cache.
+
+To verify the real model with the installed dependencies, run from `backend/`:
+
+```bash
+MARAWA_TEST_REAL_EMBEDDINGS=1 python -m pytest tests/test_embeddings.py -q
+```
+
+This opt-in test loads the production model, rejects any attempt to enter a meta
+initialization context, and checks concurrent multilingual embedding requests.
 
 ## Operational Caveats
 

@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import logging
 import threading
 import time
 
@@ -67,11 +68,17 @@ def test_job_runner_marks_failed_jobs_and_preserves_error_message(tmp_path) -> N
         assert failed_job.error_message == "boom"
 
 
-def test_rebuild_job_failure_is_persisted(tmp_path) -> None:
+def test_rebuild_job_failure_is_persisted(tmp_path, caplog, monkeypatch) -> None:
     db_path = tmp_path / "jobs-rebuild-failure.db"
     engine = build_engine(f"sqlite:///{db_path}")
     initialize_database(engine)
     session_factory = build_session_factory(engine)
+
+    # Startup migrations must leave the application's existing loggers enabled.
+    job_logger = logging.getLogger("app.compute.job_runner")
+    assert not job_logger.disabled
+    # Alembic replaces the root handlers, so attach capture after migrations.
+    monkeypatch.setattr(job_logger, "handlers", [caplog.handler])
 
     def failing_rebuild(_: object, __: Job) -> dict:
         raise RuntimeError("rebuild exploded")
@@ -85,6 +92,12 @@ def test_rebuild_job_failure_is_persisted(tmp_path) -> None:
 
     processed = runner.process_next_job()
     assert processed is True
+
+    failure_log = next(record for record in caplog.records if "Background job" in record.message)
+    assert job_id in failure_log.message
+    assert "full_rebuild" in failure_log.message
+    assert failure_log.exc_info is not None
+    assert isinstance(failure_log.exc_info[1], RuntimeError)
 
     with session_factory() as session:
         failed_job = get_job(session, job_id)

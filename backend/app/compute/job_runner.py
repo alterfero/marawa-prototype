@@ -229,10 +229,12 @@ class JobRunner:
                 session.commit()
                 return
 
+            job_type = job.job_type
             heartbeat_stop_event, heartbeat_thread = self._start_job_heartbeat(job_id)
             try:
                 result = handler(session, job) or {}
             except Exception as exc:
+                logger.exception("Background job %s (%s) failed.", job_id, job_type)
                 session.rollback()
                 self._stop_job_heartbeat(heartbeat_stop_event, heartbeat_thread)
                 job = session.get(Job, job_id)
