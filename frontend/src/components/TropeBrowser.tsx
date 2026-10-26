@@ -15,6 +15,8 @@ import { routeHref } from "../router";
 
 interface TropeBrowserContextValue {
   openTrope: (trope: TropeReference) => void;
+  updatedTropes: Record<string, TropeReference>;
+  rememberTrope: (trope: TropeReference) => void;
 }
 
 const TropeBrowserContext = createContext<TropeBrowserContextValue | null>(null);
@@ -46,6 +48,10 @@ function tropeBrowserErrorMessage(error: unknown): string {
 }
 
 export function TropeBrowserProvider({ children }: { children: ReactNode }) {
+  const [updatedTropes, setUpdatedTropes] = useState<Record<string, TropeReference>>({});
+  const rememberTrope = useCallback((trope: TropeReference) => {
+    setUpdatedTropes((current) => ({ ...current, [trope.id]: trope }));
+  }, []);
   const [selectedTrope, setSelectedTrope] = useState<TropeReference | null>(null);
   const [detail, setDetail] = useState<TropeDetail | null>(null);
   const [loading, setLoading] = useState(false);
@@ -106,8 +112,10 @@ export function TropeBrowserProvider({ children }: { children: ReactNode }) {
   const contextValue = useMemo<TropeBrowserContextValue>(
     () => ({
       openTrope,
+      updatedTropes,
+      rememberTrope,
     }),
-    [openTrope],
+    [openTrope, updatedTropes, rememberTrope],
   );
 
   const effectiveDetail = detail ?? selectedTrope;

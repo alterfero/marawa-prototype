@@ -9,6 +9,7 @@ from app.services.auth import AuthSessionContext
 from app.services.curation import CurationConflictError, CurationNotFoundError, delete_trope, list_canonical_tropes
 from app.services.tropes import (
     TropeLookupNotFoundError,
+    TropeEditForbiddenError,
     TropeVersionConflictError,
     TropeMutationValidationError,
     ensure_canonical_trope,
@@ -177,7 +178,7 @@ def create_canonical_trope(
 def update_canonical_trope(
     trope_id: str,
     payload: UpdateTropeRequest,
-    auth_context: AuthSessionContext = Depends(require_minimum_role_with_csrf(UserRole.ADMIN)),
+    auth_context: AuthSessionContext = Depends(require_minimum_role_with_csrf(UserRole.CONTRIBUTOR)),
     session: Session = Depends(get_db_session),
 ) -> UpdateTropeResponse:
     try:
@@ -187,7 +188,10 @@ def update_canonical_trope(
             expected_version=payload.expected_trope_version,
             text=payload.text,
             actor_user_id=auth_context.user.id,
+            actor_role=auth_context.user.role,
         )
+    except TropeEditForbiddenError as exc:
+        raise api_error(403, "trope_edit_forbidden", str(exc)) from exc
     except TropeLookupNotFoundError as exc:
         raise api_error(404, "trope_not_found", str(exc)) from exc
     except TropeVersionConflictError as exc:

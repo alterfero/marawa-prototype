@@ -1059,7 +1059,7 @@ export function getReviewItems(payload?: {
   limit?: number;
 }): Promise<ReviewItem[]> {
   const params = new URLSearchParams();
-  if (payload?.status && payload.status !== "all") {
+  if (payload?.status) {
     params.set("status", payload.status);
   }
   if (typeof payload?.limit === "number") {
@@ -1073,13 +1073,13 @@ export function getReviewItem(reviewId: string): Promise<ReviewItem> {
   return request<ReviewItem>(`/review/items/${reviewId}`);
 }
 
-export function approveReviewItem(reviewId: string, note?: string): Promise<ReviewItem> {
+export function approveReviewItem(reviewId: string, note?: string, edited = false, expectedStoryVersion?: number, edit?: { text: string; existing_term_id?: string }): Promise<ReviewItem> {
   return request<ReviewItem>(`/review/items/${reviewId}/approve`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ note: note?.trim() || null }),
+    body: JSON.stringify({ note: note?.trim() || null, edited, expected_story_version: expectedStoryVersion, edit }),
   });
 }
 

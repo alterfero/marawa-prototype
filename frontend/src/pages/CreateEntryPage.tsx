@@ -26,8 +26,8 @@ import {
 } from "../components/StoryFieldWidgets";
 import { TermCard } from "../components/TermCard";
 import { TropeCard } from "../components/TropeCard";
-import { buildBlankStoryFields, DATE_OF_RECORDING_FIELD, LEGACY_METADATA_SECTIONS, normalizeDraftText, splitThemeText, THEME_FIELD } from "../constants/csv";
-import type { CreateStoryResponse, DatasetStatus, SearchItem, StoryDetail } from "../api/types";
+import { buildBlankStoryFields, DATE_OF_RECORDING_FIELD, LEGACY_METADATA_SECTIONS, normalizeDraftText, splitThemeText, THEME_FIELD, TROPE_FIELD } from "../constants/csv";
+import type { CreateStoryResponse, DatasetStatus, SearchItem, StoryDetail, TropeReference } from "../api/types";
 import { useDatasetMaintenance } from "../maintenance";
 import { routeHref, useHashSearch } from "../router";
 
@@ -37,11 +37,7 @@ interface PageNotice {
   body?: string;
 }
 
-interface DraftTerm {
-  id: string;
-  text: string;
-  story_count: number;
-}
+type DraftTerm = TropeReference;
 
 interface EntryDraftRecovery {
   version: 1;
@@ -127,7 +123,7 @@ function recoveryTerms(terms: readonly string[], kind: "trope" | "keyword"): Dra
       return [];
     }
     seen.add(marker);
-    return [{ id: `recovery:${kind}:${index}`, text: trimmedText, story_count: 0 }];
+    return [{ id: `draft:recovery:${kind}:${index}`, text: trimmedText, story_count: 0 }];
   });
 }
 
@@ -281,6 +277,11 @@ export function CreateEntryPage() {
   const [tropeQuery, setTropeQuery] = useState("");
   const [tropeResults, setTropeResults] = useState<SearchItem[]>([]);
   const [tropeSearchStatus, setTropeSearchStatus] = useState<"idle" | "loading" | "ready">("idle");
+  const [savedDraftSnapshot, setSavedDraftSnapshot] = useState<string | null>(null);
+  const draftSnapshot = JSON.stringify([fields, draftTropes.map((trope) => trope.text), draftKeywords.map((keyword) => keyword.text)]);
+  useEffect(() => {
+    if (savedDraftSnapshot !== null && draftSnapshot !== savedDraftSnapshot) setSavedDraftSnapshot(null);
+  }, [draftSnapshot, savedDraftSnapshot]);
   const [savedStory, setSavedStory] = useState<StoryDetail | null>(null);
   const [entryLoading, setEntryLoading] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -333,9 +334,10 @@ export function CreateEntryPage() {
     clearEntryDraftRecovery();
   }
 
-  function restoreDraft(recovery: EntryDraftRecovery) {
+  function restoreDraft(recovery: EntryDraftRecovery, story?: StoryDetail) {
     setFields({ ...buildBlankStoryFields(), ...recovery.fields });
-    setDraftTropes(recoveryTerms(recovery.tropes, "trope"));
+    setDraftTropes(recoveryTerms(recovery.tropes, "trope").map((trope) =>
+      story?.tropes.find((item) => normalizeDraftText(item.text) === normalizeDraftText(trope.text)) ?? trope));
     setDraftKeywords(recoveryTerms(recovery.keywords, "keyword"));
     setKeywordQuery("");
     setKeywordResults([]);
@@ -425,7 +427,7 @@ export function CreateEntryPage() {
         if (!cancelled) {
           loadSavedStoryIntoDraft(story);
           if (recovery?.storyId === story.id && !recoveryRestoredRef.current) {
-            restoreDraft(recovery);
+            restoreDraft(recovery, story);
             recoveryRestoredRef.current = true;
             setNotice({
               tone: "success",
@@ -651,6 +653,7 @@ export function CreateEntryPage() {
   }
 
   function renderMetadataField(field: string) {
+    if (isContributor && field === "proposition de nouveaux motifs") return null;
     if (field === "territory") {
       return (
         <TerritoryField
@@ -723,11 +726,7 @@ export function CreateEntryPage() {
   }
 
   function handleUseExistingTrope(item: SearchItem) {
-    addDraftTrope({
-      id: item.id,
-      text: item.text,
-      story_count: item.story_count,
-    });
+    addDraftTrope({ ...item });
   }
 
   function handleKeepTypedKeyword() {
@@ -759,6 +758,33 @@ export function CreateEntryPage() {
   function handleDeleteDraftKeyword(keywordText: string) {
     const marker = normalizeDraftText(keywordText);
     setDraftKeywords((current) => current.filter((keyword) => normalizeDraftText(keyword.text) !== marker));
+  }
+
+  function handleEditDraftTrope(trope: DraftTerm) {
+    const text = window.prompt("Edit trope", trope.text)?.trim();
+    if (!text || text === trope.text) return;
+    if (draftTropes.some((other) => other.id !== trope.id && normalizeDraftText(other.text) === normalizeDraftText(text))) {
+      setNotice({ tone: "warning", title: "Trope already added", body: "This trope is already in the draft entry." });
+      return;
+    }
+    setDraftTropes((current) => current.map((item) => item.id === trope.id ? { ...item, text } : item));
+  }
+
+  async function handleTropeUpdated(trope: TropeReference, previousText: string) {
+    setTropeResults((current) => current.map((item) => item.id === trope.id ? { ...item, ...trope } : item));
+    setDraftTropes((current) => current.map((item) =>
+      item.id === trope.id || normalizeDraftText(item.text) === normalizeDraftText(previousText) ? trope : item));
+    if (savedStory?.tropes.some((item) => item.id === trope.id)) {
+      const story = await getStory(savedStory.id);
+      // Preserve conflict detection if another edit happened alongside the rename.
+      if (story.version === savedStory.version + 1) {
+        setSavedStory((current) => current ? {
+          ...current, version: story.version, tropes: story.tropes,
+          fields: { ...current.fields, [TROPE_FIELD]: story.fields[TROPE_FIELD] || "" },
+        } : current);
+        setFields((current) => ({ ...current, [TROPE_FIELD]: story.fields[TROPE_FIELD] || "" }));
+      }
+    }
   }
 
   function handleDeleteDraftTrope(tropeText: string) {
@@ -850,9 +876,7 @@ export function CreateEntryPage() {
     setFields(story.fields);
     setDraftTropes(
       story.tropes.map((trope) => ({
-        id: trope.id,
-        text: trope.text,
-        story_count: trope.story_count,
+        ...trope,
       })),
     );
     setDraftKeywords(
@@ -927,9 +951,9 @@ export function CreateEntryPage() {
       }
 
       setSavedStory(result.story);
-      if (includeTerms && savedStory) {
-        await syncStoryTerms(result.story);
-      }
+      const finalStory = includeTerms && savedStory ? await syncStoryTerms(result.story) : result.story;
+      if (includeTerms) setDraftTropes(finalStory.tropes.map((trope) => ({ ...trope })));
+      setSavedDraftSnapshot(JSON.stringify([fields, (includeTerms ? finalStory.tropes : draftTropes).map((trope) => trope.text), draftKeywords.map((keyword) => keyword.text)]));
 
       let refreshError: string | null = null;
       try {
@@ -1055,17 +1079,15 @@ export function CreateEntryPage() {
         </section>
       ) : null}
 
-      {(isDirty || savedStory) && (
-        <section aria-label="Entry save status" className={`entry-save-bar ${isDirty ? "entry-save-bar-dirty" : "entry-save-bar-saved"}`}>
+      {isDirty && draftSnapshot !== savedDraftSnapshot && (
+        <section aria-label="Entry save status" className="entry-save-bar entry-save-bar-dirty">
           <div aria-live="polite">
-            <strong>{isDirty ? "Unsaved changes" : "All changes saved"}</strong>
-            <p>{isDirty ? "Your latest entry changes are only in this browser until you save." : "This entry is safely stored in the dataset."}</p>
+            <strong>Unsaved changes</strong>
+            <p>Your latest entry changes are only in this browser until you save.</p>
           </div>
-          {isDirty ? (
-            <button className="button" disabled={isSaveDisabled} type="submit">
-              {busy ? "Saving..." : savedStory ? "Save changes" : "Save entry"}
-            </button>
-          ) : null}
+          <button className="button" disabled={isSaveDisabled} type="submit">
+            {busy ? "Saving..." : savedStory ? "Save changes" : "Save entry"}
+          </button>
         </section>
       )}
 
@@ -1243,6 +1265,9 @@ export function CreateEntryPage() {
                     key={trope.id}
                     minimumStoryCount={0}
                     trope={trope}
+                    editDisabled={interactionDisabled}
+                    onEditDraft={() => handleEditDraftTrope(trope)}
+                    onUpdated={handleTropeUpdated}
                     actions={
                       <button
                         className="button button-danger"
@@ -1303,6 +1328,8 @@ export function CreateEntryPage() {
                   <TropeCard
                     key={item.id}
                     trope={item}
+                    editDisabled={interactionDisabled}
+                    onUpdated={handleTropeUpdated}
                     actions={
                       <button
                         className="button button-ghost"

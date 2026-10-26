@@ -1,3 +1,5 @@
+from typing import Literal
+
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -43,8 +45,16 @@ class ReviewItemResponse(BaseModel):
     subject_preview: ReviewSubjectPreviewResponse | None = None
 
 
+class ReviewEditRequest(BaseModel):
+    text: str
+    existing_term_id: str | None = None
+
+
 class ApproveReviewRequest(BaseModel):
     note: str | None = None
+    edited: bool = False
+    edit: ReviewEditRequest | None = None
+    expected_story_version: int | None = None
 
 
 class RejectReviewRequest(BaseModel):
@@ -68,14 +78,14 @@ def _raise_review_error(exc: Exception) -> None:
 
 @router.get("/items", response_model=list[ReviewItemResponse])
 def read_review_items(
-    status: ReviewStatus | None = Query(default=ReviewStatus.PENDING),
+    status: ReviewStatus | Literal["all"] | None = Query(default=ReviewStatus.PENDING),
     limit: int = Query(default=100, ge=1, le=500),
     _: object = Depends(require_minimum_role(UserRole.ADMIN)),
     session: Session = Depends(get_db_session),
 ) -> list[ReviewItemResponse]:
     return [
         ReviewItemResponse(**item)
-        for item in list_review_items(session, status=status, limit=limit)
+        for item in list_review_items(session, status=None if status == "all" else status, limit=limit)
     ]
 
 
@@ -105,6 +115,9 @@ def approve_review(
                 review_id=review_id,
                 actor_user_id=auth_context.user.id,
                 note=payload.note,
+                edited=payload.edited,
+                edit=payload.edit.model_dump() if payload.edit else None,
+                expected_story_version=payload.expected_story_version,
             )
         )
     except Exception as exc:

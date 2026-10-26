@@ -446,3 +446,122 @@ def test_admin_can_reject_pending_trope_by_merging_into_existing_trope(monkeypat
 
         trope_detail = admin_client.get(f"/api/tropes/{pending_trope_id}")
         assert trope_detail.status_code == 404
+
+
+def test_review_history_and_edited_resolution(theme_review_clients):
+    admin, contributor = theme_review_clients
+    story = contributor.get('/api/stories').json()['items'][0]
+    changed = contributor.patch(f"/api/stories/{story['id']}", json={
+        'expected_story_version': story['version'], 'fields': {THEME_FIELD: 'New theme'},
+    })
+    assert changed.status_code == 200
+    review = theme_reviews(admin)[0]
+    version = changed.json()['story']['version']
+    stale = admin.post(f"/api/review/items/{review['id']}/approve", json={
+        'edit': {'text': 'Ocean'}, 'expected_story_version': version - 1,
+    })
+    assert stale.status_code == 409
+    assert theme_reviews(admin)[0]['status'] == 'pending'
+    resolved = admin.post(f"/api/review/items/{review['id']}/approve", json={
+        'edit': {'text': 'Ocean'}, 'expected_story_version': version, 'note': 'Use existing theme',
+    })
+    assert resolved.status_code == 200
+    assert resolved.json()['metadata']['resolution']['decision'] == 'edited'
+    assert resolved.json()['metadata']['resolution']['note'] == 'Use existing theme'
+    assert admin.get(f"/api/stories/{story['id']}").json()['fields'][THEME_FIELD] == '§§ Ocean'
+    assert theme_reviews(admin) == []
+    history = admin.get('/api/review/items?status=all')
+    assert history.status_code == 200
+    assert any(item['id'] == review['id'] and item['status'] == 'approved' for item in history.json())
+    assert admin.post(f"/api/review/items/{review['id']}/approve", json={}).status_code == 409
+    assert admin.post(f"/api/review/items/{review['id']}/reject", json={}).status_code == 409
+
+
+@pytest.mark.parametrize('kind,field', [('trope', TROPE_FIELD), ('keyword', KEYWORD_FIELD)])
+@pytest.mark.parametrize('decision', ['approve', 'edit', 'reject'])
+def test_story_term_review_decisions_preserve_assignments_and_csv(theme_review_clients, kind, field, decision):
+    admin, contributor = theme_review_clients
+    created = contributor.post('/api/stories', json={
+        'expected_dataset_version': 1,
+        'fields': {'Story title (Eng)': 'Term review', 'territory': 'Tahiti'},
+        f'{kind}s': ['Proposed term'],
+    })
+    assert created.status_code == 201
+    story = created.json()['story']
+    review = next(item for item in admin.get('/api/review/items').json()
+                  if item['metadata'].get('change_kind') == f'story_{kind}')
+    version = story['version']
+    if decision == 'edit':
+        canonical = admin.post(f'/api/{kind}s', json={'text': 'Existing term'})
+        assert canonical.status_code == 200
+        term_id = canonical.json()[kind]['id']
+    action = 'reject' if decision == 'reject' else 'approve'
+    resolved = admin.post(f"/api/review/items/{review['id']}/{action}", json={
+        'expected_story_version': version,
+        **({'edit': {'text': 'Existing term', 'existing_term_id': term_id}} if decision == 'edit' else {}),
+    })
+    assert resolved.status_code == 200
+    assert resolved.json()['metadata']['resolution']['decision'] == ('edited' if decision == 'edit' else resolved.json()['status'])
+    detail = admin.get(f"/api/stories/{story['id']}").json()
+    expected = [] if decision == 'reject' else ['Existing term' if decision == 'edit' else 'Proposed term']
+    assert [term['text'] for term in detail[f'{kind}s']] == expected
+    if decision == 'edit':
+        assert detail[f'{kind}s'][0]['id'] == term_id
+    exported = csv.DictReader(io.StringIO(admin.get('/api/dataset/export.csv').content.decode('utf-8-sig')))
+    row = next(row for row in exported if row['Story title (Eng)'] == 'Term review')
+    if expected:
+        assert expected[0] in row[field]
+    else:
+        assert row[field] == ''
+
+
+def test_competing_review_decision_checks_database_status(theme_review_clients):
+    from app.db.models import ReviewItem
+    from app.services.reviews import ReviewConflictError, reject_review_item
+
+    admin, contributor = theme_review_clients
+    story = contributor.get('/api/stories').json()['items'][0]
+    response = contributor.patch(f"/api/stories/{story['id']}", json={
+        'expected_story_version': story['version'], 'fields': {THEME_FIELD: 'New theme'},
+    })
+    assert response.status_code == 200
+    review = theme_reviews(admin)[0]
+    # Simulate a second admin that loaded the item before the first decision.
+    with admin.app.state.session_factory() as stale_session:
+        cached = stale_session.get(ReviewItem, review['id'])
+        assert cached.status.value == 'pending'
+        approved = admin.post(f"/api/review/items/{review['id']}/approve", json={})
+        assert approved.status_code == 200
+        with pytest.raises(ReviewConflictError, match='already resolved'):
+            reject_review_item(stale_session, review_id=review['id'], actor_user_id=approved.json()['resolved_by_user_id'])
+        stale_session.rollback()
+    assert admin.get(f"/api/stories/{story['id']}").json()['fields'][THEME_FIELD] == '§§ New theme'
+    assert admin.get(f"/api/review/items/{review['id']}").json()['status'] == 'approved'
+
+
+@pytest.mark.parametrize('field,new_value', [(THEME_FIELD, 'A new theme'), ('Abstract (Eng)', 'Revised abstract')])
+def test_edit_and_approval_roll_back_together(theme_review_clients, monkeypatch, field, new_value):
+    from app.services import reviews
+
+    admin, contributor = theme_review_clients
+    story = contributor.get('/api/stories').json()['items'][0]
+    changed = contributor.patch(f"/api/stories/{story['id']}", json={
+        'expected_story_version': story['version'], 'fields': {field: 'Contributor proposal'},
+    })
+    assert changed.status_code == 200
+    before = admin.get(f"/api/stories/{story['id']}").json()
+    review = next(item for item in admin.get('/api/review/items').json() if item['metadata'].get('field_name') == field)
+
+    def fail_review_audit(*args, **kwargs):
+        raise RuntimeError('Simulated failure after editing')
+
+    monkeypatch.setattr(reviews, 'record_audit_event', fail_review_audit)
+    with pytest.raises(RuntimeError, match='Simulated failure'):
+        admin.post(f"/api/review/items/{review['id']}/approve", json={
+            'expected_story_version': before['version'], 'edit': {'text': new_value},
+        })
+    after = admin.get(f"/api/stories/{story['id']}").json()
+    assert after['fields'] == before['fields']
+    assert after['themes'] == before['themes']
+    assert after['version'] == before['version']
+    assert admin.get(f"/api/review/items/{review['id']}").json()['status'] == 'pending'

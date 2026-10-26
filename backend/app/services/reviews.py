@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from sqlalchemy import case, delete, func, or_, select
+from sqlalchemy import case, delete, func, or_, select, update
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.csv_schema import THEME_FIELD
@@ -284,8 +284,21 @@ def approve_review_item(
     review_id: str,
     actor_user_id: str,
     note: str | None = None,
+    edited: bool = False,
+    edit: dict[str, str | None] | None = None,
+    expected_story_version: int | None = None,
 ) -> dict:
     review_item = _require_pending_review_item(session, review_id)
+    if expected_story_version is not None:
+        story = session.get(Story, review_item.subject_id) if review_item.subject_table == "stories" else None
+        if story is None or story.version != expected_story_version:
+            raise ReviewConflictError("Story changed since it was loaded. Refresh before approving.")
+
+    if edit is not None:
+        if expected_story_version is None:
+            raise ReviewValidationError("Editing a review requires the current story version.")
+        _apply_story_review_edit(session, review_item, actor_user_id, expected_story_version, edit)
+        edited = True
 
     if review_item.review_type == ReviewType.TROPE_PENDING:
         trope = _require_trope(session, review_item)
@@ -303,13 +316,13 @@ def approve_review_item(
         actor_user_id=actor_user_id,
         status=ReviewStatus.APPROVED,
         resolution={
-            "decision": "approved",
+            "decision": "edited" if edited else "approved",
             "note": resolution_note or None,
         },
     )
     record_audit_event(
         session,
-        event_type="review.approved",
+        event_type="review.edited" if edited else "review.approved",
         actor_user_id=actor_user_id,
         dataset_id=review_item.dataset_id,
         subject_table=review_item.subject_table,
@@ -318,6 +331,61 @@ def approve_review_item(
     )
     session.commit()
     return _serialize_review_item(session, review_item)
+
+
+def _apply_story_review_edit(
+    session: Session,
+    review_item: ReviewItem,
+    actor_user_id: str,
+    expected_story_version: int,
+    edit: dict[str, str | None],
+) -> None:
+    from app.services.stories import (
+        StoryServiceError,
+        StoryVersionConflictError,
+        replace_story_keyword,
+        replace_story_trope,
+        update_story,
+    )
+
+    if review_item.subject_table != "stories":
+        raise ReviewValidationError("Only story change reviews support inline editing.")
+    metadata = review_item.metadata_json or {}
+    change_kind = metadata.get("change_kind")
+    common = {
+        "expected_story_version": expected_story_version,
+        "actor_user_id": actor_user_id,
+        "actor_role": UserRole.ADMIN,
+        "commit": False,
+    }
+    try:
+        if change_kind == STORY_FIELD_CHANGE_KIND:
+            field_name = clean_text(metadata.get("field_name", ""))
+            if not field_name:
+                raise ReviewValidationError("Story review is missing its field name.")
+            update_story(session, review_item.subject_id, fields={field_name: edit.get("text") or ""}, **common)
+        elif change_kind in {STORY_TROPE_CHANGE_KIND, STORY_KEYWORD_CHANGE_KIND}:
+            if metadata.get("assignment_action") not in {"added", "replaced"}:
+                raise ReviewValidationError("Removed assignments cannot be edited.")
+            target_id = clean_text(edit.get("existing_term_id"))
+            text = None if target_id else edit.get("text")
+            if change_kind == STORY_TROPE_CHANGE_KIND:
+                replace_story_trope(
+                    session, review_item.subject_id, metadata.get("current_trope_id", ""),
+                    trope_id=target_id or None, text=text, **common,
+                )
+            else:
+                replace_story_keyword(
+                    session, review_item.subject_id, metadata.get("current_keyword_id", ""),
+                    keyword_id=target_id or None, text=text, **common,
+                )
+        else:
+            raise ReviewValidationError("This review does not support inline editing.")
+    except StoryVersionConflictError as exc:
+        raise ReviewConflictError(str(exc)) from exc
+    except StoryServiceError as exc:
+        raise ReviewValidationError(str(exc)) from exc
+    session.flush()
 
 
 def reject_review_item(
@@ -391,6 +459,15 @@ def _require_pending_review_item(session: Session, review_id: str) -> ReviewItem
     if review_item is None:
         raise ReviewNotFoundError("Review item not found.")
     if review_item.status != ReviewStatus.PENDING:
+        raise ReviewConflictError("Review item is already resolved.")
+    # Claim the pending decision in the database so competing admins cannot both resolve it.
+    claimed = session.execute(
+        update(ReviewItem)
+        .where(ReviewItem.id == review_id, ReviewItem.status == ReviewStatus.PENDING)
+        .values(updated_at=utc_now())
+        .execution_options(synchronize_session=False)
+    )
+    if claimed.rowcount != 1:
         raise ReviewConflictError("Review item is already resolved.")
     return review_item
 

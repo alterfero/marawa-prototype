@@ -430,6 +430,7 @@ def update_story(
     actor_user_id: str | None = None,
     actor_role: UserRole | None = None,
     actor_territories: Iterable[object] | None = None,
+    commit: bool = True,
 ) -> tuple[Story, Dataset, object]:
     active_dataset, story = _get_active_story(
         session,
@@ -525,7 +526,8 @@ def update_story(
             "current_completeness": story.completeness.value,
         },
     )
-    session.commit()
+    if commit:
+        session.commit()
     return story, active_dataset, job
 
 
@@ -790,6 +792,7 @@ def replace_story_trope(
     actor_user_id: str | None = None,
     actor_role: UserRole | None = None,
     actor_territories: Iterable[object] | None = None,
+    commit: bool = True,
 ) -> tuple[Story, Dataset, StoryTrope, object]:
     active_dataset, story = _get_active_story(
         session,
@@ -877,7 +880,8 @@ def replace_story_trope(
             "trope_id": replacement_trope.id,
         },
     )
-    session.commit()
+    if commit:
+        session.commit()
     return story, active_dataset, replacement_link, job
 
 
@@ -892,6 +896,7 @@ def replace_story_keyword(
     actor_user_id: str | None = None,
     actor_role: UserRole | None = None,
     actor_territories: Iterable[object] | None = None,
+    commit: bool = True,
 ) -> tuple[Story, Dataset, StoryKeyword, object]:
     active_dataset, story = _get_active_story(
         session,
@@ -977,7 +982,8 @@ def replace_story_keyword(
             "keyword_id": replacement_keyword.id,
         },
     )
-    session.commit()
+    if commit:
+        session.commit()
     return story, active_dataset, replacement_link, job
 
 

@@ -48,6 +48,10 @@ class TropeMutationValidationError(TropeLookupError):
     """Raised when a trope create request is invalid."""
 
 
+class TropeEditForbiddenError(TropeLookupError):
+    """Raised when a contributor tries to edit a canonical trope."""
+
+
 class TropeVersionConflictError(TropeLookupError):
     """Raised when a trope mutation uses a stale version."""
 
@@ -377,10 +381,16 @@ def update_trope_text(
     expected_version: int,
     text: str,
     actor_user_id: str,
+    actor_role: UserRole,
 ) -> dict:
     active_dataset = _get_active_dataset(session)
     tropes_by_id = _get_active_tropes_by_id(session, active_dataset.id, [trope_id])
     trope = tropes_by_id[trope_id]
+
+    if actor_role != UserRole.ADMIN and (
+        actor_role != UserRole.CONTRIBUTOR or trope.confirmation_status == TropeConfirmationStatus.CANONICAL
+    ):
+        raise TropeEditForbiddenError("Only administrators can edit canonical tropes.")
 
     if expected_version < 1:
         raise TropeMutationValidationError("Expected trope version must be at least 1.")

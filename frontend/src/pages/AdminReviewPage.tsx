@@ -6,15 +6,13 @@ import {
   getReviewItems,
   getStory,
   rejectReviewItem,
-  replaceStoryKeyword,
-  replaceStoryTrope,
   searchKeywords,
+  searchThemes,
   searchTropes,
-  updateStory,
 } from "../api/client";
 import type { ReviewItem, ReviewStatus, SearchItem, StoryDetail } from "../api/types";
 import { TermCard } from "../components/TermCard";
-import { getStoryFieldLabel, LONG_TEXT_FIELDS, normalizeDraftText, splitThemeText, THEME_FIELD } from "../constants/csv";
+import { getStoryFieldLabel, LONG_TEXT_FIELDS, splitThemeText, THEME_FIELD } from "../constants/csv";
 import { useDatasetMaintenance } from "../maintenance";
 
 interface PageNotice {
@@ -149,7 +147,7 @@ function isPendingTerm(item: ReviewItem): boolean {
 }
 
 function reviewStatusLabel(item: ReviewItem): string {
-  return item.status.replace(/_/g, " ");
+  return resolutionMetadata(item)?.decision === "edited" ? "edited" : item.status.replace(/_/g, " ");
 }
 
 function reviewHeadline(item: ReviewItem): string {
@@ -377,7 +375,7 @@ function StoryReviewChangeCard({
   item: ReviewItem;
   storyDetail: StoryDetail | null;
   storyDetailLoading: boolean;
-  onRefresh: () => Promise<void>;
+  onRefresh: (resolved: ReviewItem) => Promise<void>;
   onNotice: (notice: PageNotice | null) => void;
 }) {
   const maintenance = useDatasetMaintenance();
@@ -387,8 +385,13 @@ function StoryReviewChangeCard({
   const legacyStoryReview = isLegacyStoryReviewItem(item);
   const [decisionNote, setDecisionNote] = useState("");
   const [editableDraft, setEditableDraft] = useState("");
+  const [selectedExistingTerm, setSelectedExistingTerm] = useState<SearchItem | null>(null);
+  const [similarQuery, setSimilarQuery] = useState("");
+  const [similarResults, setSimilarResults] = useState<SearchItem[]>([]);
+  const [similarStatus, setSimilarStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const termKind = fieldReview?.field_name === THEME_FIELD ? "theme" : tropeReview ? "trope" : keywordReview ? "keyword" : null;
   const [busy, setBusy] = useState(false);
-  const mutationDisabled = busy || maintenance.active;
+  const mutationDisabled = busy || maintenance.active || storyDetailLoading || !storyDetail;
 
   const liveFieldValue = fieldReview && storyDetail ? storyDetail.fields[fieldReview.field_name] || "" : null;
   const liveTermValue = tropeReview
@@ -399,31 +402,76 @@ function StoryReviewChangeCard({
 
   useEffect(() => {
     setDecisionNote("");
+    setSelectedExistingTerm(null);
+    setSimilarQuery("");
   }, [item.id]);
 
   useEffect(() => {
+    setSelectedExistingTerm(null);
     if (fieldReview) {
       const value = storyDetail?.fields[fieldReview.field_name] ?? fieldReview.current_value;
       setEditableDraft(fieldReview.field_name === THEME_FIELD ? splitThemeText(value).join("\n") : value);
+      setSimilarQuery(fieldReview.field_name === THEME_FIELD ? splitThemeText(value)[0] || "" : "");
       return;
     }
     if (tropeReview) {
-      setEditableDraft(liveTropeText(storyDetail, tropeReview) ?? tropeReview.current_trope_text);
+      const value = liveTropeText(storyDetail, tropeReview) ?? tropeReview.current_trope_text;
+      setEditableDraft(value);
+      setSimilarQuery(value);
       return;
     }
     if (keywordReview) {
-      setEditableDraft(liveKeywordText(storyDetail, keywordReview) ?? keywordReview.current_keyword_text);
+      const value = liveKeywordText(storyDetail, keywordReview) ?? keywordReview.current_keyword_text;
+      setEditableDraft(value);
+      setSimilarQuery(value);
       return;
     }
     setEditableDraft("");
   }, [item.id, storyDetail, fieldReview?.field_name, fieldReview?.current_value, tropeReview?.current_trope_text, keywordReview?.current_keyword_text]);
 
+  useEffect(() => {
+    setSimilarResults([]);
+    if (!termKind || item.status !== "pending" || !similarQuery.trim()) {
+      setSimilarStatus("idle");
+      return;
+    }
+    let cancelled = false;
+    setSimilarStatus("loading");
+    const timer = window.setTimeout(() => {
+      const search = termKind === "theme" ? searchThemes : termKind === "trope" ? searchTropes : searchKeywords;
+      void search({ query: similarQuery.trim(), limit: 8, include_string_matches: true }).then((result) => {
+        if (cancelled) return;
+        const candidates = [...result.string_match_items, ...result.items];
+        setSimilarResults(candidates.filter((candidate, index) => candidates.findIndex((other) => other.id === candidate.id) === index));
+        setSimilarStatus("ready");
+      }).catch(() => {
+        if (!cancelled) setSimilarStatus("error");
+      });
+    }, 250);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [termKind, item.status, similarQuery]);
+
+  function changeDraft(value: string) {
+    setEditableDraft(value);
+    setSelectedExistingTerm(null);
+    if (termKind !== "theme") setSimilarQuery(value);
+  }
+
+  function selectExistingTerm(candidate: SearchItem) {
+    if (termKind === "theme") {
+      setEditableDraft((current) => [...new Set([...splitThemeText(current), candidate.text])].join("\n"));
+    } else {
+      setEditableDraft(candidate.text);
+      setSelectedExistingTerm(candidate);
+    }
+  }
+
   async function handleApprove() {
     try {
       setBusy(true);
       onNotice(null);
-      await approveReviewItem(item.id, decisionNote);
-      await onRefresh();
+      const resolved = await approveReviewItem(item.id, decisionNote, false, storyDetail?.version);
+      await onRefresh(resolved);
       onNotice({
         tone: "success",
         title: "Change approved",
@@ -449,70 +497,15 @@ function StoryReviewChangeCard({
       setBusy(true);
       onNotice(null);
 
-      if (fieldReview) {
-        const currentValue = storyDetail.fields[fieldReview.field_name] || "";
-        const changed = fieldReview.field_name === THEME_FIELD
-          ? splitThemeText(editableDraft).map(normalizeDraftText).join("\n") !== splitThemeText(currentValue).map(normalizeDraftText).join("\n")
-          : editableDraft !== currentValue;
-        if (changed) {
-          await updateStory({
-            story_id: storyDetail.id,
-            expected_story_version: storyDetail.version,
-            fields: {
-              [fieldReview.field_name]: editableDraft,
-            },
-          });
-        }
-      } else if (tropeReview) {
-        const nextValue = editableDraft.trim();
-        if (!nextValue) {
-          onNotice({
-            tone: "error",
-            title: "Enter a trope before approving",
-          });
-          return;
-        }
-        if (!storyDetail.tropes.some((trope) => trope.id === tropeReview.current_trope_id)) {
-          onNotice({
-            tone: "error",
-            title: "Current trope is no longer on the story",
-          });
-          return;
-        }
-        const currentValue = liveTropeText(storyDetail, tropeReview) ?? tropeReview.current_trope_text;
-        if (nextValue !== currentValue) {
-          await replaceStoryTrope(storyDetail.id, tropeReview.current_trope_id, {
-            expected_story_version: storyDetail.version,
-            text: nextValue,
-          });
-        }
-      } else if (keywordReview) {
-        const nextValue = editableDraft.trim();
-        if (!nextValue) {
-          onNotice({
-            tone: "error",
-            title: "Enter a keyword before approving",
-          });
-          return;
-        }
-        if (!storyDetail.keywords.some((keyword) => keyword.id === keywordReview.current_keyword_id)) {
-          onNotice({
-            tone: "error",
-            title: "Current keyword is no longer on the story",
-          });
-          return;
-        }
-        const currentValue = liveKeywordText(storyDetail, keywordReview) ?? keywordReview.current_keyword_text;
-        if (nextValue !== currentValue) {
-          await replaceStoryKeyword(storyDetail.id, keywordReview.current_keyword_id, {
-            expected_story_version: storyDetail.version,
-            text: nextValue,
-          });
-        }
+      if ((tropeReview || keywordReview) && !editableDraft.trim()) {
+        onNotice({ tone: "error", title: `Enter a ${termKind} before approving` });
+        return;
       }
-
-      await approveReviewItem(item.id, decisionNote);
-      await onRefresh();
+      const resolved = await approveReviewItem(item.id, decisionNote, true, storyDetail.version, {
+        text: editableDraft,
+        ...(selectedExistingTerm ? { existing_term_id: selectedExistingTerm.id } : {}),
+      });
+      await onRefresh(resolved);
       onNotice({
         tone: "success",
         title: "Change edited and approved",
@@ -533,11 +526,11 @@ function StoryReviewChangeCard({
     try {
       setBusy(true);
       onNotice(null);
-      await rejectReviewItem({
+      const resolved = await rejectReviewItem({
         review_id: item.id,
         note: decisionNote,
       });
-      await onRefresh();
+      await onRefresh(resolved);
       onNotice({
         tone: "success",
         title: "Change rejected",
@@ -574,7 +567,7 @@ function StoryReviewChangeCard({
           <h3>{legacyStoryReview ? "Legacy story review item" : reviewHeadline(item)}</h3>
           <p className="muted">{item.created_at}</p>
         </div>
-        <span className="pill">{reviewStatusLabel(item)}</span>
+        <span className="pill" role="status">{reviewStatusLabel(item)}</span>
       </div>
 
       {legacyStoryReview ? (
@@ -637,21 +630,21 @@ function StoryReviewChangeCard({
         </div>
       ) : null}
 
-      {liveFieldMismatch ? (
+      {item.status === "pending" && liveFieldMismatch ? (
         <section className="notice notice-warning">
           <strong className="notice-title">The live story field no longer matches the recorded contributor change</strong>
           <p>Approve as-is, edit the current story value, or reject if you want to revert only this change.</p>
         </section>
       ) : null}
 
-      {liveTropeMismatch ? (
+      {item.status === "pending" && liveTropeMismatch ? (
         <section className="notice notice-warning">
           <strong className="notice-title">The live story trope no longer matches the recorded contributor change</strong>
           <p>Edit and approve to keep the current story accurate, or reject if this change should be reverted.</p>
         </section>
       ) : null}
 
-      {liveKeywordMismatch ? (
+      {item.status === "pending" && liveKeywordMismatch ? (
         <section className="notice notice-warning">
           <strong className="notice-title">The live story keyword no longer matches the recorded contributor change</strong>
           <p>Edit and approve to keep the current story accurate, or reject if this change should be reverted.</p>
@@ -664,11 +657,29 @@ function StoryReviewChangeCard({
             <label className="field">
               <span>{editableDraftLabel(item)}</span>
               {fieldReview && LONG_TEXT_FIELDS.has(fieldReview.field_name) ? (
-                <textarea className="input input-textarea" disabled={mutationDisabled || storyDetailLoading} onChange={(event) => setEditableDraft(event.target.value)} value={editableDraft} />
+                <textarea className="input input-textarea" disabled={mutationDisabled || storyDetailLoading} onChange={(event) => changeDraft(event.target.value)} value={editableDraft} />
               ) : (
-                <input className="input" disabled={mutationDisabled || storyDetailLoading} onChange={(event) => setEditableDraft(event.target.value)} value={editableDraft} />
+                <input className="input" disabled={mutationDisabled || storyDetailLoading} onChange={(event) => changeDraft(event.target.value)} value={editableDraft} />
               )}
             </label>
+          ) : null}
+
+          {termKind && canInlineEdit(item) ? (
+            <div className="stack">
+              <label className="field">
+                <span>Find similar existing {termKind}s</span>
+                <input className="input" disabled={mutationDisabled} value={similarQuery} placeholder={`Search for an existing ${termKind}`} onChange={(event) => setSimilarQuery(event.target.value)} />
+              </label>
+              {similarStatus === "loading" ? <p className="muted" role="status">Searching similar {termKind}s...</p> : null}
+              {similarStatus === "error" ? <p className="notice notice-error" role="alert">Could not search similar {termKind}s. Change the query to retry.</p> : null}
+              {similarStatus === "ready" && !similarResults.length ? <p className="muted">No similar {termKind}s found.</p> : null}
+              {similarResults.map((candidate) => (
+                <TermCard key={candidate.id} term={candidate} meta={`Similarity ${candidate.score.toFixed(2)} · ${candidate.story_count} stories`} actions={
+                  <button className="button button-ghost" type="button" disabled={mutationDisabled} onClick={() => selectExistingTerm(candidate)}>{termKind === "theme" ? "Add existing theme to draft" : selectedExistingTerm?.id === candidate.id ? "Selected" : `Use existing ${termKind}`}</button>
+                } />
+              ))}
+              {termKind === "theme" ? <p className="muted">One theme per line. Remove an unwanted theme from the draft, then add its replacement from search.</p> : null}
+            </div>
           ) : null}
 
           <label className="field">
@@ -692,12 +703,6 @@ function StoryReviewChangeCard({
         </div>
       ) : null}
 
-      {item.status !== "pending" && resolutionMetadata(item) ? (
-        <article className="card subdued">
-          <span className="stat-label">Resolution</span>
-          <pre className="json-block">{JSON.stringify(resolutionMetadata(item), null, 2)}</pre>
-        </article>
-      ) : null}
     </article>
   );
 }
@@ -708,7 +713,7 @@ function TermReviewPanel({
   onNotice,
 }: {
   item: ReviewItem;
-  onRefresh: () => Promise<void>;
+  onRefresh: (resolved: ReviewItem) => Promise<void>;
   onNotice: (notice: PageNotice | null) => void;
 }) {
   const maintenance = useDatasetMaintenance();
@@ -783,8 +788,8 @@ function TermReviewPanel({
     try {
       setBusy(true);
       onNotice(null);
-      await approveReviewItem(item.id, decisionNote);
-      await onRefresh();
+      const resolved = await approveReviewItem(item.id, decisionNote);
+      await onRefresh(resolved);
       onNotice({
         tone: "success",
         title: "Review approved",
@@ -805,13 +810,13 @@ function TermReviewPanel({
     try {
       setBusy(true);
       onNotice(null);
-      await rejectReviewItem({
+      const resolved = await rejectReviewItem({
         review_id: item.id,
         note: decisionNote,
         merge_target_id: mergeTargetId,
         remove_from_all_stories: removeFromAllStories,
       });
-      await onRefresh();
+      await onRefresh(resolved);
       onNotice({
         tone: "success",
         title: "Review rejected",
@@ -835,7 +840,7 @@ function TermReviewPanel({
           <h2>{reviewHeadline(item)}</h2>
           <p className="muted">{reviewSubhead(item)}</p>
         </div>
-        <span className="pill">{reviewStatusLabel(item)}</span>
+        <span className="pill" role="status">{reviewStatusLabel(item)}</span>
       </div>
 
       <div className="field-grid">
@@ -938,12 +943,6 @@ function TermReviewPanel({
         </div>
       ) : null}
 
-      {item.status !== "pending" && resolutionMetadata(item) ? (
-        <article className="card subdued">
-          <span className="stat-label">Resolution</span>
-          <pre className="json-block">{JSON.stringify(resolutionMetadata(item), null, 2)}</pre>
-        </article>
-      ) : null}
     </section>
   );
 }
@@ -1038,8 +1037,12 @@ export function AdminReviewPage() {
     return reviewSubhead(selection.item);
   }
 
-  async function refreshSelectedSelection() {
-    await refresh(selectedSelection?.id || null);
+  async function refreshSelectedSelection(resolved: ReviewItem) {
+    // Keep the completed card visible so the admin can see the outcome immediately.
+    setItems((current) => current.map((item) => item.id === resolved.id ? resolved : item));
+    if (selectedSelection?.kind === "story") {
+      await loadStoryDetail(selectedSelection.story_id);
+    }
   }
 
   return (
@@ -1143,7 +1146,7 @@ export function AdminReviewPage() {
                   <StoryReviewChangeCard
                     item={item}
                     key={item.id}
-                    storyDetail={storyDetail}
+                    storyDetail={storyDetail?.id === selectedSelection.story_id ? storyDetail : null}
                     storyDetailLoading={storyDetailLoading}
                     onNotice={setNotice}
                     onRefresh={refreshSelectedSelection}

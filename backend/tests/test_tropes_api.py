@@ -333,3 +333,41 @@ def test_rename_canonical_trope_returns_409_for_stale_expected_version(monkeypat
     assert stale_response.status_code == 409
     stale_body = stale_response.json()
     assert stale_body["code"] == "trope_version_conflict"
+
+
+def test_contributor_can_edit_unconfirmed_tropes_but_not_canonical(monkeypatch, tmp_path) -> None:
+    from app.db.models import UserRole
+    from tests.auth_helpers import authenticate_role
+
+    configure_auth_env(monkeypatch)
+    engine = build_engine(f"sqlite:///{tmp_path / 'contributor-trope-edit.db'}")
+    session_factory = build_session_factory(engine)
+    app = create_app(db_engine=engine, session_factory=session_factory, job_runner_enabled=False)
+
+    with TestClient(app) as admin, TestClient(app) as contributor:
+        authenticate_admin(admin)
+        upload_dataset(admin, [make_row(title="Story One", tropes="§§ first trope")])
+        trope = admin.get("/api/tropes").json()[0]
+        story = admin.get("/api/stories").json()["items"][0]
+        authenticate_role(
+            admin, contributor, email="editor@example.com", display_name="Editor",
+            role=UserRole.CONTRIBUTOR, password="contributor-password",
+        )
+        payload = {"expected_trope_version": trope["version"], "text": "Edited trope"}
+        response = contributor.put(f"/api/tropes/{trope['id']}", json=payload)
+        assert response.status_code == 200
+        updated = response.json()["trope"]
+        assert updated["confirmation_status"] == "unconfirmed"
+        detail = admin.get(f"/api/stories/{story['id']}").json()
+        assert detail["fields"][TROPE_FIELD] == "§§ Edited trope"
+        assert detail["version"] == story["version"] + 1
+        assert contributor.put(f"/api/tropes/{trope['id']}", json=payload).status_code == 409
+
+        confirmed = admin.put(f"/api/tropes/{trope['id']}/confirmation", json={
+            "expected_trope_version": updated["version"], "confirmation_status": "canonical",
+        }).json()["trope"]
+        denied = contributor.put(f"/api/tropes/{trope['id']}", json={
+            "expected_trope_version": confirmed["version"], "text": "Forbidden edit",
+        })
+        assert denied.status_code == 403
+        assert admin.get(f"/api/tropes/{trope['id']}").json()["text"] == "Edited trope"
