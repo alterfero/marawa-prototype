@@ -251,6 +251,19 @@ Use this checklist after the first boot or any major redeploy:
 
 The first rebuild can be slower than later rebuilds because it may download the embedding model into `DATA_DIR/model-cache`.
 
+### Rebuild fails with a meta tensor error
+
+If a rebuild reports `Cannot copy out of meta tensor; no data!`, deploy the
+version that serializes embedding model initialization, restart the backend,
+and queue the rebuild again. Concurrent searches and rebuilds can otherwise
+initialize the model at the same time and interfere with Transformers' temporary
+parameter-registration hooks. CPU loading options alone do not prevent this.
+
+The loader uses a process-wide lock, including across backend instances, and
+only caches a model after successful initialization. Keep the existing model
+cache. Do not replace the model's device transfer with `to_empty()`: that allocates
+uninitialized weights and does not restore the pretrained model data.
+
 ## Operational Caveats
 
 Keep these current limitations in mind:
