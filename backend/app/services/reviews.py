@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from sqlalchemy import case, delete, func, or_, select, update
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy import and_, case, delete, func, or_, select, union, update
+from sqlalchemy.orm import Session, aliased, selectinload
 
-from app.core.csv_schema import THEME_FIELD
-from app.core.parsing import clean_text
+from app.core.csv_schema import CSV_COLUMNS, KEYWORD_FIELD, THEME_FIELD, TROPE_FIELD
+from app.core.parsing import clean_text, normalize_text
 from app.db.models import (
     AssignmentStatus,
     Dataset,
+    DatasetStatus,
     Keyword,
     ReviewItem,
     ReviewStatus,
@@ -31,6 +32,7 @@ from app.services.audit import record_audit_event
 STORY_FIELD_CHANGE_KIND = "story_field"
 STORY_TROPE_CHANGE_KIND = "story_trope"
 STORY_KEYWORD_CHANGE_KIND = "story_keyword"
+STORY_DATA_FIELDS = set(CSV_COLUMNS) - {THEME_FIELD, TROPE_FIELD, KEYWORD_FIELD}
 
 
 def utc_now() -> datetime:
@@ -278,6 +280,193 @@ def get_review_item_detail(session: Session, review_id: str) -> dict:
     return _serialize_review_item(session, review_item)
 
 
+def _story_review_links():
+    """Expose one actionable story review; catalogue reviews are a fallback for older work."""
+    direct = select(ReviewItem.subject_id.label("story_id"), ReviewItem.id.label("review_id")).where(
+        ReviewItem.subject_table == "stories",
+    )
+    links = []
+    for kind, assignment, term_id in (
+        ("trope", StoryTrope, StoryTrope.trope_id),
+        ("keyword", StoryKeyword, StoryKeyword.keyword_id),
+    ):
+        assignment_review = aliased(ReviewItem)
+        catalogue_review = aliased(ReviewItem)
+        represented = select(assignment_review.id).where(
+            assignment_review.subject_table == "stories",
+            assignment_review.subject_id == assignment.story_id,
+            assignment_review.dataset_id == ReviewItem.dataset_id,
+            assignment_review.metadata_json["change_kind"].as_string() == f"story_{kind}",
+            assignment_review.metadata_json[f"current_{kind}_id"].as_string() == ReviewItem.subject_id,
+            or_(assignment_review.status == ReviewStatus.PENDING, ReviewItem.status != ReviewStatus.PENDING),
+        ).exists()
+        links.append(
+            select(assignment.story_id.label("story_id"), ReviewItem.id.label("review_id"))
+            .join(ReviewItem, and_(ReviewItem.subject_table == f"{kind}s", ReviewItem.subject_id == term_id))
+            .where(~represented)
+        )
+        # Older deployments could approve the assignment but leave its catalogue decision pending.
+        # Show that editable fallback instead of also repeating the completed assignment card.
+        outstanding_catalogue = (
+            select(catalogue_review.id)
+            .join(assignment, term_id == catalogue_review.subject_id)
+            .where(catalogue_review.subject_table == f"{kind}s",
+                   catalogue_review.status == ReviewStatus.PENDING,
+                   catalogue_review.dataset_id == ReviewItem.dataset_id,
+                   assignment.story_id == ReviewItem.subject_id,
+                   catalogue_review.subject_id == ReviewItem.metadata_json[f"current_{kind}_id"].as_string())
+            .exists()
+        )
+        direct = direct.where(~and_(
+            ReviewItem.status != ReviewStatus.PENDING,
+            ReviewItem.metadata_json["change_kind"].as_string() == f"story_{kind}",
+            outstanding_catalogue,
+        ))
+    return union(direct, *links).subquery()
+
+
+def list_review_stories(
+    session: Session, *, status: ReviewStatus | None = ReviewStatus.PENDING, limit: int = 100,
+) -> list[dict]:
+    links = _story_review_links()
+    counts = (
+        select(links.c.story_id, func.count().label("item_count"),
+               func.sum(case((ReviewItem.status == ReviewStatus.PENDING, 1), else_=0)).label("pending_count"),
+               func.max(ReviewItem.created_at).label("latest_created_at"))
+        .join(ReviewItem, ReviewItem.id == links.c.review_id)
+        .join(Story, and_(Story.id == links.c.story_id, Story.dataset_id == ReviewItem.dataset_id))
+        .join(Dataset, Dataset.id == Story.dataset_id)
+        .where(Dataset.status == DatasetStatus.ACTIVE)
+    )
+    if status is not None:
+        counts = counts.where(ReviewItem.status == status)
+    counts = counts.group_by(links.c.story_id).subquery()
+    rows = session.execute(
+        select(Story, counts.c.item_count, counts.c.pending_count, counts.c.latest_created_at)
+        .join(counts, counts.c.story_id == Story.id)
+        .order_by(case((counts.c.pending_count > 0, 0), else_=1), counts.c.latest_created_at.desc(), Story.id)
+        .limit(limit)
+    ).all()
+    return [{
+        "story_id": story.id,
+        "title": clean_text((story.fields_json or {}).get("Story title (Eng)", "")) or "Untitled story",
+        "source_row_number": story.source_row_number,
+        "item_count": item_count,
+        "pending_count": pending_count,
+        "latest_created_at": latest_created_at.isoformat(),
+    } for story, item_count, pending_count, latest_created_at in rows]
+
+
+def list_story_review_items(
+    session: Session, story_id: str, *, status: ReviewStatus | None = ReviewStatus.PENDING,
+) -> list[dict]:
+    """Load story changes and related canonical terms without an item pagination limit."""
+    links = _story_review_links()
+    statement = (
+        select(ReviewItem).join(links, links.c.review_id == ReviewItem.id)
+        .join(Story, and_(Story.id == links.c.story_id, Story.dataset_id == ReviewItem.dataset_id))
+        .where(Story.id == story_id)
+    )
+    if status is not None:
+        statement = statement.where(ReviewItem.status == status)
+    items = session.scalars(statement.order_by(ReviewItem.created_at, ReviewItem.id)).all()
+    return [_serialize_review_item(session, item) for item in items]
+
+
+def _story_review_items(
+    session: Session, story_id: str, *, status: ReviewStatus | None = ReviewStatus.PENDING,
+) -> list[ReviewItem]:
+    statement = select(ReviewItem).where(ReviewItem.subject_table == "stories", ReviewItem.subject_id == story_id)
+    if status is not None:
+        statement = statement.where(ReviewItem.status == status)
+    return list(session.scalars(statement.order_by(ReviewItem.created_at, ReviewItem.id)).all())
+
+
+def resolve_story_data_review(
+    session: Session,
+    *,
+    story_id: str,
+    actor_user_id: str,
+    expected_story_version: int,
+    review_ids: list[str],
+    approve: bool,
+    fields: dict[str, str] | None = None,
+    note: str | None = None,
+) -> list[dict]:
+    """Save one admin decision for every pending non-term field, atomically."""
+    from app.services.stories import StoryServiceError, StoryVersionConflictError, update_story
+
+    if fields and (not approve or set(fields) - STORY_DATA_FIELDS):
+        raise ReviewValidationError("Only story data fields may be edited here; review themes, tropes and keywords separately.")
+    story = session.get(Story, story_id)
+    if story is None:
+        raise ReviewNotFoundError("Story review subject not found.")
+    # Lock and check in the database, including when this session cached an older story.
+    claimed = session.execute(
+        update(Story).where(Story.id == story_id, Story.version == expected_story_version)
+        .values(version=expected_story_version).execution_options(synchronize_session=False)
+    )
+    if claimed.rowcount != 1:
+        raise ReviewConflictError("Story changed since it was loaded. Refresh before reviewing.")
+    session.refresh(story)
+    pending = [item for item in _story_review_items(session, story_id)
+               if (item.metadata_json or {}).get("change_kind") == STORY_FIELD_CHANGE_KIND
+               and (item.metadata_json or {}).get("field_name") in STORY_DATA_FIELDS]
+    if not pending or len(review_ids) != len(set(review_ids)) or {item.id for item in pending} != set(review_ids):
+        raise ReviewConflictError("Pending story data changed. Refresh to review all current changes together.")
+    for item in pending:
+        _require_dataset_match(item, story.dataset_id)
+        _require_pending_review_item(session, item.id)
+
+    final_fields = {item.metadata_json["field_name"]: clean_text((story.fields_json or {}).get(item.metadata_json["field_name"], ""))
+                    for item in pending}
+    if approve:
+        final_fields.update(fields or {})
+    else:
+        # Undo the newest change first so A -> B -> C restores A in one decision.
+        ordered = sorted(pending, key=lambda item: (
+            int(item.metadata_json.get("story_version", 0)), item.created_at, item.id,
+        ), reverse=True)
+        for item in ordered:
+            metadata = item.metadata_json
+            field_name = metadata["field_name"]
+            previous = clean_text(metadata.get("previous_value", ""))
+            proposed = clean_text(metadata.get("current_value", ""))
+            if final_fields[field_name] not in {previous, proposed}:
+                raise ReviewConflictError(f"{field_name} has a later change outside this review. Refresh and review its current value.")
+            final_fields[field_name] = previous
+
+    try:
+        story, _, _ = update_story(
+            session, story_id, expected_story_version=expected_story_version,
+            fields=final_fields, actor_user_id=actor_user_id, actor_role=UserRole.ADMIN, commit=False,
+        )
+    except StoryVersionConflictError as exc:
+        raise ReviewConflictError(str(exc)) from exc
+    except StoryServiceError as exc:
+        raise ReviewValidationError(str(exc)) from exc
+
+    for item in pending:
+        field_name = item.metadata_json["field_name"]
+        final_value = (story.fields_json or {}).get(field_name, "")
+        edited = approve and final_value != item.metadata_json.get("current_value", "")
+        decision = "edited" if edited else "approved" if approve else "rejected"
+        resolution = {
+            "decision": decision, "note": clean_text(note) or None, "scope": "story_data",
+            "final_value": final_value, "story_version": story.version,
+        }
+        if not approve:
+            resolution["action"] = "reverted"
+        _resolve_review_item(item, actor_user_id=actor_user_id,
+                             status=ReviewStatus.APPROVED if approve else ReviewStatus.REJECTED,
+                             resolution=resolution)
+        record_audit_event(session, event_type=f"review.{decision}", actor_user_id=actor_user_id,
+                           dataset_id=item.dataset_id, subject_table="stories", subject_id=story_id,
+                           payload={"review_id": item.id, **resolution})
+    session.commit()
+    return [_serialize_review_item(session, item) for item in pending]
+
+
 def approve_review_item(
     session: Session,
     *,
@@ -287,6 +476,7 @@ def approve_review_item(
     edited: bool = False,
     edit: dict[str, str | None] | None = None,
     expected_story_version: int | None = None,
+    commit: bool = True,
 ) -> dict:
     review_item = _require_pending_review_item(session, review_id)
     if expected_story_version is not None:
@@ -294,10 +484,11 @@ def approve_review_item(
         if story is None or story.version != expected_story_version:
             raise ReviewConflictError("Story changed since it was loaded. Refresh before approving.")
 
+    edited_term_id = None
     if edit is not None:
         if expected_story_version is None:
             raise ReviewValidationError("Editing a review requires the current story version.")
-        _apply_story_review_edit(session, review_item, actor_user_id, expected_story_version, edit)
+        edited_term_id = _apply_story_review_edit(session, review_item, actor_user_id, expected_story_version, edit)
         edited = True
 
     if review_item.review_type == ReviewType.TROPE_PENDING:
@@ -318,6 +509,7 @@ def approve_review_item(
         resolution={
             "decision": "edited" if edited else "approved",
             "note": resolution_note or None,
+            **({"edited_term_id": edited_term_id} if edited_term_id else {}),
         },
     )
     record_audit_event(
@@ -329,7 +521,10 @@ def approve_review_item(
         subject_id=review_item.subject_id,
         payload={"review_id": review_item.id, "note": resolution_note or None},
     )
-    session.commit()
+    if commit:
+        session.commit()
+    else:
+        session.flush()
     return _serialize_review_item(session, review_item)
 
 
@@ -339,7 +534,7 @@ def _apply_story_review_edit(
     actor_user_id: str,
     expected_story_version: int,
     edit: dict[str, str | None],
-) -> None:
+) -> str | None:
     from app.services.stories import (
         StoryServiceError,
         StoryVersionConflictError,
@@ -352,6 +547,7 @@ def _apply_story_review_edit(
         raise ReviewValidationError("Only story change reviews support inline editing.")
     metadata = review_item.metadata_json or {}
     change_kind = metadata.get("change_kind")
+    edited_term_id = None
     common = {
         "expected_story_version": expected_story_version,
         "actor_user_id": actor_user_id,
@@ -370,15 +566,17 @@ def _apply_story_review_edit(
             target_id = clean_text(edit.get("existing_term_id"))
             text = None if target_id else edit.get("text")
             if change_kind == STORY_TROPE_CHANGE_KIND:
-                replace_story_trope(
+                _, _, replacement, _ = replace_story_trope(
                     session, review_item.subject_id, metadata.get("current_trope_id", ""),
                     trope_id=target_id or None, text=text, **common,
                 )
+                edited_term_id = replacement.trope_id
             else:
-                replace_story_keyword(
+                _, _, replacement, _ = replace_story_keyword(
                     session, review_item.subject_id, metadata.get("current_keyword_id", ""),
                     keyword_id=target_id or None, text=text, **common,
                 )
+                edited_term_id = replacement.keyword_id
         else:
             raise ReviewValidationError("This review does not support inline editing.")
     except StoryVersionConflictError as exc:
@@ -386,6 +584,7 @@ def _apply_story_review_edit(
     except StoryServiceError as exc:
         raise ReviewValidationError(str(exc)) from exc
     session.flush()
+    return edited_term_id
 
 
 def reject_review_item(
@@ -396,6 +595,7 @@ def reject_review_item(
     note: str | None = None,
     merge_target_id: str | None = None,
     remove_from_all_stories: bool = False,
+    commit: bool = True,
 ) -> dict:
     review_item = _require_pending_review_item(session, review_id)
     resolution_note = clean_text(note) or None
@@ -450,8 +650,118 @@ def reject_review_item(
         subject_id=review_item.subject_id,
         payload={"review_id": review_item.id, **resolution_payload},
     )
-    session.commit()
+    if commit:
+        session.commit()
+    else:
+        session.flush()
     return _serialize_review_item(session, review_item)
+
+
+def resolve_story_term_review(
+    session: Session, *, story_id: str, review_id: str, actor_user_id: str,
+    expected_story_version: int, approve: bool, edit: dict[str, str | None] | None = None,
+) -> dict:
+    """Resolve an assignment and its catalogue work in one story-scoped transaction."""
+    if edit is not None and not approve:
+        raise ReviewValidationError("A rejected change cannot include edits.")
+    story = session.get(Story, story_id)
+    if story is None:
+        raise ReviewNotFoundError("Story not found.")
+    claimed = session.execute(
+        update(Story).where(Story.id == story_id, Story.version == expected_story_version)
+        .values(version=expected_story_version).execution_options(synchronize_session=False)
+    )
+    if claimed.rowcount != 1:
+        raise ReviewConflictError("Story changed since it was loaded. Refresh before reviewing.")
+    session.refresh(story)
+    review = _require_pending_review_item(session, review_id)
+    _require_dataset_match(review, story.dataset_id)
+    if review.subject_table in {"tropes", "keywords"}:
+        kind = "trope" if review.subject_table == "tropes" else "keyword"
+        assignment = StoryTrope if kind == "trope" else StoryKeyword
+        term_column = assignment.trope_id if kind == "trope" else assignment.keyword_id
+        link = session.scalar(select(assignment).where(assignment.story_id == story_id, term_column == review.subject_id))
+        visible = _story_review_links()
+        if link is None or session.scalar(select(visible.c.review_id).where(
+            visible.c.story_id == story_id, visible.c.review_id == review_id,
+        )) is None:
+            raise ReviewConflictError("This term review is no longer pending on this story. Refresh before reviewing.")
+        term = session.get(Trope if kind == "trope" else Keyword, review.subject_id)
+        # Record the story-specific outcome even when the original assignment review is absent or resolved.
+        review = _create_review_item(
+            session, dataset_id=story.dataset_id, review_type=ReviewType.STORY_UPDATED,
+            subject_table="stories", subject_id=story.id, actor_user_id=None,
+            metadata={"story_id": story.id, "story_title": (story.fields_json or {}).get("Story title (Eng)", ""),
+                      "story_version": story.version, "source_row_number": story.source_row_number,
+                      "change_kind": f"story_{kind}", "assignment_action": "added", "position": link.position,
+                      f"current_{kind}_id": term.id, f"current_{kind}_text": term.text,
+                      "catalogue_review_id": review_id},
+        )
+    else:
+        if review.subject_table != "stories" or review.subject_id != story_id:
+            raise ReviewValidationError("The review does not belong to this story.")
+        change_kind = (review.metadata_json or {}).get("change_kind")
+        if change_kind not in {STORY_TROPE_CHANGE_KIND, STORY_KEYWORD_CHANGE_KIND}:
+            raise ReviewValidationError("Only trope and keyword changes use this decision.")
+        kind = "trope" if change_kind == STORY_TROPE_CHANGE_KIND else "keyword"
+
+    metadata = review.metadata_json or {}
+    source_id = clean_text(metadata.get(f"current_{kind}_id"))
+    candidate_ids = {source_id, clean_text(metadata.get(f"previous_{kind}_id"))} - {""}
+    assignment = StoryTrope if kind == "trope" else StoryKeyword
+    term_column = assignment.trope_id if kind == "trope" else assignment.keyword_id
+    assigned_ids = set(session.scalars(select(term_column).where(assignment.story_id == story_id)))
+    if approve and metadata.get("assignment_action") in {"added", "replaced", "validated"} and source_id not in assigned_ids:
+        raise ReviewConflictError("The proposed term is no longer assigned to this story. Refresh before reviewing.")
+    if edit is not None and source_id:
+        source = session.get(Trope if kind == "trope" else Keyword, source_id)
+        if source and (edit.get("existing_term_id") == source_id or (
+            not edit.get("existing_term_id") and normalize_text(edit.get("text") or "") == normalize_text(source.text)
+        )):
+            edit = None
+    if approve:
+        result = approve_review_item(session, review_id=review.id, actor_user_id=actor_user_id,
+                                     expected_story_version=expected_story_version, edit=edit, commit=False)
+        target_id = result["metadata"]["resolution"].get("edited_term_id")
+        if target_id:
+            candidate_ids.add(target_id)
+    else:
+        reject_review_item(session, review_id=review.id, actor_user_id=actor_user_id, commit=False)
+    assigned_ids = set(session.scalars(select(term_column).where(assignment.story_id == story_id)))
+    for term_id in sorted(candidate_ids):
+        _settle_story_term_catalogue_review(session, kind=kind, term_id=term_id,
+                                           keep=term_id in assigned_ids, actor_user_id=actor_user_id)
+    session.commit()
+    return _serialize_review_item(session, review)
+
+
+def _settle_story_term_catalogue_review(
+    session: Session, *, kind: str, term_id: str, keep: bool, actor_user_id: str,
+) -> None:
+    model, assignment = (Trope, StoryTrope) if kind == "trope" else (Keyword, StoryKeyword)
+    term_column = assignment.trope_id if kind == "trope" else assignment.keyword_id
+    # Lock the term before checking whether it is safe to discard an unused proposal.
+    term = session.scalar(select(model).where(model.id == term_id).with_for_update())
+    if term is None:
+        return
+    catalogue = _get_pending_review_item(session, subject_table=f"{kind}s", subject_id=term_id)
+    if catalogue is None:
+        return
+    if keep:
+        approve_review_item(session, review_id=catalogue.id, actor_user_id=actor_user_id, commit=False)
+        return
+    if session.scalar(select(assignment.story_id).where(term_column == term_id).limit(1)) is not None:
+        return  # A different story must still be able to review this shared proposal.
+    if session.scalar(select(ReviewItem.id).where(
+        ReviewItem.subject_table == "stories", ReviewItem.dataset_id == term.dataset_id,
+        ReviewItem.status == ReviewStatus.PENDING,
+        ReviewItem.metadata_json["change_kind"].as_string() == f"story_{kind}",
+        or_(ReviewItem.metadata_json[f"current_{kind}_id"].as_string() == term_id,
+            ReviewItem.metadata_json[f"previous_{kind}_id"].as_string() == term_id),
+    ).limit(1)) is not None:
+        return  # Preserve terms that another unresolved change may need to restore.
+    reject_review_item(session, review_id=catalogue.id, actor_user_id=actor_user_id,
+                       remove_from_all_stories=True, commit=False)
 
 
 def _require_pending_review_item(session: Session, review_id: str) -> ReviewItem:

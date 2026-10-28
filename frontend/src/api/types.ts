@@ -806,6 +806,15 @@ export interface ReviewSubjectPreview {
   story_count?: number | null;
 }
 
+export interface ReviewStory {
+  story_id: string;
+  title: string;
+  source_row_number: number | null;
+  item_count: number;
+  pending_count: number;
+  latest_created_at: string;
+}
+
 export interface ReviewItem {
   id: string;
   dataset_id: string | null;

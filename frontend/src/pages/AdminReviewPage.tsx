@@ -1,18 +1,27 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
+  addStoryKeyword,
+  addStoryTheme,
+  addStoryTrope,
+  ApiError,
   approveReviewItem,
   getErrorMessage,
-  getReviewItems,
+  getReviewStories,
   getStory,
+  getStoryReviewItems,
   rejectReviewItem,
+  resolveStoryDataReview,
+  resolveStoryTermReview,
   searchKeywords,
   searchThemes,
   searchTropes,
 } from "../api/client";
-import type { ReviewItem, ReviewStatus, SearchItem, StoryDetail } from "../api/types";
+import type { ReviewItem, ReviewStatus, ReviewStory, SearchItem, StoryDetail } from "../api/types";
+import { StoryReviewItemAdder } from "../components/StoryReviewItemAdder";
+import type { StoryItemInput, StoryItemKind } from "../components/StoryReviewItemAdder";
 import { TermCard } from "../components/TermCard";
-import { getStoryFieldLabel, LONG_TEXT_FIELDS, splitThemeText, THEME_FIELD } from "../constants/csv";
+import { getStoryFieldLabel, KEYWORD_FIELD, LONG_TEXT_FIELDS, splitThemeText, THEME_FIELD, TROPE_FIELD } from "../constants/csv";
 import { useDatasetMaintenance } from "../maintenance";
 
 interface PageNotice {
@@ -47,26 +56,6 @@ interface StoryKeywordReviewMetadata {
   current_keyword_text: string;
 }
 
-interface StoryReviewGroup {
-  kind: "story";
-  id: string;
-  story_id: string;
-  title: string;
-  source_row_number: number | null;
-  items: ReviewItem[];
-  pending_count: number;
-  latest_created_at: string;
-}
-
-interface TermReviewSelection {
-  kind: "term";
-  id: string;
-  item: ReviewItem;
-  latest_created_at: string;
-}
-
-type ReviewSelection = StoryReviewGroup | TermReviewSelection;
-
 function readString(metadata: Record<string, unknown>, key: string): string {
   const value = metadata[key];
   return typeof value === "string" ? value : "";
@@ -93,10 +82,6 @@ function storyReviewTitle(item: ReviewItem): string {
   return item.subject_preview?.title || item.subject_id;
 }
 
-function storyReviewSourceRow(item: ReviewItem): number | null {
-  return readNumber(item.metadata, "source_row_number") ?? item.subject_preview?.source_row_number ?? null;
-}
-
 function parseStoryFieldReview(item: ReviewItem | null): StoryFieldReviewMetadata | null {
   if (!item || item.subject_table !== "stories" || readString(item.metadata, "change_kind") !== "story_field") {
     return null;
@@ -108,7 +93,19 @@ function parseStoryFieldReview(item: ReviewItem | null): StoryFieldReviewMetadat
   };
 }
 
+function isStoryDataReview(item: ReviewItem): boolean {
+  const field = parseStoryFieldReview(item)?.field_name;
+  return Boolean(field && ![THEME_FIELD, TROPE_FIELD, KEYWORD_FIELD].includes(field));
+}
+
 function parseStoryTropeReview(item: ReviewItem | null): StoryTropeReviewMetadata | null {
+  if (item?.subject_table === "tropes") {
+    return {
+      assignment_action: "added", previous_trope_id: "", previous_trope_text: "", previous_origin: "", previous_status: "",
+      current_trope_id: item.subject_id, current_trope_text: item.subject_preview?.text || readString(item.metadata, "text"),
+      current_origin: "", current_status: "",
+    };
+  }
   if (!item || item.subject_table !== "stories" || readString(item.metadata, "change_kind") !== "story_trope") {
     return null;
   }
@@ -126,6 +123,12 @@ function parseStoryTropeReview(item: ReviewItem | null): StoryTropeReviewMetadat
 }
 
 function parseStoryKeywordReview(item: ReviewItem | null): StoryKeywordReviewMetadata | null {
+  if (item?.subject_table === "keywords") {
+    return {
+      assignment_action: "added", previous_keyword_id: "", previous_keyword_text: "",
+      current_keyword_id: item.subject_id, current_keyword_text: item.subject_preview?.text || readString(item.metadata, "text"),
+    };
+  }
   if (!item || item.subject_table !== "stories" || readString(item.metadata, "change_kind") !== "story_keyword") {
     return null;
   }
@@ -142,15 +145,14 @@ function formatValue(value: string): string {
   return value.trim() ? value : "Empty";
 }
 
-function isPendingTerm(item: ReviewItem): boolean {
-  return item.review_type === "trope_pending" || item.review_type === "keyword_pending";
-}
-
 function reviewStatusLabel(item: ReviewItem): string {
   return resolutionMetadata(item)?.decision === "edited" ? "edited" : item.status.replace(/_/g, " ");
 }
 
 function reviewHeadline(item: ReviewItem): string {
+  if (item.subject_table === "tropes" || item.subject_table === "keywords") {
+    return `${item.subject_table === "tropes" ? "Trope" : "Keyword"}: ${item.subject_preview?.text || readString(item.metadata, "text")}`;
+  }
   const fieldReview = parseStoryFieldReview(item);
   if (fieldReview) {
     return getStoryFieldLabel(fieldReview.field_name);
@@ -185,29 +187,14 @@ function reviewHeadline(item: ReviewItem): string {
     }
   }
 
-  if (item.subject_table === "tropes") {
-    return item.subject_preview?.text || readString(item.metadata, "text") || item.subject_id;
-  }
-  if (item.subject_table === "keywords") {
-    return item.subject_preview?.text || readString(item.metadata, "text") || item.subject_id;
-  }
   return storyReviewTitle(item);
 }
 
-function reviewSubhead(item: ReviewItem): string {
-  if (item.subject_table === "stories") {
-    return `${item.review_type === "story_created" ? "Story submission" : "Story update"} · ${storyReviewTitle(item)}`;
-  }
-  if (item.review_type === "trope_pending") {
-    return "Pending canonical trope";
-  }
-  return "Pending canonical keyword";
-}
-
-function liveTropeText(detail: StoryDetail | null, review: StoryTropeReviewMetadata): string | null {
+function liveTropeText(detail: StoryDetail | null, review: StoryTropeReviewMetadata, editedTermId: string): string | null {
   if (!detail) {
     return null;
   }
+  if (editedTermId) return detail.tropes.find((item) => item.id === editedTermId)?.text ?? null;
   const current = detail.tropes.find((item) => item.id === review.current_trope_id);
   if (current) {
     return current.text;
@@ -219,10 +206,11 @@ function liveTropeText(detail: StoryDetail | null, review: StoryTropeReviewMetad
   return null;
 }
 
-function liveKeywordText(detail: StoryDetail | null, review: StoryKeywordReviewMetadata): string | null {
+function liveKeywordText(detail: StoryDetail | null, review: StoryKeywordReviewMetadata, editedTermId: string): string | null {
   if (!detail) {
     return null;
   }
+  if (editedTermId) return detail.keywords.find((item) => item.id === editedTermId)?.text ?? null;
   const current = detail.keywords.find((item) => item.id === review.current_keyword_id);
   if (current) {
     return current.text;
@@ -301,61 +289,6 @@ function compareStoryItems(a: ReviewItem, b: ReviewItem): number {
   return reviewHeadline(a).localeCompare(reviewHeadline(b));
 }
 
-function buildReviewSelections(items: ReviewItem[]): ReviewSelection[] {
-  const storyItemsById = new Map<string, ReviewItem[]>();
-  const selections: ReviewSelection[] = [];
-
-  items.forEach((item) => {
-    if (item.subject_table === "stories") {
-      const group = storyItemsById.get(item.subject_id);
-      if (group) {
-        group.push(item);
-      } else {
-        storyItemsById.set(item.subject_id, [item]);
-      }
-      return;
-    }
-
-    selections.push({
-      kind: "term",
-      id: `item:${item.id}`,
-      item,
-      latest_created_at: item.created_at,
-    });
-  });
-
-  storyItemsById.forEach((storyItems, storyId) => {
-    const sortedItems = [...storyItems].sort(compareStoryItems);
-    selections.push({
-      kind: "story",
-      id: `story:${storyId}`,
-      story_id: storyId,
-      title: storyReviewTitle(sortedItems[0]),
-      source_row_number: storyReviewSourceRow(sortedItems[0]),
-      items: sortedItems,
-      pending_count: sortedItems.filter((item) => item.status === "pending").length,
-      latest_created_at: sortedItems.reduce((latest, item) => {
-        return itemCreatedAtTimestamp(item) > Date.parse(latest) ? item.created_at : latest;
-      }, sortedItems[0].created_at),
-    });
-  });
-
-  return selections.sort((left, right) => {
-    const leftPending = left.kind === "story" ? left.pending_count > 0 : left.item.status === "pending";
-    const rightPending = right.kind === "story" ? right.pending_count > 0 : right.item.status === "pending";
-    if (leftPending !== rightPending) {
-      return leftPending ? -1 : 1;
-    }
-    const dateDelta = Date.parse(right.latest_created_at) - Date.parse(left.latest_created_at);
-    if (dateDelta !== 0) {
-      return dateDelta;
-    }
-    const leftTitle = left.kind === "story" ? left.title : reviewHeadline(left.item);
-    const rightTitle = right.kind === "story" ? right.title : reviewHeadline(right.item);
-    return leftTitle.localeCompare(rightTitle);
-  });
-}
-
 function ReviewValueCard({ label, value }: { label: string; value: string }) {
   return (
     <article className="card subdued">
@@ -365,16 +298,114 @@ function ReviewValueCard({ label, value }: { label: string; value: string }) {
   );
 }
 
+function StoryDataReviewCard({ items, story, disabled, onBusyChange, onResolved, onNotice }: {
+  items: ReviewItem[];
+  story: StoryDetail | null;
+  disabled: boolean;
+  onBusyChange: (busy: boolean) => void;
+  onResolved: (resolved: ReviewItem[]) => Promise<void>;
+  onNotice: (notice: PageNotice | null) => void;
+}) {
+  const pending = items.filter((item) => item.status === "pending" && isStoryDataReview(item));
+  const changes = new Map<string, StoryFieldReviewMetadata>();
+  [...pending].sort((a, b) => (readNumber(a.metadata, "story_version") ?? 0) - (readNumber(b.metadata, "story_version") ?? 0)
+    || itemCreatedAtTimestamp(a) - itemCreatedAtTimestamp(b)).forEach((item) => {
+    const field = parseStoryFieldReview(item)!;
+    const earlier = changes.get(field.field_name);
+    changes.set(field.field_name, { ...field, previous_value: earlier?.previous_value ?? field.previous_value });
+  });
+  const initialDraft = JSON.stringify(Object.fromEntries([...changes.values()].map((field) => [
+    field.field_name, story?.fields[field.field_name] ?? field.current_value,
+  ])));
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  useEffect(() => { setDraft(JSON.parse(initialDraft)); }, [initialDraft]);
+  const mutationDisabled = disabled || !story;
+
+  async function decide(decision: "approve" | "reject") {
+    if (mutationDisabled || !story) return;
+    onBusyChange(true);
+    onNotice(null);
+    try {
+      const resolved = await resolveStoryDataReview(story.id, decision, {
+        expected_story_version: story.version,
+        review_ids: pending.map((item) => item.id),
+        ...(decision === "approve" ? { fields: draft } : {}),
+      });
+      await onResolved(resolved);
+      onNotice({
+        tone: "success",
+        title: decision === "approve" ? "Story data approved" : "Story data rejected",
+        body: decision === "approve"
+          ? "All proposed story data was approved with your edits. Themes, tropes and keywords keep their separate reviews."
+          : "The proposed story data was reverted. Themes, tropes and keywords keep their separate reviews.",
+      });
+    } catch (error) {
+      onNotice({ tone: "error", title: `Could not ${decision} story data`, body: getErrorMessage(error) });
+    } finally {
+      onBusyChange(false);
+    }
+  }
+
+  if (!pending.length) return null;
+  return (
+    <section className="card page-stack" aria-label="Story data review">
+      <div className="panel-header">
+        <div>
+          <h3>Story data</h3>
+          <p className="muted">Edit the proposed values below, then approve all story data together. Themes, tropes and keywords are reviewed separately.</p>
+        </div>
+        <span className="pill">{changes.size} field{changes.size === 1 ? "" : "s"}</span>
+      </div>
+      {[...changes.values()].map((field) => {
+        const current = story?.fields[field.field_name] ?? field.current_value;
+        return (
+          <div className="page-stack" key={field.field_name}>
+            <label className="field">
+              <span>{getStoryFieldLabel(field.field_name)}</span>
+              {LONG_TEXT_FIELDS.has(field.field_name) ? (
+                <textarea className="input input-textarea" disabled={mutationDisabled} value={draft[field.field_name] ?? current}
+                  onChange={(event) => setDraft((value) => ({ ...value, [field.field_name]: event.target.value }))} />
+              ) : (
+                <input className="input" disabled={mutationDisabled} value={draft[field.field_name] ?? current}
+                  onChange={(event) => setDraft((value) => ({ ...value, [field.field_name]: event.target.value }))} />
+              )}
+            </label>
+            <details>
+              <summary>Compare with previous value</summary>
+              <div className="field-grid">
+                <ReviewValueCard label="Before contributor changes" value={field.previous_value} />
+                <ReviewValueCard label="Latest contributor value" value={field.current_value} />
+              </div>
+            </details>
+            {current !== field.current_value ? (
+              <p className="notice notice-warning">This field changed after the proposal. The editor shows its current value; review it before approving.</p>
+            ) : null}
+          </div>
+        );
+      })}
+      <p className="muted">Reject cancels all pending story data changes and discards your unsaved edits. For a new story, submitted data is cleared and the story record is retained.</p>
+      <div className="button-row wrap-row">
+        <button className="button" disabled={mutationDisabled} type="button" onClick={() => void decide("approve")}>Approve</button>
+        <button className="button button-danger" disabled={mutationDisabled} type="button" onClick={() => void decide("reject")}>Reject</button>
+      </div>
+    </section>
+  );
+}
+
 function StoryReviewChangeCard({
   item,
   storyDetail,
   storyDetailLoading,
+  busy,
+  onBusyChange: setBusy,
   onRefresh,
   onNotice,
 }: {
   item: ReviewItem;
   storyDetail: StoryDetail | null;
   storyDetailLoading: boolean;
+  busy: boolean;
+  onBusyChange: (busy: boolean) => void;
   onRefresh: (resolved: ReviewItem) => Promise<void>;
   onNotice: (notice: PageNotice | null) => void;
 }) {
@@ -383,25 +414,23 @@ function StoryReviewChangeCard({
   const tropeReview = parseStoryTropeReview(item);
   const keywordReview = parseStoryKeywordReview(item);
   const legacyStoryReview = isLegacyStoryReviewItem(item);
-  const [decisionNote, setDecisionNote] = useState("");
   const [editableDraft, setEditableDraft] = useState("");
   const [selectedExistingTerm, setSelectedExistingTerm] = useState<SearchItem | null>(null);
   const [similarQuery, setSimilarQuery] = useState("");
   const [similarResults, setSimilarResults] = useState<SearchItem[]>([]);
   const [similarStatus, setSimilarStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const termKind = fieldReview?.field_name === THEME_FIELD ? "theme" : tropeReview ? "trope" : keywordReview ? "keyword" : null;
-  const [busy, setBusy] = useState(false);
   const mutationDisabled = busy || maintenance.active || storyDetailLoading || !storyDetail;
 
   const liveFieldValue = fieldReview && storyDetail ? storyDetail.fields[fieldReview.field_name] || "" : null;
+  const editedTermId = readString(resolutionMetadata(item) ?? {}, "edited_term_id");
   const liveTermValue = tropeReview
-    ? liveTropeText(storyDetail, tropeReview)
+    ? liveTropeText(storyDetail, tropeReview, editedTermId)
     : keywordReview
-      ? liveKeywordText(storyDetail, keywordReview)
+      ? liveKeywordText(storyDetail, keywordReview, editedTermId)
       : null;
 
   useEffect(() => {
-    setDecisionNote("");
     setSelectedExistingTerm(null);
     setSimilarQuery("");
   }, [item.id]);
@@ -409,25 +438,25 @@ function StoryReviewChangeCard({
   useEffect(() => {
     setSelectedExistingTerm(null);
     if (fieldReview) {
-      const value = storyDetail?.fields[fieldReview.field_name] ?? fieldReview.current_value;
+      const value = liveFieldValue ?? fieldReview.current_value;
       setEditableDraft(fieldReview.field_name === THEME_FIELD ? splitThemeText(value).join("\n") : value);
       setSimilarQuery(fieldReview.field_name === THEME_FIELD ? splitThemeText(value)[0] || "" : "");
       return;
     }
     if (tropeReview) {
-      const value = liveTropeText(storyDetail, tropeReview) ?? tropeReview.current_trope_text;
+      const value = liveTermValue ?? tropeReview.current_trope_text;
       setEditableDraft(value);
       setSimilarQuery(value);
       return;
     }
     if (keywordReview) {
-      const value = liveKeywordText(storyDetail, keywordReview) ?? keywordReview.current_keyword_text;
+      const value = liveTermValue ?? keywordReview.current_keyword_text;
       setEditableDraft(value);
       setSimilarQuery(value);
       return;
     }
     setEditableDraft("");
-  }, [item.id, storyDetail, fieldReview?.field_name, fieldReview?.current_value, tropeReview?.current_trope_text, keywordReview?.current_keyword_text]);
+  }, [item.id, liveFieldValue, liveTermValue, fieldReview?.field_name, fieldReview?.current_value, tropeReview?.current_trope_text, keywordReview?.current_keyword_text]);
 
   useEffect(() => {
     setSimilarResults([]);
@@ -467,10 +496,16 @@ function StoryReviewChangeCard({
   }
 
   async function handleApprove() {
+    if (termKind && canInlineEdit(item)) {
+      await handleEditAndApprove();
+      return;
+    }
     try {
       setBusy(true);
       onNotice(null);
-      const resolved = await approveReviewItem(item.id, decisionNote, false, storyDetail?.version);
+      const resolved = (tropeReview || keywordReview) && storyDetail
+        ? await resolveStoryTermReview(storyDetail.id, item.id, "approve", { expected_story_version: storyDetail.version })
+        : await approveReviewItem(item.id, undefined, false, storyDetail?.version);
       await onRefresh(resolved);
       onNotice({
         tone: "success",
@@ -488,8 +523,8 @@ function StoryReviewChangeCard({
     }
   }
 
-  async function handleEditAndApprove() {
-    if (!storyDetail || !canInlineEdit(item)) {
+  async function handleEditAndApprove(keepAsTyped = false) {
+    if (mutationDisabled || !storyDetail || !canInlineEdit(item)) {
       return;
     }
 
@@ -501,15 +536,21 @@ function StoryReviewChangeCard({
         onNotice({ tone: "error", title: `Enter a ${termKind} before approving` });
         return;
       }
-      const resolved = await approveReviewItem(item.id, decisionNote, true, storyDetail.version, {
+      const edit = {
         text: editableDraft,
-        ...(selectedExistingTerm ? { existing_term_id: selectedExistingTerm.id } : {}),
-      });
+        ...(!keepAsTyped && selectedExistingTerm ? { existing_term_id: selectedExistingTerm.id } : {}),
+      };
+      const resolved = tropeReview || keywordReview
+        ? await resolveStoryTermReview(storyDetail.id, item.id, "approve", { expected_story_version: storyDetail.version, edit })
+        : await approveReviewItem(item.id, undefined, true, storyDetail.version, edit);
       await onRefresh(resolved);
       onNotice({
         tone: "success",
-        title: "Change edited and approved",
-        body: `${reviewHeadline(item)} was updated and approved.`,
+        title: keepAsTyped ? "Typed text saved and approved"
+          : resolutionMetadata(resolved)?.decision === "edited" ? "Change edited and approved" : "Change approved",
+        body: keepAsTyped
+          ? `Your ${termKind} text was saved on this story and the contributor’s change was approved.`
+          : termKind ? `The ${termKind} was saved on this story and approved.` : `${reviewHeadline(item)} was updated and approved.`,
       });
     } catch (error) {
       onNotice({
@@ -526,10 +567,9 @@ function StoryReviewChangeCard({
     try {
       setBusy(true);
       onNotice(null);
-      const resolved = await rejectReviewItem({
-        review_id: item.id,
-        note: decisionNote,
-      });
+      const resolved = (tropeReview || keywordReview) && storyDetail
+        ? await resolveStoryTermReview(storyDetail.id, item.id, "reject", { expected_story_version: storyDetail.version })
+        : await rejectReviewItem({ review_id: item.id });
       await onRefresh(resolved);
       onNotice({
         tone: "success",
@@ -561,10 +601,11 @@ function StoryReviewChangeCard({
     liveTermValue !== keywordReview.current_keyword_text;
 
   return (
-    <article className="card review-change-card">
+    <article className="card review-change-card" aria-label={termKind ? `${termKind[0].toUpperCase()}${termKind.slice(1)} review` : undefined}>
       <div className="panel-header">
         <div>
-          <h3>{legacyStoryReview ? "Legacy story review item" : reviewHeadline(item)}</h3>
+          <h3>{legacyStoryReview ? "Legacy story review item" : item.status !== "pending" && liveTermValue
+            ? `${tropeReview ? "Trope" : "Keyword"}: ${liveTermValue}` : reviewHeadline(item)}</h3>
           <p className="muted">{item.created_at}</p>
         </div>
         <span className="pill" role="status">{reviewStatusLabel(item)}</span>
@@ -640,14 +681,14 @@ function StoryReviewChangeCard({
       {item.status === "pending" && liveTropeMismatch ? (
         <section className="notice notice-warning">
           <strong className="notice-title">The live story trope no longer matches the recorded contributor change</strong>
-          <p>Edit and approve to keep the current story accurate, or reject if this change should be reverted.</p>
+          <p>Save your edits with Approve, or reject if this change should be reverted.</p>
         </section>
       ) : null}
 
       {item.status === "pending" && liveKeywordMismatch ? (
         <section className="notice notice-warning">
           <strong className="notice-title">The live story keyword no longer matches the recorded contributor change</strong>
-          <p>Edit and approve to keep the current story accurate, or reject if this change should be reverted.</p>
+          <p>Save your edits with Approve, or reject if this change should be reverted.</p>
         </section>
       ) : null}
 
@@ -666,6 +707,19 @@ function StoryReviewChangeCard({
 
           {termKind && canInlineEdit(item) ? (
             <div className="stack">
+              <div className="card subdued">
+                <div className="button-row wrap-row">
+                  <button
+                    className="button"
+                    disabled={mutationDisabled || !editableDraft.trim()}
+                    onClick={() => void handleEditAndApprove(true)}
+                    type="button"
+                  >
+                    {busy ? "Working..." : "Keep as typed"}
+                  </button>
+                </div>
+                <p className="muted">Save the {termKind} text above and approve this change. New text creates new {termKind}s; matching existing items are reused.</p>
+              </div>
               <label className="field">
                 <span>Find similar existing {termKind}s</span>
                 <input className="input" disabled={mutationDisabled} value={similarQuery} placeholder={`Search for an existing ${termKind}`} onChange={(event) => setSimilarQuery(event.target.value)} />
@@ -682,16 +736,11 @@ function StoryReviewChangeCard({
             </div>
           ) : null}
 
-          <label className="field">
-            <span>Resolution note</span>
-            <textarea className="input input-textarea" disabled={mutationDisabled} onChange={(event) => setDecisionNote(event.target.value)} placeholder="Optional admin note" value={decisionNote} />
-          </label>
-
           <div className="button-row wrap-row">
             <button className="button" disabled={mutationDisabled} onClick={() => void handleApprove()} type="button">
               {busy ? "Working..." : "Approve"}
             </button>
-            {canInlineEdit(item) ? (
+            {canInlineEdit(item) && !termKind ? (
               <button className="button button-ghost" disabled={mutationDisabled || storyDetailLoading} onClick={() => void handleEditAndApprove()} type="button">
                 {busy ? "Working..." : "Edit and approve"}
               </button>
@@ -707,341 +756,171 @@ function StoryReviewChangeCard({
   );
 }
 
-function TermReviewPanel({
-  item,
-  onRefresh,
-  onNotice,
-}: {
-  item: ReviewItem;
-  onRefresh: (resolved: ReviewItem) => Promise<void>;
-  onNotice: (notice: PageNotice | null) => void;
-}) {
-  const maintenance = useDatasetMaintenance();
-  const [decisionNote, setDecisionNote] = useState("");
-  const [mergeQuery, setMergeQuery] = useState("");
-  const [mergeResults, setMergeResults] = useState<SearchItem[]>([]);
-  const [mergeSearchStatus, setMergeSearchStatus] = useState<"idle" | "loading" | "ready">("idle");
-  const [mergeTargetId, setMergeTargetId] = useState<string | null>(null);
-  const [removeFromAllStories, setRemoveFromAllStories] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const mutationDisabled = busy || maintenance.active;
-
-  useEffect(() => {
-    setDecisionNote("");
-    setMergeQuery("");
-    setMergeResults([]);
-    setMergeSearchStatus("idle");
-    setMergeTargetId(null);
-    setRemoveFromAllStories(false);
-  }, [item.id]);
-
-  useEffect(() => {
-    if (!isPendingTerm(item)) {
-      setMergeResults([]);
-      setMergeSearchStatus("idle");
-      return;
-    }
-
-    const trimmedQuery = mergeQuery.trim();
-    if (!trimmedQuery) {
-      setMergeResults([]);
-      setMergeSearchStatus("idle");
-      return;
-    }
-
-    let cancelled = false;
-    const timeoutId = window.setTimeout(() => {
-      void (async () => {
-        try {
-          setMergeSearchStatus("loading");
-          const result =
-            item.review_type === "trope_pending"
-              ? await searchTropes({ query: trimmedQuery, limit: 8 })
-              : await searchKeywords({ query: trimmedQuery, limit: 8 });
-          if (cancelled) {
-            return;
-          }
-          setMergeResults(result.items.filter((resultItem) => resultItem.id !== item.subject_id));
-          setMergeSearchStatus("ready");
-        } catch (error) {
-          if (cancelled) {
-            return;
-          }
-          setMergeResults([]);
-          setMergeSearchStatus("ready");
-          onNotice({
-            tone: "error",
-            title: "Could not search merge targets",
-            body: getErrorMessage(error),
-          });
-        }
-      })();
-    }, 250);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timeoutId);
-    };
-  }, [item.id, item.review_type, item.subject_id, mergeQuery, onNotice]);
-
-  async function handleApprove() {
-    try {
-      setBusy(true);
-      onNotice(null);
-      const resolved = await approveReviewItem(item.id, decisionNote);
-      await onRefresh(resolved);
-      onNotice({
-        tone: "success",
-        title: "Review approved",
-        body: `${reviewHeadline(item)} was approved.`,
-      });
-    } catch (error) {
-      onNotice({
-        tone: "error",
-        title: "Could not approve review",
-        body: getErrorMessage(error),
-      });
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleReject() {
-    try {
-      setBusy(true);
-      onNotice(null);
-      const resolved = await rejectReviewItem({
-        review_id: item.id,
-        note: decisionNote,
-        merge_target_id: mergeTargetId,
-        remove_from_all_stories: removeFromAllStories,
-      });
-      await onRefresh(resolved);
-      onNotice({
-        tone: "success",
-        title: "Review rejected",
-        body: `${reviewHeadline(item)} was rejected.`,
-      });
-    } catch (error) {
-      onNotice({
-        tone: "error",
-        title: "Could not reject review",
-        body: getErrorMessage(error),
-      });
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <section className="panel">
-      <div className="panel-header">
-        <div>
-          <h2>{reviewHeadline(item)}</h2>
-          <p className="muted">{reviewSubhead(item)}</p>
-        </div>
-        <span className="pill" role="status">{reviewStatusLabel(item)}</span>
-      </div>
-
-      <div className="field-grid">
-        <article className="card subdued">
-          <span className="stat-label">Created</span>
-          <strong>{item.created_at}</strong>
-          <p className="muted">By {item.created_by_user_id || "unknown user"}</p>
-        </article>
-        <article className="card subdued">
-          <span className="stat-label">Current subject</span>
-          <strong>{item.subject_preview?.text || item.subject_preview?.title || item.subject_id}</strong>
-          {item.subject_preview?.story_count !== undefined ? <p className="muted">{item.subject_preview.story_count} stories</p> : null}
-        </article>
-      </div>
-
-      {item.status === "pending" ? (
-        <div className="page-stack">
-          <label className="field">
-            <span>Resolution note</span>
-            <textarea className="input input-textarea" disabled={mutationDisabled} onChange={(event) => setDecisionNote(event.target.value)} placeholder="Optional admin note" value={decisionNote} />
-          </label>
-
-          {isPendingTerm(item) ? (
-            <article className="card subdued">
-              <div className="stack">
-                <div className="panel-header">
-                  <h3>Reject pending term</h3>
-                </div>
-                <label className="field">
-                  <span>Merge into an approved existing term</span>
-                  <input
-                    className="input"
-                    disabled={mutationDisabled || removeFromAllStories}
-                    onChange={(event) => {
-                      setMergeQuery(event.target.value);
-                      if (!event.target.value.trim()) {
-                        setMergeTargetId(null);
-                      }
-                    }}
-                    placeholder={item.review_type === "trope_pending" ? "Search canonical tropes" : "Search canonical keywords"}
-                    value={mergeQuery}
-                  />
-                </label>
-
-                {mergeQuery.trim() && mergeSearchStatus === "loading" ? <p className="muted">Searching existing terms...</p> : null}
-                {mergeQuery.trim() && mergeSearchStatus === "ready" && mergeResults.length === 0 ? <p className="muted">No merge targets matched the current query.</p> : null}
-
-                {mergeResults.length ? (
-                  <div className="stack">
-                    {mergeResults.map((resultItem) => (
-                      <TermCard
-                        key={resultItem.id}
-                        meta={`${resultItem.story_count} stories`}
-                        term={resultItem}
-                        actions={
-                          <button
-                            className="button button-ghost"
-                            disabled={mutationDisabled}
-                            onClick={() => {
-                              setMergeTargetId(resultItem.id);
-                              setMergeQuery(resultItem.text);
-                              setRemoveFromAllStories(false);
-                            }}
-                            type="button"
-                          >
-                            {mergeTargetId === resultItem.id ? "Selected" : "Use merge target"}
-                          </button>
-                        }
-                      />
-                    ))}
-                  </div>
-                ) : null}
-
-                <label className="checkbox-row">
-                  <input
-                    checked={removeFromAllStories}
-                    disabled={mutationDisabled}
-                    onChange={(event) => {
-                      setRemoveFromAllStories(event.target.checked);
-                      if (event.target.checked) {
-                        setMergeTargetId(null);
-                      }
-                    }}
-                    type="checkbox"
-                  />
-                  <span>Remove this term from all stories and delete it instead of merging</span>
-                </label>
-              </div>
-            </article>
-          ) : null}
-
-          <div className="button-row wrap-row">
-            <button className="button" disabled={mutationDisabled} onClick={() => void handleApprove()} type="button">
-              {busy ? "Working..." : "Approve"}
-            </button>
-            <button className="button button-danger" disabled={mutationDisabled || (isPendingTerm(item) && !mergeTargetId && !removeFromAllStories)} onClick={() => void handleReject()} type="button">
-              {busy ? "Working..." : "Reject"}
-            </button>
-          </div>
-        </div>
-      ) : null}
-
-    </section>
-  );
-}
-
 export function AdminReviewPage() {
+  const maintenance = useDatasetMaintenance();
   const [filterStatus, setFilterStatus] = useState<ReviewStatus | "all">("pending");
+  const [stories, setStories] = useState<ReviewStory[]>([]);
   const [items, setItems] = useState<ReviewItem[]>([]);
-  const [selectedSelectionId, setSelectedSelectionId] = useState<string | null>(null);
+  const [selectedStoryId, setSelectedStoryId] = useState<string | null>(null);
   const [storyDetail, setStoryDetail] = useState<StoryDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [storyDetailLoading, setStoryDetailLoading] = useState(false);
+  const [mutationBusy, setMutationBusy] = useState(false);
   const [notice, setNotice] = useState<PageNotice | null>(null);
+  const storyRequestId = useRef(0);
+  const queueRequestId = useRef(0);
 
-  const selections = buildReviewSelections(items);
-  const selectedSelection = selections.find((selection) => selection.id === selectedSelectionId) || null;
+  const selectedStory = stories.find((story) => story.story_id === selectedStoryId) || null;
+  const currentStory = storyDetail?.id === selectedStoryId ? storyDetail : null;
+  const currentItems = currentStory ? items : [];
 
-  async function loadItems(preferredSelectionId?: string | null) {
+  async function loadStories(preferredStoryId?: string | null) {
+    const requestId = ++queueRequestId.current;
     try {
       setLoading(true);
-      const nextItems = await getReviewItems({ status: filterStatus, limit: 200 });
-      setItems(nextItems);
-      const nextSelections = buildReviewSelections(nextItems);
-      const nextSelectionId =
-        preferredSelectionId && nextSelections.some((selection) => selection.id === preferredSelectionId)
-          ? preferredSelectionId
-          : nextSelections[0]?.id || null;
-      setSelectedSelectionId(nextSelectionId);
-      return nextSelectionId;
+      const nextStories = await getReviewStories(filterStatus);
+      if (requestId !== queueRequestId.current) return null;
+      setStories(nextStories);
+      const nextStoryId = preferredStoryId && nextStories.some((story) => story.story_id === preferredStoryId)
+        ? preferredStoryId : nextStories[0]?.story_id || null;
+      setSelectedStoryId(nextStoryId);
+      return nextStoryId;
     } catch (error) {
-      setNotice({
-        tone: "error",
-        title: "Could not load review queue",
-        body: getErrorMessage(error),
-      });
+      if (requestId !== queueRequestId.current) return null;
+      setNotice({ tone: "error", title: "Could not load review queue", body: getErrorMessage(error) });
       return null;
     } finally {
-      setLoading(false);
+      if (requestId === queueRequestId.current) setLoading(false);
     }
   }
 
-  async function loadStoryDetail(storyId: string) {
+  async function loadStoryDetail(storyId: string, refreshReviews = true) {
+    const requestId = ++storyRequestId.current;
     try {
       setStoryDetailLoading(true);
-      const detail = await getStory(storyId);
+      const [detail, storyReviews] = await Promise.all([
+        getStory(storyId),
+        refreshReviews ? getStoryReviewItems(storyId, filterStatus) : Promise.resolve(null),
+      ]);
+      if (requestId !== storyRequestId.current) return null;
       setStoryDetail(detail);
+      if (storyReviews) setItems(storyReviews.sort(compareStoryItems));
+      setStories((current) => current.map((story) => story.story_id === storyId ? {
+        ...story, title: detail.fields["Story title (Eng)"] || "Untitled story",
+        ...(storyReviews ? {
+          item_count: storyReviews.length,
+          pending_count: storyReviews.filter((item) => item.status === "pending").length,
+        } : {}),
+      } : story));
       return detail;
     } catch (error) {
-      setNotice({
-        tone: "error",
-        title: "Could not load story context",
-        body: getErrorMessage(error),
-      });
+      if (requestId !== storyRequestId.current) return null;
+      setNotice({ tone: "error", title: "Could not load story context", body: getErrorMessage(error) });
       setStoryDetail(null);
       return null;
     } finally {
-      setStoryDetailLoading(false);
+      if (requestId === storyRequestId.current) setStoryDetailLoading(false);
     }
   }
 
-  async function refresh(preferredSelectionId?: string | null) {
-    const nextSelectionId = await loadItems(preferredSelectionId ?? selectedSelectionId);
-    if (!nextSelectionId) {
+  async function refresh() {
+    setNotice(null);
+    const nextStoryId = await loadStories(selectedStoryId);
+    if (!nextStoryId) {
       setStoryDetail(null);
-    } else if (selectedSelection?.kind === "story" && nextSelectionId === selectedSelection.id) {
-      await loadStoryDetail(selectedSelection.story_id);
+      setItems([]);
+    } else if (nextStoryId === selectedStoryId) {
+      await loadStoryDetail(nextStoryId);
     }
   }
 
   useEffect(() => {
+    storyRequestId.current += 1;
+    setStoryDetail(null);
+    setItems([]);
     void refresh();
+    return () => { queueRequestId.current += 1; storyRequestId.current += 1; };
   }, [filterStatus]);
 
   useEffect(() => {
-    if (!selectedSelection || selectedSelection.kind !== "story") {
-      setStoryDetail(null);
+    setStoryDetail(null);
+    setItems([]);
+    if (!selectedStoryId) {
+      setStoryDetailLoading(false);
       return;
     }
-    void loadStoryDetail(selectedSelection.story_id);
-  }, [selectedSelection?.id]);
+    void loadStoryDetail(selectedStoryId);
+    return () => { storyRequestId.current += 1; };
+  }, [selectedStoryId]);
 
-  function selectionTitle(selection: ReviewSelection): string {
-    if (selection.kind === "story") {
-      return selection.title;
-    }
-    return reviewHeadline(selection.item);
+  async function refreshReviewItem(resolved: ReviewItem) {
+    await refreshResolvedItems([resolved]);
   }
 
-  function selectionSubhead(selection: ReviewSelection): string {
-    if (selection.kind === "story") {
-      return `${selection.items.length} change${selection.items.length === 1 ? "" : "s"} · Source row ${selection.source_row_number ?? "n/a"}`;
-    }
-    return reviewSubhead(selection.item);
+  async function refreshResolvedItems(resolved: ReviewItem[]) {
+    if (!selectedStory) return;
+    // Reload related decisions too: saving one term can resolve its catalogue review.
+    const [detail, nextStories, allReviews] = await Promise.all([
+      loadStoryDetail(selectedStory.story_id, false),
+      getReviewStories(filterStatus),
+      getStoryReviewItems(selectedStory.story_id, "all"),
+    ]);
+    const visibleIds = new Set([...items, ...resolved].map((item) => item.id));
+    const nextItems = allReviews.filter((item) => filterStatus === "all" || item.status === filterStatus || visibleIds.has(item.id))
+      .sort(compareStoryItems);
+    setItems(nextItems);
+    const updatedStory = {
+      ...selectedStory,
+      title: detail ? detail.fields["Story title (Eng)"] || "Untitled story" : selectedStory.title,
+      item_count: nextItems.length,
+      pending_count: nextItems.filter((item) => item.status === "pending").length,
+    };
+    // Keep the completed story visible until the admin chooses another story or refreshes.
+    setStories(nextStories.some((story) => story.story_id === updatedStory.story_id)
+      ? nextStories.map((story) => story.story_id === updatedStory.story_id ? updatedStory : story)
+      : [updatedStory, ...nextStories]);
   }
 
-  async function refreshSelectedSelection(resolved: ReviewItem) {
-    // Keep the completed card visible so the admin can see the outcome immediately.
-    setItems((current) => current.map((item) => item.id === resolved.id ? resolved : item));
-    if (selectedSelection?.kind === "story") {
-      await loadStoryDetail(selectedSelection.story_id);
+  async function handleAddStoryItem(kind: StoryItemKind, input: StoryItemInput): Promise<boolean> {
+    if (mutationBusy || loading || storyDetailLoading || maintenance.active || !storyDetail ||
+        !selectedStory || storyDetail.id !== selectedStory.story_id) {
+      return false;
+    }
+    setMutationBusy(true);
+    setNotice(null);
+    const storyId = storyDetail.id;
+    try {
+      const payload = { expected_story_version: storyDetail.version };
+      if (kind === "theme") {
+        await addStoryTheme(storyId, { ...payload, ...("id" in input ? { theme_id: input.id } : input) });
+      } else if (kind === "trope") {
+        await addStoryTrope(storyId, { ...payload, ...("id" in input ? { trope_id: input.id } : input) });
+      } else {
+        await addStoryKeyword(storyId, { ...payload, ...("id" in input ? { keyword_id: input.id } : input) });
+      }
+      const refreshed = await loadStoryDetail(storyId);
+      setNotice({
+        tone: refreshed ? "success" : "error",
+        title: `${kind[0].toUpperCase()}${kind.slice(1)} added`,
+        body: refreshed ? "The story now includes the item." : "The item was saved, but the story could not be reloaded. Refresh to see the latest version.",
+      });
+      return true;
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        const refreshed = await loadStoryDetail(storyId);
+        setNotice({
+          tone: "error",
+          title: "Story updated elsewhere",
+          body: refreshed
+            ? "The latest story has been reloaded. Review its items and try again."
+            : "The latest story could not be reloaded. Refresh before trying again.",
+        });
+      } else {
+        setNotice({ tone: "error", title: `Could not add ${kind}`, body: getErrorMessage(error) });
+      }
+      return false;
+    } finally {
+      setMutationBusy(false);
     }
   }
 
@@ -1051,19 +930,19 @@ export function AdminReviewPage() {
         <div className="panel-header">
           <div>
             <h1>Review queue</h1>
-            <p className="muted">Choose a story on the left, then review each contributor change separately on the right.</p>
+            <p className="muted">Choose a story to review its data, themes, tropes and keywords. Approve or reject its data together; review its terms separately.</p>
           </div>
           <div className="button-row wrap-row">
             <label className="field">
               <span>Status</span>
-              <select className="input" onChange={(event) => setFilterStatus(event.target.value as ReviewStatus | "all")} value={filterStatus}>
+              <select className="input" disabled={loading || mutationBusy} onChange={(event) => setFilterStatus(event.target.value as ReviewStatus | "all")} value={filterStatus}>
                 <option value="pending">Pending</option>
                 <option value="approved">Approved</option>
                 <option value="rejected">Rejected</option>
                 <option value="all">All</option>
               </select>
             </label>
-            <button className="button button-ghost" disabled={loading || storyDetailLoading} onClick={() => void refresh()} type="button">
+            <button className="button button-ghost" disabled={loading || storyDetailLoading || mutationBusy} onClick={() => void refresh()} type="button">
               Refresh
             </button>
           </div>
@@ -1081,49 +960,44 @@ export function AdminReviewPage() {
         <aside className="panel">
           <div className="panel-header">
             <h2>Stories</h2>
-            <span className="pill">{selections.length}</span>
+            <span className="pill">{stories.length}</span>
           </div>
           <div className="list">
-            {loading ? <p className="muted">Loading review targets...</p> : null}
-            {!loading && selections.length === 0 ? <p className="muted">No review items match this filter.</p> : null}
-            {selections.map((selection) => (
+            {loading ? <p className="muted">Loading stories...</p> : null}
+            {!loading && stories.length === 0 ? <p className="muted">No stories match this filter.</p> : null}
+            {stories.map((story) => (
               <button
-                className={`list-row ${selection.id === selectedSelectionId ? "list-row-active" : ""}`}
-                key={selection.id}
-                onClick={() => setSelectedSelectionId(selection.id)}
+                className={`list-row ${story.story_id === selectedStoryId ? "list-row-active" : ""}`}
+                disabled={loading || mutationBusy}
+                key={story.story_id}
+                onClick={() => { setNotice(null); setSelectedStoryId(story.story_id); }}
                 type="button"
               >
-                <strong>{selectionTitle(selection)}</strong>
-                <span className="muted">{selectionSubhead(selection)}</span>
-                {selection.kind === "story" ? (
-                  <span className="muted">
-                    {selection.pending_count} pending · {selection.items.length - selection.pending_count} resolved
-                  </span>
-                ) : (
-                  <span className="muted">{reviewStatusLabel(selection.item)}</span>
-                )}
+                <strong>{story.title}</strong>
+                <span className="muted">{story.item_count} review{story.item_count === 1 ? "" : "s"} · Source row {story.source_row_number ?? "n/a"}</span>
+                <span className="muted">{story.pending_count} pending · {story.item_count - story.pending_count} resolved</span>
               </button>
             ))}
           </div>
         </aside>
 
         <div className="page-stack">
-          {!selectedSelection ? (
+          {!selectedStory ? (
             <section className="panel">
-              <p className="muted">Choose a story or pending canonical term to inspect it.</p>
+              <p className="muted">Choose a story to review all its items.</p>
             </section>
           ) : null}
 
-          {selectedSelection?.kind === "story" ? (
+          {selectedStory ? (
             <section className="panel">
               <div className="panel-header">
                 <div>
-                  <h2>{selectedSelection.title}</h2>
+                  <h2>{selectedStory.title}</h2>
                   <p className="muted">
-                    Source row {selectedSelection.source_row_number ?? "n/a"} · {selectedSelection.items.length} change{selectedSelection.items.length === 1 ? "" : "s"}
+                    Source row {selectedStory.source_row_number ?? "n/a"} · {currentItems.length} review{currentItems.length === 1 ? "" : "s"}
                   </p>
                 </div>
-                <span className="pill">{selectedSelection.pending_count} pending</span>
+                <span className="pill">{selectedStory.pending_count} pending</span>
               </div>
 
               {storyDetailLoading ? <p className="muted">Loading current story context...</p> : null}
@@ -1131,34 +1005,50 @@ export function AdminReviewPage() {
               <div className="field-grid">
                 <article className="card subdued">
                   <span className="stat-label">Story</span>
-                  <strong>{selectedSelection.title}</strong>
-                  <p className="muted">{selectedSelection.story_id}</p>
+                  <strong>{selectedStory.title}</strong>
+                  <p className="muted">{selectedStory.story_id}</p>
                 </article>
                 <article className="card subdued">
                   <span className="stat-label">Current story version</span>
-                  <strong>{storyDetail?.version ?? "Loading..."}</strong>
+                  <strong>{storyDetail?.id === selectedStory.story_id ? storyDetail.version : "Loading..."}</strong>
                   <p className="muted">Latest saved story state</p>
                 </article>
               </div>
 
+              <StoryReviewItemAdder
+                key={selectedStory.story_id}
+                story={currentStory}
+                disabled={loading || storyDetailLoading || mutationBusy || maintenance.active}
+                onAdd={handleAddStoryItem}
+              />
+
+              <StoryDataReviewCard
+                key={`data:${selectedStory.story_id}`}
+                items={currentItems}
+                story={currentStory}
+                disabled={loading || storyDetailLoading || mutationBusy || maintenance.active}
+                onBusyChange={setMutationBusy}
+                onResolved={refreshResolvedItems}
+                onNotice={setNotice}
+              />
+
               <div className="page-stack">
-                {selectedSelection.items.map((item) => (
+                {currentItems.filter((item) => item.status !== "pending" || !isStoryDataReview(item)).map((item) => (
                   <StoryReviewChangeCard
                     item={item}
                     key={item.id}
-                    storyDetail={storyDetail?.id === selectedSelection.story_id ? storyDetail : null}
+                    storyDetail={currentStory}
                     storyDetailLoading={storyDetailLoading}
+                    busy={mutationBusy || loading}
+                    onBusyChange={setMutationBusy}
                     onNotice={setNotice}
-                    onRefresh={refreshSelectedSelection}
+                    onRefresh={refreshReviewItem}
                   />
                 ))}
               </div>
             </section>
           ) : null}
 
-          {selectedSelection?.kind === "term" ? (
-            <TermReviewPanel item={selectedSelection.item} onNotice={setNotice} onRefresh={refreshSelectedSelection} />
-          ) : null}
         </div>
       </section>
     </div>

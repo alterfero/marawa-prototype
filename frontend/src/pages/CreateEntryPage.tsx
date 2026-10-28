@@ -28,6 +28,7 @@ import { TermCard } from "../components/TermCard";
 import { TropeCard } from "../components/TropeCard";
 import { buildBlankStoryFields, DATE_OF_RECORDING_FIELD, LEGACY_METADATA_SECTIONS, normalizeDraftText, splitThemeText, THEME_FIELD, TROPE_FIELD } from "../constants/csv";
 import type { CreateStoryResponse, DatasetStatus, SearchItem, StoryDetail, TropeReference } from "../api/types";
+import { clearEntryDraftRecovery, readEntryDraftRecovery, writeEntryDraftRecovery, type EntryDraftRecovery } from "../entryDraftRecovery";
 import { useDatasetMaintenance } from "../maintenance";
 import { routeHref, useHashSearch } from "../router";
 
@@ -38,16 +39,6 @@ interface PageNotice {
 }
 
 type DraftTerm = TropeReference;
-
-interface EntryDraftRecovery {
-  version: 1;
-  storyId: string | null;
-  fields: Record<string, string>;
-  tropes: string[];
-  keywords: string[];
-}
-
-const ENTRY_DRAFT_RECOVERY_KEY = "marawa:create-entry-draft:v1";
 
 function sameFields(left: Record<string, string>, right: Record<string, string>): boolean {
   const fields = new Set([...Object.keys(left), ...Object.keys(right)]);
@@ -61,57 +52,6 @@ function sameTerms(left: readonly { text: string }[], right: readonly { text: st
   const leftTerms = normalizeTerms(left);
   const rightTerms = normalizeTerms(right);
   return leftTerms.length === rightTerms.length && leftTerms.every((term, index) => term === rightTerms[index]);
-}
-
-function isStringRecord(value: unknown): value is Record<string, string> {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value) &&
-    Object.values(value).every((item) => typeof item === "string")
-  );
-}
-
-function isEntryDraftRecovery(value: unknown): value is EntryDraftRecovery {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-
-  const draft = value as Record<string, unknown>;
-  return (
-    draft.version === 1 &&
-    (typeof draft.storyId === "string" || draft.storyId === null) &&
-    isStringRecord(draft.fields) &&
-    Array.isArray(draft.tropes) &&
-    draft.tropes.every((term) => typeof term === "string") &&
-    Array.isArray(draft.keywords) &&
-    draft.keywords.every((term) => typeof term === "string")
-  );
-}
-
-function readEntryDraftRecovery(): EntryDraftRecovery | null {
-  try {
-    const storedValue: unknown = JSON.parse(window.sessionStorage.getItem(ENTRY_DRAFT_RECOVERY_KEY) || "null");
-    return isEntryDraftRecovery(storedValue) ? storedValue : null;
-  } catch {
-    return null;
-  }
-}
-
-function writeEntryDraftRecovery(draft: EntryDraftRecovery): void {
-  try {
-    window.sessionStorage.setItem(ENTRY_DRAFT_RECOVERY_KEY, JSON.stringify(draft));
-  } catch {
-    // Draft recovery is optional and must never prevent data entry.
-  }
-}
-
-function clearEntryDraftRecovery(): void {
-  try {
-    window.sessionStorage.removeItem(ENTRY_DRAFT_RECOVERY_KEY);
-  } catch {
-    // Draft recovery is optional and must never prevent data entry.
-  }
 }
 
 function recoveryTerms(terms: readonly string[], kind: "trope" | "keyword"): DraftTerm[] {

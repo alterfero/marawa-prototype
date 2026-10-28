@@ -9,6 +9,7 @@ import {
   redeemAuthToken,
 } from "./api/client";
 import type { CurrentUser, UserRole } from "./api/types";
+import { clearEntryDraftRecovery } from "./entryDraftRecovery";
 
 type AuthStatus = "loading" | "anonymous" | "authenticated";
 
@@ -72,6 +73,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function login(payload: { email: string; password: string }): Promise<CurrentUser> {
     const session = await loginRequest(payload);
+    // Browser session storage survives sign-out; drafts belong to one login session.
+    clearEntryDraftRecovery();
     setUser(session.user);
     setStatus("authenticated");
     setErrorMessage(null);
@@ -82,6 +85,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       await logoutRequest();
     } finally {
+      clearEntryDraftRecovery();
       clearCsrfToken();
       setUser(null);
       setStatus("anonymous");
@@ -94,6 +98,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     display_name?: string;
   }): Promise<CurrentUser> {
     const session = await redeemAuthToken(payload);
+    clearEntryDraftRecovery();
     setUser(session.user);
     setStatus("authenticated");
     setErrorMessage(null);

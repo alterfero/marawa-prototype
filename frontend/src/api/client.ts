@@ -43,6 +43,7 @@ import type {
   PasswordResetResponse,
   ReviewItem,
   ReviewStatus,
+  ReviewStory,
   StoryCompleteness,
   StoryDetail,
   StoryKeywordMutationResponse,
@@ -1071,6 +1072,38 @@ export function getReviewItems(payload?: {
 
 export function getReviewItem(reviewId: string): Promise<ReviewItem> {
   return request<ReviewItem>(`/review/items/${reviewId}`);
+}
+
+export function getReviewStories(status: ReviewStatus | "all", limit = 200): Promise<ReviewStory[]> {
+  return request<ReviewStory[]>(`/review/stories?status=${status}&limit=${limit}`);
+}
+
+export function getStoryReviewItems(storyId: string, status: ReviewStatus | "all"): Promise<ReviewItem[]> {
+  return request<ReviewItem[]>(`/review/stories/${storyId}/items?status=${status}`);
+}
+
+export function resolveStoryDataReview(storyId: string, decision: "approve" | "reject", payload: {
+  expected_story_version: number;
+  review_ids: string[];
+  fields?: Record<string, string>;
+  note?: string;
+}): Promise<ReviewItem[]> {
+  return request<ReviewItem[]>(`/review/stories/${storyId}/${decision}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function resolveStoryTermReview(storyId: string, reviewId: string, decision: "approve" | "reject", payload: {
+  expected_story_version: number;
+  edit?: { text: string; existing_term_id?: string };
+}): Promise<ReviewItem> {
+  return request<ReviewItem>(`/review/stories/${storyId}/items/${reviewId}/${decision}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
 }
 
 export function approveReviewItem(reviewId: string, note?: string, edited = false, expectedStoryVersion?: number, edit?: { text: string; existing_term_id?: string }): Promise<ReviewItem> {
