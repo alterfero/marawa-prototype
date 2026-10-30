@@ -153,10 +153,10 @@ Use the production maintenance window to:
 
 ## Exploration UX
 
-- Non-admin users use the public single-trope exploration workflow: search for one trope, select it, and inspect original plus related stories on the map.
+- Exploration defaults to the simple single-trope workflow: search for one trope, select it, and inspect original plus related stories on the map.
 - Matched tropes in individual marker pop-ins are links in this workflow. Selecting one rebuilds the map around that trope while keeping the current similarity threshold.
-- Admin users use exploration filter sets instead of the public single-trope card.
-- Each admin filter set can combine:
+- Admins and contributors can use the Simple/Expert switch at the top of Exploration to choose between single-trope exploration and expert filter sets. Guests and anonymous users use the simple interface.
+- Each expert filter set can combine:
   - a sentence-based vectorized trope search;
   - one or more selected tropes, including a bulk `Select all tropes` action on the current suggestion list;
   - optional hard story-field filters.

@@ -1667,6 +1667,8 @@ export function ExplorationPage() {
   const nextFilterIdRef = useRef(1);
   const nextSemanticFilterIdRef = useRef(2);
   const nextSetIdRef = useRef(2);
+  const networkRequestIdRef = useRef(0);
+  const [interfaceMode, setInterfaceMode] = useState<"simple" | "expert">("simple");
   const [query, setQuery] = useState("");
   const [selectedTropeId, setSelectedTropeId] = useState<string | null>(null);
   const [selectedTropePreview, setSelectedTropePreview] = useState<string | null>(null);
@@ -1679,7 +1681,8 @@ export function ExplorationPage() {
   const [error, setError] = useState<string | null>(null);
   const [resultMode, setResultMode] = useState<"idle" | "candidate_search" | "map">("idle");
   const selectedTropeParam = new URLSearchParams(hashSearch).get("selected_trope_id");
-  const canUseFilterSets = roleAtLeast(user?.role, "admin");
+  const canChooseInterface = roleAtLeast(user?.role, "contributor");
+  const canUseFilterSets = canChooseInterface && interfaceMode === "expert";
   const canUseSingleTropeExploration = !canUseFilterSets;
 
   const hasPendingFilterChanges = filterSets.some(filterSetHasPendingChanges);
@@ -1709,6 +1712,7 @@ export function ExplorationPage() {
     }>;
     min_similarity?: number;
   }) {
+    const requestId = ++networkRequestIdRef.current;
     try {
       setBusy(true);
       setError(null);
@@ -1718,13 +1722,31 @@ export function ExplorationPage() {
         related_limit: 20,
         candidate_limit: 12,
       });
-      setNetwork(normalizeExplorationNetworkResponse(result));
+      if (requestId === networkRequestIdRef.current) {
+        setNetwork(normalizeExplorationNetworkResponse(result));
+      }
     } catch (caughtError) {
-      setError(getErrorMessage(caughtError));
+      if (requestId === networkRequestIdRef.current) {
+        setError(getErrorMessage(caughtError));
+      }
     } finally {
-      setBusy(false);
+      if (requestId === networkRequestIdRef.current) {
+        setBusy(false);
+      }
     }
   }
+
+  useEffect(() => {
+    setNetwork(null);
+    setError(null);
+    setBusy(false);
+    setResultMode("idle");
+
+    return () => {
+      // Ignore results from the previous interface, including requests still in flight.
+      networkRequestIdRef.current += 1;
+    };
+  }, [canUseFilterSets]);
 
   useEffect(() => {
     if (canUseFilterSets) {
@@ -1742,7 +1764,7 @@ export function ExplorationPage() {
 
   useEffect(() => {
     if (!canUseFilterSets) {
-      setStories([]);
+      setStoriesLoading(false);
       return;
     }
 
@@ -2104,6 +2126,31 @@ export function ExplorationPage() {
 
   return (
     <div className="page-stack">
+      {canChooseInterface ? (
+        <section className="panel">
+          <div className="card-row">
+            <strong>Exploration interface</strong>
+            <div aria-label="Exploration interface" className="similarity-scope-switch" role="group">
+              <button
+                aria-pressed={!canUseFilterSets}
+                className={!canUseFilterSets ? "similarity-scope-switch-option-active" : undefined}
+                onClick={() => setInterfaceMode("simple")}
+                type="button"
+              >
+                Simple
+              </button>
+              <button
+                aria-pressed={canUseFilterSets}
+                className={canUseFilterSets ? "similarity-scope-switch-option-active" : undefined}
+                onClick={() => setInterfaceMode("expert")}
+                type="button"
+              >
+                Expert
+              </button>
+            </div>
+          </div>
+        </section>
+      ) : null}
       {canUseSingleTropeExploration ? (
         <section className="panel">
           <div className="panel-header">
