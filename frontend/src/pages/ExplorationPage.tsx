@@ -272,6 +272,22 @@ function escapeHtml(value: string): string {
     .replace(/'/g, "&#39;");
 }
 
+function originalStoryLinkHtml(marker: ExplorationMarker): string {
+  const value = marker.original_story_url?.trim();
+  if (!value || !/^https?:\/\//i.test(value) || /\s/.test(value)) {
+    return "";
+  }
+  try {
+    const url = new URL(value);
+    if (!["http:", "https:"].includes(url.protocol) || !url.hostname) {
+      return "";
+    }
+    return `<a href="${escapeHtml(url.href)}" target="_blank" rel="noopener noreferrer">Open original story</a>`;
+  } catch {
+    return "";
+  }
+}
+
 function markerPopupHtml(marker: ExplorationMarker, canSelectTrope: boolean): string {
   const matchedTropes = marker.matched_tropes.length
     ? marker.matched_tropes
@@ -294,6 +310,7 @@ function markerPopupHtml(marker: ExplorationMarker, canSelectTrope: boolean): st
       ${filterSetLabel}
       <p class="muted">${escapeHtml(formatCoordinateLabel(marker))}</p>
       <p>${escapeHtml(marker.abstract || "No abstract available.")}</p>
+      ${originalStoryLinkHtml(marker)}
       <div class="stack">
         <strong>Matched tropes</strong>
         <div class="tag-list">${matchedTropes}</div>
@@ -306,10 +323,10 @@ function markerBundlePopupHtml(markers: VisibleExplorationMarker[]): string {
   const visibleMarkers = markers.slice(0, 20);
   const remainingLabel = markers.length > visibleMarkers.length ? `<p class="muted">+${markers.length - visibleMarkers.length} more stories</p>` : "";
   const storyItems = visibleMarkers
-    .map(
-      (marker) =>
-        `<li><strong>${escapeHtml(marker.title)}</strong><br /><span class="muted">${escapeHtml(formatCoordinateLabel(marker))}</span></li>`,
-    )
+    .map((marker) => {
+      const originalStoryLink = originalStoryLinkHtml(marker);
+      return `<li><strong>${escapeHtml(marker.title)}</strong><br /><span class="muted">${escapeHtml(formatCoordinateLabel(marker))}</span>${originalStoryLink ? `<br />${originalStoryLink}` : ""}</li>`;
+    })
     .join("");
 
   return `
@@ -510,7 +527,8 @@ function getMapLegendItems(
   return [
     { color: ORIGINAL_DENSITY_COLOR, label: "Original markers", symbol: "dot" },
     { color: RELATED_DENSITY_COLOR, label: "Related markers", symbol: "dot" },
-    { color: "#5b6d72", label: "Closest connection", symbol: "line" },
+    { color: ORIGINAL_DENSITY_COLOR, label: "Original-to-original connections", symbol: "line" },
+    { color: RELATED_DENSITY_COLOR, label: "Similar-to-original connections", symbol: "line" },
   ];
 }
 

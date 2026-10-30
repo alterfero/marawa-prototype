@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -881,25 +880,19 @@ def _selected_trope_story_map_response(
 
     locatable_originals = [marker for marker in original_markers if marker["has_location"] and marker["coordinates"] is not None]
     connections = []
-    if locatable_originals:
-        for marker in related_markers:
-            if not marker["has_location"] or marker["coordinates"] is None:
-                continue
-            nearest = min(
-                locatable_originals,
-                key=lambda original: _great_circle_distance(
-                    tuple(original["coordinates"]),
-                    tuple(marker["coordinates"]),
-                ),
-            )
+    locatable_related = [marker for marker in related_markers if marker["has_location"] and marker["coordinates"] is not None]
+    for index, source in enumerate(locatable_originals):
+        # Each original pair appears once; every related story connects to every original.
+        for target in locatable_originals[index + 1:] + locatable_related:
+            line_rgb = RED_RGB if target["kind"] == "original" else BLUE_RGB
             connections.append(
                 {
-                    "source_story_id": nearest["story_id"],
-                    "target_story_id": marker["story_id"],
-                    "source_coordinates": nearest["coordinates"],
-                    "target_coordinates": marker["coordinates"],
-                    "similarity": marker["similarity"],
-                    "color": connection_color or marker["color"],
+                    "source_story_id": source["story_id"],
+                    "target_story_id": target["story_id"],
+                    "source_coordinates": source["coordinates"],
+                    "target_coordinates": target["coordinates"],
+                    "similarity": target["similarity"],
+                    "color": connection_color or f"#{line_rgb[0]:02x}{line_rgb[1]:02x}{line_rgb[2]:02x}",
                     "filter_set_id": filter_set_id,
                     "filter_set_label": filter_set_label,
                 }
@@ -996,15 +989,6 @@ def _lighten_hex_color(color: str, *, amount: float = 0.35) -> str:
     return f"#{adjusted[0]:02x}{adjusted[1]:02x}{adjusted[2]:02x}"
 
 
-def _great_circle_distance(a: tuple[float, float], b: tuple[float, float]) -> float:
-    lat1, lon1 = map(math.radians, a)
-    lat2, lon2 = map(math.radians, b)
-    dlat = lat2 - lat1
-    dlon = lon2 - lon1
-    arc = math.sin(dlat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2) ** 2
-    return 2 * 6371 * math.asin(min(1.0, math.sqrt(arc)))
-
-
 def _marker_payload(
     *,
     entry: StoryEntry,
@@ -1037,6 +1021,7 @@ def _marker_payload(
         "title": entry_title(entry),
         "hover_title": english_story_title(entry),
         "abstract": primary_abstract(entry),
+        "original_story_url": entry.fields.get("URL ?", "").strip() or None,
         "has_location": has_location,
         "filter_set_id": filter_set_id,
         "filter_set_label": filter_set_label,

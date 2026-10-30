@@ -510,6 +510,7 @@ export interface ExplorationMarker {
   title: string;
   hover_title: string;
   abstract: string;
+  original_story_url?: string | null;
   has_location: boolean;
   filter_set_id?: string | null;
   filter_set_label?: string | null;

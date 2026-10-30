@@ -30,6 +30,7 @@ def make_row(
     entered_by: str = "",
     territory: str = "",
     themes: str = "",
+    url: str = "",
 ) -> dict[str, str]:
     row = {column: "" for column in CSV_COLUMNS}
     row["Story title (Eng)"] = title
@@ -41,6 +42,7 @@ def make_row(
     row["Entered by"] = entered_by
     row["territory"] = territory
     row[THEME_FIELD] = themes
+    row["URL ?"] = url
     return row
 
 
@@ -140,10 +142,10 @@ def test_exploration_network_builds_markers_connections_and_bounds(monkeypatch, 
         upload_dataset(
             client,
             [
-                make_row(title="Original A", tropes="§§ first trope", coord="-20.0, 165.0", abstract="Original abstract"),
+                make_row(title="Original A", tropes="§§ first trope", coord="-20.0, 165.0", abstract="Original abstract", url="https://example.org/story?a=1&b=2"),
                 make_row(title="Original Missing", tropes="§§ first trope", coord="unknown", summary="Fallback summary"),
                 make_row(title="Overlap", tropes="§§ first trope\n§§ first trope variant", coord="-19.5, 165.5"),
-                make_row(title="Related A", tropes="§§ first trope variant", coord="≈ 16.0° S, 168.4° E"),
+                make_row(title="Related A", tropes="§§ first trope variant", coord="≈ 16.0° S, 168.4° E", url="https://example.org/related"),
                 make_row(title="Related B", tropes="§§ first trope variant\n§§ first echo trope", coord="22.2994° ; 166.7483°"),
                 make_row(title="Related Missing", tropes="§§ first echo trope", coord="missing"),
             ],
@@ -172,16 +174,21 @@ def test_exploration_network_builds_markers_connections_and_bounds(monkeypatch, 
 
     assert len(body["original_markers"]) == 3
     assert body["missing_original_coords"] == 1
+    original_a = next(item for item in body["original_markers"] if item["title"] == "Original A")
+    assert original_a["original_story_url"] == "https://example.org/story?a=1&b=2"
     original_missing = next(item for item in body["original_markers"] if item["title"] == "Original Missing")
     assert original_missing["has_location"] is False
     assert original_missing["coordinates"] is None
     assert original_missing["abstract"] == "Fallback summary"
+    assert original_missing["original_story_url"] is None
     overlap_original = next(item for item in body["original_markers"] if item["title"] == "Overlap")
     assert [item["text"] for item in overlap_original["story_tropes"]] == ["first trope", "first trope variant"]
     assert [item["story_count"] for item in overlap_original["story_tropes"]] == [3, 3]
 
     assert len(body["related_markers"]) == 3
     assert body["missing_related_coords"] == 1
+    related_a = next(item for item in body["related_markers"] if item["title"] == "Related A")
+    assert related_a["original_story_url"] == "https://example.org/related"
     related_b = next(item for item in body["related_markers"] if item["title"] == "Related B")
     assert [item["text"] for item in related_b["matched_tropes"]] == ["first echo trope", "first trope variant"]
     assert [item["story_count"] for item in related_b["matched_tropes"]] == [2, 3]
@@ -195,7 +202,27 @@ def test_exploration_network_builds_markers_connections_and_bounds(monkeypatch, 
     overlap_story_id = next(item["id"] for item in stories if item["title"] == "Overlap")
     assert overlap_story_id not in visible_related_ids
 
-    assert len(body["connections"]) == 2
+    originals = [item for item in body["original_markers"] if item["has_location"]]
+    related = [item for item in body["related_markers"] if item["has_location"]]
+    expected_pairs = {
+        (source["story_id"], target["story_id"]): "#d7263d"
+        for index, source in enumerate(originals)
+        for target in originals[index + 1:]
+    }
+    expected_pairs.update({
+        (source["story_id"], target["story_id"]): "#2c7bb6"
+        for source in originals
+        for target in related
+    })
+    assert len(body["connections"]) == 5
+    assert {
+        (item["source_story_id"], item["target_story_id"]): item["color"]
+        for item in body["connections"]
+    } == expected_pairs
+    markers_by_id = {item["story_id"]: item for item in originals + related}
+    for connection in body["connections"]:
+        assert connection["source_coordinates"] == markers_by_id[connection["source_story_id"]]["coordinates"]
+        assert connection["target_coordinates"] == markers_by_id[connection["target_story_id"]]["coordinates"]
     assert body["bounds"] is not None
 
 

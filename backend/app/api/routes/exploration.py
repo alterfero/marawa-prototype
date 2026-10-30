@@ -50,6 +50,7 @@ class ExplorationMarkerResponse(BaseModel):
     title: str
     hover_title: str
     abstract: str
+    original_story_url: str | None = None
     has_location: bool
     filter_set_id: str | None = None
     filter_set_label: str | None = None
