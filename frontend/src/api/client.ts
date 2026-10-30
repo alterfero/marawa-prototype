@@ -1098,6 +1098,8 @@ export function resolveStoryDataReview(storyId: string, decision: "approve" | "r
 export function resolveStoryTermReview(storyId: string, reviewId: string, decision: "approve" | "reject", payload: {
   expected_story_version: number;
   edit?: { text: string; existing_term_id?: string };
+  existing_trope_ids?: string[];
+  keep_proposed_trope?: boolean;
 }): Promise<ReviewItem> {
   return request<ReviewItem>(`/review/stories/${storyId}/items/${reviewId}/${decision}`, {
     method: "POST",

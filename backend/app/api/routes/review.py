@@ -93,6 +93,8 @@ class StoryTermReviewRequest(BaseModel):
 
     expected_story_version: int = Field(ge=1)
     edit: ReviewEditRequest | None = None
+    existing_trope_ids: list[str] | None = Field(default=None, min_length=1)
+    keep_proposed_trope: bool = False
 
 
 router = APIRouter(prefix="/review", tags=["review"])

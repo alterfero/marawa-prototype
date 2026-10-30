@@ -660,10 +660,15 @@ def reject_review_item(
 def resolve_story_term_review(
     session: Session, *, story_id: str, review_id: str, actor_user_id: str,
     expected_story_version: int, approve: bool, edit: dict[str, str | None] | None = None,
+    existing_trope_ids: list[str] | None = None, keep_proposed_trope: bool = False,
 ) -> dict:
     """Resolve an assignment and its catalogue work in one story-scoped transaction."""
     if edit is not None and not approve:
         raise ReviewValidationError("A rejected change cannot include edits.")
+    if existing_trope_ids is not None and (not approve or edit is not None):
+        raise ReviewValidationError("Select existing tropes in an approval without a separate text edit.")
+    if keep_proposed_trope and existing_trope_ids is None:
+        raise ReviewValidationError("Select existing tropes to augment the proposed trope.")
     story = session.get(Story, story_id)
     if story is None:
         raise ReviewNotFoundError("Story not found.")
@@ -706,6 +711,8 @@ def resolve_story_term_review(
         kind = "trope" if change_kind == STORY_TROPE_CHANGE_KIND else "keyword"
 
     metadata = review.metadata_json or {}
+    if existing_trope_ids is not None and (kind != "trope" or metadata.get("assignment_action") not in {"added", "replaced"}):
+        raise ReviewValidationError("Multiple tropes can only be selected for an added or replaced trope.")
     source_id = clean_text(metadata.get(f"current_{kind}_id"))
     candidate_ids = {source_id, clean_text(metadata.get(f"previous_{kind}_id"))} - {""}
     assignment = StoryTrope if kind == "trope" else StoryKeyword
@@ -719,7 +726,23 @@ def resolve_story_term_review(
             not edit.get("existing_term_id") and normalize_text(edit.get("text") or "") == normalize_text(source.text)
         )):
             edit = None
-    if approve:
+    if existing_trope_ids is not None:
+        selected_ids = _apply_review_trope_selection(
+            session, story=story, source_id=source_id, trope_ids=existing_trope_ids,
+            keep_proposed_trope=keep_proposed_trope, actor_user_id=actor_user_id,
+        )
+        candidate_ids.update(selected_ids)
+        resolution = {
+            "decision": "edited", "edited_term_ids": selected_ids,
+            "edited_term_texts": [session.get(Trope, term_id).text for term_id in selected_ids],
+            "keep_proposed_trope": keep_proposed_trope,
+        }
+        _resolve_review_item(review, actor_user_id=actor_user_id, status=ReviewStatus.APPROVED, resolution=resolution)
+        record_audit_event(session, event_type="review.edited", actor_user_id=actor_user_id,
+                           dataset_id=story.dataset_id, subject_table="stories", subject_id=story.id,
+                           payload={"review_id": review.id, **resolution})
+        session.flush()
+    elif approve:
         result = approve_review_item(session, review_id=review.id, actor_user_id=actor_user_id,
                                      expected_story_version=expected_story_version, edit=edit, commit=False)
         target_id = result["metadata"]["resolution"].get("edited_term_id")
@@ -733,6 +756,42 @@ def resolve_story_term_review(
                                            keep=term_id in assigned_ids, actor_user_id=actor_user_id)
     session.commit()
     return _serialize_review_item(session, review)
+
+
+def _apply_review_trope_selection(
+    session: Session, *, story: Story, source_id: str, trope_ids: list[str],
+    keep_proposed_trope: bool, actor_user_id: str,
+) -> list[str]:
+    from app.services.stories import (
+        StoryServiceError, StoryVersionConflictError,
+        add_story_trope, delete_story_trope, replace_story_trope,
+    )
+
+    if not trope_ids or len(trope_ids) != len(set(trope_ids)):
+        raise ReviewValidationError("Select one or more distinct existing tropes.")
+    for trope_id in trope_ids:
+        trope = session.get(Trope, trope_id)
+        if trope is None or trope.dataset_id != story.dataset_id:
+            raise ReviewValidationError("Selected tropes must exist in this story's dataset.")
+    assigned_ids = set(session.scalars(select(StoryTrope.trope_id).where(StoryTrope.story_id == story.id)))
+    final_ids = list(dict.fromkeys(([source_id] if keep_proposed_trope else []) + trope_ids))
+    new_ids = [term_id for term_id in final_ids if term_id not in assigned_ids]
+    common = {"actor_user_id": actor_user_id, "actor_role": UserRole.ADMIN, "commit": False}
+    try:
+        if source_id not in final_ids:
+            if new_ids:
+                # Preserve the proposal's position for its first replacement.
+                replace_story_trope(session, story.id, source_id, trope_id=new_ids.pop(0),
+                                    expected_story_version=story.version, **common)
+            else:
+                delete_story_trope(session, story.id, source_id, expected_story_version=story.version, **common)
+        for trope_id in new_ids:
+            add_story_trope(session, story.id, trope_id=trope_id, expected_story_version=story.version, **common)
+    except StoryVersionConflictError as exc:
+        raise ReviewConflictError(str(exc)) from exc
+    except StoryServiceError as exc:
+        raise ReviewValidationError(str(exc)) from exc
+    return final_ids
 
 
 def _settle_story_term_catalogue_review(

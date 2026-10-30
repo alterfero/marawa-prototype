@@ -66,6 +66,11 @@ function readNumber(metadata: Record<string, unknown>, key: string): number | nu
   return typeof value === "number" ? value : null;
 }
 
+function readStrings(metadata: Record<string, unknown>, key: string): string[] {
+  const value = metadata[key];
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
+}
+
 function resolutionMetadata(item: ReviewItem): Record<string, unknown> | null {
   const resolution = item.metadata.resolution;
   if (!resolution || typeof resolution !== "object") {
@@ -190,9 +195,12 @@ function reviewHeadline(item: ReviewItem): string {
   return storyReviewTitle(item);
 }
 
-function liveTropeText(detail: StoryDetail | null, review: StoryTropeReviewMetadata, editedTermId: string): string | null {
+function liveTropeText(detail: StoryDetail | null, review: StoryTropeReviewMetadata, editedTermId: string, editedTermIds: string[]): string | null {
   if (!detail) {
     return null;
+  }
+  if (editedTermIds.length) {
+    return editedTermIds.map((id) => detail.tropes.find((item) => item.id === id)?.text ?? "Missing from the current story").join("\n");
   }
   if (editedTermId) return detail.tropes.find((item) => item.id === editedTermId)?.text ?? null;
   const current = detail.tropes.find((item) => item.id === review.current_trope_id);
@@ -416,6 +424,8 @@ function StoryReviewChangeCard({
   const legacyStoryReview = isLegacyStoryReviewItem(item);
   const [editableDraft, setEditableDraft] = useState("");
   const [selectedExistingTerm, setSelectedExistingTerm] = useState<SearchItem | null>(null);
+  const [selectedExistingTropes, setSelectedExistingTropes] = useState<SearchItem[]>([]);
+  const [keepProposedTrope, setKeepProposedTrope] = useState(false);
   const [similarQuery, setSimilarQuery] = useState("");
   const [similarResults, setSimilarResults] = useState<SearchItem[]>([]);
   const [similarStatus, setSimilarStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
@@ -424,19 +434,23 @@ function StoryReviewChangeCard({
 
   const liveFieldValue = fieldReview && storyDetail ? storyDetail.fields[fieldReview.field_name] || "" : null;
   const editedTermId = readString(resolutionMetadata(item) ?? {}, "edited_term_id");
+  const editedTermIds = readStrings(resolutionMetadata(item) ?? {}, "edited_term_ids");
   const liveTermValue = tropeReview
-    ? liveTropeText(storyDetail, tropeReview, editedTermId)
+    ? liveTropeText(storyDetail, tropeReview, editedTermId, editedTermIds)
     : keywordReview
       ? liveKeywordText(storyDetail, keywordReview, editedTermId)
       : null;
 
   useEffect(() => {
     setSelectedExistingTerm(null);
+    setSelectedExistingTropes([]);
+    setKeepProposedTrope(false);
     setSimilarQuery("");
   }, [item.id]);
 
   useEffect(() => {
     setSelectedExistingTerm(null);
+    setSelectedExistingTropes([]);
     if (fieldReview) {
       const value = liveFieldValue ?? fieldReview.current_value;
       setEditableDraft(fieldReview.field_name === THEME_FIELD ? splitThemeText(value).join("\n") : value);
@@ -483,12 +497,16 @@ function StoryReviewChangeCard({
   function changeDraft(value: string) {
     setEditableDraft(value);
     setSelectedExistingTerm(null);
+    setSelectedExistingTropes([]);
     if (termKind !== "theme") setSimilarQuery(value);
   }
 
   function selectExistingTerm(candidate: SearchItem) {
     if (termKind === "theme") {
       setEditableDraft((current) => [...new Set([...splitThemeText(current), candidate.text])].join("\n"));
+    } else if (termKind === "trope") {
+      setSelectedExistingTropes((current) => current.some((term) => term.id === candidate.id)
+        ? current.filter((term) => term.id !== candidate.id) : [...current, candidate]);
     } else {
       setEditableDraft(candidate.text);
       setSelectedExistingTerm(candidate);
@@ -532,7 +550,8 @@ function StoryReviewChangeCard({
       setBusy(true);
       onNotice(null);
 
-      if ((tropeReview || keywordReview) && !editableDraft.trim()) {
+      const useSelectedTropes = Boolean(tropeReview && !keepAsTyped && selectedExistingTropes.length);
+      if ((tropeReview || keywordReview) && !useSelectedTropes && !editableDraft.trim()) {
         onNotice({ tone: "error", title: `Enter a ${termKind} before approving` });
         return;
       }
@@ -541,14 +560,23 @@ function StoryReviewChangeCard({
         ...(!keepAsTyped && selectedExistingTerm ? { existing_term_id: selectedExistingTerm.id } : {}),
       };
       const resolved = tropeReview || keywordReview
-        ? await resolveStoryTermReview(storyDetail.id, item.id, "approve", { expected_story_version: storyDetail.version, edit })
+        ? await resolveStoryTermReview(storyDetail.id, item.id, "approve", {
+          expected_story_version: storyDetail.version,
+          ...(useSelectedTropes ? {
+            existing_trope_ids: selectedExistingTropes.map((term) => term.id),
+            keep_proposed_trope: keepProposedTrope,
+          } : { edit }),
+        })
         : await approveReviewItem(item.id, undefined, true, storyDetail.version, edit);
       await onRefresh(resolved);
       onNotice({
         tone: "success",
         title: keepAsTyped ? "Typed text saved and approved"
           : resolutionMetadata(resolved)?.decision === "edited" ? "Change edited and approved" : "Change approved",
-        body: keepAsTyped
+        body: useSelectedTropes
+          ? keepProposedTrope ? "The contributor’s trope was kept and the selected tropes were added."
+            : "The contributor’s trope was replaced with the selected tropes."
+          : keepAsTyped
           ? `Your ${termKind} text was saved on this story and the contributor’s change was approved.`
           : termKind ? `The ${termKind} was saved on this story and approved.` : `${reviewHeadline(item)} was updated and approved.`,
       });
@@ -605,7 +633,7 @@ function StoryReviewChangeCard({
       <div className="panel-header">
         <div>
           <h3>{legacyStoryReview ? "Legacy story review item" : item.status !== "pending" && liveTermValue
-            ? `${tropeReview ? "Trope" : "Keyword"}: ${liveTermValue}` : reviewHeadline(item)}</h3>
+            ? `${tropeReview ? editedTermIds.length > 1 ? "Tropes" : "Trope" : "Keyword"}: ${liveTermValue.split("\n").join(" · ")}` : reviewHeadline(item)}</h3>
           <p className="muted">{item.created_at}</p>
         </div>
         <span className="pill" role="status">{reviewStatusLabel(item)}</span>
@@ -651,7 +679,7 @@ function StoryReviewChangeCard({
               <p className="muted">Loading story context...</p>
             </article>
           ) : (
-            <ReviewValueCard label="Current story trope" value={liveTermValue || "Missing from the current story"} />
+            <ReviewValueCard label={editedTermIds.length > 1 ? "Current story tropes" : "Current story trope"} value={liveTermValue || "Missing from the current story"} />
           )}
         </div>
       ) : null}
@@ -724,21 +752,60 @@ function StoryReviewChangeCard({
                 <span>Find similar existing {termKind}s</span>
                 <input className="input" disabled={mutationDisabled} value={similarQuery} placeholder={`Search for an existing ${termKind}`} onChange={(event) => setSimilarQuery(event.target.value)} />
               </label>
+              {termKind === "trope" ? <p className="muted">Select multiple existing tropes across searches, then approve to replace or augment this proposal.</p> : null}
               {similarStatus === "loading" ? <p className="muted" role="status">Searching similar {termKind}s...</p> : null}
               {similarStatus === "error" ? <p className="notice notice-error" role="alert">Could not search similar {termKind}s. Change the query to retry.</p> : null}
               {similarStatus === "ready" && !similarResults.length ? <p className="muted">No similar {termKind}s found.</p> : null}
-              {similarResults.map((candidate) => (
-                <TermCard key={candidate.id} term={candidate} meta={`Similarity ${candidate.score.toFixed(2)} · ${candidate.story_count} stories`} actions={
-                  <button className="button button-ghost" type="button" disabled={mutationDisabled} onClick={() => selectExistingTerm(candidate)}>{termKind === "theme" ? "Add existing theme to draft" : selectedExistingTerm?.id === candidate.id ? "Selected" : `Use existing ${termKind}`}</button>
-                } />
-              ))}
+              {similarResults.map((candidate) => {
+                const isProposal = termKind === "trope" && candidate.id === tropeReview?.current_trope_id;
+                return (
+                  <TermCard key={candidate.id} term={candidate} meta={`Similarity ${candidate.score.toFixed(2)} · ${candidate.story_count} stories`} actions={
+                    termKind === "trope" ? (
+                      <label className="checkbox-row">
+                        <input type="checkbox" aria-label={`Select trope: ${candidate.text}`}
+                          checked={selectedExistingTropes.some((term) => term.id === candidate.id)}
+                          disabled={mutationDisabled || isProposal} onChange={() => selectExistingTerm(candidate)} />
+                        <span>{isProposal ? "Contributor trope" : "Select"}</span>
+                      </label>
+                    ) : (
+                      <button className="button button-ghost" type="button" disabled={mutationDisabled} onClick={() => selectExistingTerm(candidate)}>{termKind === "theme" ? "Add existing theme to draft" : selectedExistingTerm?.id === candidate.id ? "Selected" : `Use existing ${termKind}`}</button>
+                    )
+                  } />
+                );
+              })}
+              {termKind === "trope" && selectedExistingTropes.length > 0 ? (
+                <section className="card subdued page-stack" aria-label="Selected existing tropes">
+                  <h4>{selectedExistingTropes.length} selected trope{selectedExistingTropes.length === 1 ? "" : "s"}</h4>
+                  {selectedExistingTropes.map((term) => (
+                    <div className="card-row" key={term.id}>
+                      <span>{term.text}</span>
+                      <button className="button button-ghost" type="button" disabled={mutationDisabled}
+                        aria-label={`Remove selected trope: ${term.text}`} onClick={() => selectExistingTerm(term)}>Remove</button>
+                    </div>
+                  ))}
+                  <div className="field" role="radiogroup" aria-label="Apply selected tropes">
+                    <span>Apply selected tropes</span>
+                    <label className="checkbox-row">
+                      <input type="radio" name={`trope-selection-${item.id}`} checked={!keepProposedTrope}
+                        disabled={mutationDisabled} onChange={() => setKeepProposedTrope(false)} />
+                      <span>Replace the contributor’s trope</span>
+                    </label>
+                    <label className="checkbox-row">
+                      <input type="radio" name={`trope-selection-${item.id}`} checked={keepProposedTrope}
+                        disabled={mutationDisabled} onChange={() => setKeepProposedTrope(true)} />
+                      <span>Keep the contributor’s trope and add selected tropes</span>
+                    </label>
+                  </div>
+                  <p className="muted">Approve saves this selection. Other tropes already assigned to the story are kept.</p>
+                </section>
+              ) : null}
               {termKind === "theme" ? <p className="muted">One theme per line. Remove an unwanted theme from the draft, then add its replacement from search.</p> : null}
             </div>
           ) : null}
 
           <div className="button-row wrap-row">
             <button className="button" disabled={mutationDisabled} onClick={() => void handleApprove()} type="button">
-              {busy ? "Working..." : "Approve"}
+              {busy ? "Working..." : selectedExistingTropes.length ? "Approve selected tropes" : "Approve"}
             </button>
             {canInlineEdit(item) && !termKind ? (
               <button className="button button-ghost" disabled={mutationDisabled || storyDetailLoading} onClick={() => void handleEditAndApprove()} type="button">
@@ -773,6 +840,8 @@ export function AdminReviewPage() {
   const selectedStory = stories.find((story) => story.story_id === selectedStoryId) || null;
   const currentStory = storyDetail?.id === selectedStoryId ? storyDetail : null;
   const currentItems = currentStory ? items : [];
+  const summary = currentStory?.fields["1-sentence summary"]?.trim() || "";
+  const abstract = currentStory?.fields["Abstract (Eng)"]?.trim() || currentStory?.fields["Abstract (Fr)"]?.trim() || "";
 
   async function loadStories(preferredStoryId?: string | null) {
     const requestId = ++queueRequestId.current;
@@ -1001,6 +1070,15 @@ export function AdminReviewPage() {
               </div>
 
               {storyDetailLoading ? <p className="muted">Loading current story context...</p> : null}
+
+              {currentStory ? (
+                <section className="card subdued page-stack" aria-label="Story summary">
+                  <h3>Story summary</h3>
+                  {summary ? <p className="review-value">{summary}</p> : null}
+                  {abstract && abstract !== summary ? <p className="review-value">{abstract}</p> : null}
+                  {!summary && !abstract ? <p className="muted">No summary available.</p> : null}
+                </section>
+              ) : null}
 
               <div className="field-grid">
                 <article className="card subdued">

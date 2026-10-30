@@ -542,6 +542,7 @@ def add_story_trope(
     actor_user_id: str | None = None,
     actor_role: UserRole | None = None,
     actor_territories: Iterable[object] | None = None,
+    commit: bool = True,
 ) -> tuple[Story, Dataset, StoryTrope, object]:
     if origin not in {StoryTropeOrigin.HUMAN_ENTERED, StoryTropeOrigin.SEMANTIC_SUGGESTION}:
         raise StoryMutationValidationError("New trope assignments may be human_entered or semantic_suggestion only.")
@@ -619,7 +620,8 @@ def add_story_trope(
             "status": link.status.value,
         },
     )
-    session.commit()
+    if commit:
+        session.commit()
     return story, active_dataset, link, job
 
 
@@ -996,6 +998,7 @@ def delete_story_trope(
     actor_user_id: str | None = None,
     actor_role: UserRole | None = None,
     actor_territories: Iterable[object] | None = None,
+    commit: bool = True,
 ) -> tuple[Story, Dataset, str, object]:
     active_dataset, story = _get_active_story(
         session,
@@ -1049,7 +1052,8 @@ def delete_story_trope(
             "trope_id": removed_trope_id,
         },
     )
-    session.commit()
+    if commit:
+        session.commit()
     return story, active_dataset, removed_trope_id, job
 
 
