@@ -373,6 +373,7 @@ function normalizeExplorationFilterSetResult(result: ExplorationFilterSetResult)
 function normalizeExplorationNetworkResponse(response: ExplorationNetworkResponse): ExplorationNetworkResponse {
   return {
     ...response,
+    selected_tropes: Array.isArray(response.selected_tropes) ? response.selected_tropes : [],
     selected_trope_candidates: Array.isArray(response.selected_trope_candidates)
       ? response.selected_trope_candidates
       : [],
@@ -1074,6 +1075,7 @@ function renderRelatedTropes(candidates: ExplorationCandidate[]) {
 function renderCandidateCards(
   candidates: ExplorationCandidate[],
   busy: boolean,
+  selectedIds: string[],
   onSelect: (candidate: ExplorationCandidate) => void,
 ) {
   if (!candidates.length) {
@@ -1087,9 +1089,16 @@ function renderCandidateCards(
           key={candidate.id}
           trope={candidate}
           actions={
-            <button className="button" disabled={busy} onClick={() => onSelect(candidate)} type="button">
+            <label className="checkbox-row">
+              <input
+                checked={selectedIds.includes(candidate.id)}
+                disabled={busy}
+                onChange={() => onSelect(candidate)}
+                type="checkbox"
+                aria-label={`Select ${candidate.text}`}
+              />
               Select trope
-            </button>
+            </label>
           }
         />
       ))}
@@ -1760,6 +1769,7 @@ export function ExplorationPage() {
   const [query, setQuery] = useState("");
   const [selectedTropeId, setSelectedTropeId] = useState<string | null>(null);
   const [selectedTropePreview, setSelectedTropePreview] = useState<string | null>(null);
+  const [selectedCandidateIds, setSelectedCandidateIds] = useState<string[]>([]);
   const [stories, setStories] = useState<StorySummary[]>([]);
   const [storiesLoading, setStoriesLoading] = useState(false);
   const [filterSets, setFilterSets] = useState<ExplorationFilterSetState[]>([createExplorationFilterSet(1, 1)]);
@@ -1769,6 +1779,7 @@ export function ExplorationPage() {
   const [error, setError] = useState<string | null>(null);
   const [resultMode, setResultMode] = useState<"idle" | "candidate_search" | "map">("idle");
   const selectedTropeParam = new URLSearchParams(hashSearch).get("selected_trope_id");
+  const selectedTropeIdsParam = new URLSearchParams(hashSearch).get("selected_trope_ids");
   const canChooseInterface = roleAtLeast(user?.role, "contributor");
   const canUseFilterSets = canChooseInterface && interfaceMode === "expert";
   const canUseSingleTropeExploration = !canUseFilterSets;
@@ -1785,6 +1796,7 @@ export function ExplorationPage() {
 
   async function requestNetwork(payload: {
     selected_trope_id?: string | null;
+    selected_trope_ids?: string[];
     query?: string | null;
     story_filters?: Array<{ field: string; selected_values: string[] }>;
     story_filter_sets?: Array<{
@@ -1829,6 +1841,7 @@ export function ExplorationPage() {
     setError(null);
     setBusy(false);
     setResultMode("idle");
+    setSelectedCandidateIds([]);
 
     return () => {
       // Ignore results from the previous interface, including requests still in flight.
@@ -1918,7 +1931,7 @@ export function ExplorationPage() {
   }, [network]);
 
   useEffect(() => {
-    if (!selectedTropeId) {
+    if (!selectedTropeId && !selectedTropeIdsParam) {
       return;
     }
     if (!canUseSingleTropeExploration) {
@@ -1928,7 +1941,9 @@ export function ExplorationPage() {
     setResultMode("map");
     const timeoutId = window.setTimeout(() => {
       void requestNetwork({
-        selected_trope_id: selectedTropeId,
+        ...(selectedTropeIdsParam
+          ? { selected_trope_ids: selectedTropeIdsParam.split(",") }
+          : { selected_trope_id: selectedTropeId }),
         min_similarity: threshold,
       });
     }, 180);
@@ -1936,13 +1951,14 @@ export function ExplorationPage() {
     return () => {
       window.clearTimeout(timeoutId);
     };
-  }, [canUseSingleTropeExploration, selectedTropeId, threshold]);
+  }, [canUseSingleTropeExploration, selectedTropeId, selectedTropeIdsParam, threshold]);
 
   async function handleSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     window.location.hash = routeHref("/exploration");
     setSelectedTropeId(null);
     setSelectedTropePreview(null);
+    setSelectedCandidateIds([]);
     setResultMode("candidate_search");
     await requestNetwork({
       query,
@@ -1951,8 +1967,16 @@ export function ExplorationPage() {
   }
 
   function handleSelectCandidate(candidate: ExplorationCandidate) {
-    setSelectedTropePreview(candidate.text);
-    window.location.hash = routeHref("/exploration", { selected_trope_id: candidate.id });
+    setSelectedCandidateIds((current) => current.includes(candidate.id)
+      ? current.filter((id) => id !== candidate.id)
+      : [...current, candidate.id]);
+  }
+
+  function handleSubmitCandidates() {
+    if (busy || selectedCandidateIds.length === 0) {
+      return;
+    }
+    window.location.hash = routeHref("/exploration", { selected_trope_ids: selectedCandidateIds.join(",") });
   }
 
   function addFilterSet() {
@@ -2210,6 +2234,7 @@ export function ExplorationPage() {
     network !== null &&
     !isMultiSetNetwork &&
     network.selected_trope === null &&
+    network.selected_tropes.length === 0 &&
     network.selected_trope_candidates.length === 0;
 
   return (
@@ -2243,7 +2268,7 @@ export function ExplorationPage() {
         <section className="panel">
           <div className="panel-header">
             <div>
-              <h1>Explore the story network around a trope</h1>
+              <h1>Explore the story network around tropes</h1>
             </div>
           </div>
           <form className="inline-form wrap-row" onSubmit={(event) => void handleSearch(event)}>
@@ -2263,6 +2288,9 @@ export function ExplorationPage() {
                   window.location.hash = routeHref("/exploration");
                   setSelectedTropeId(null);
                   setSelectedTropePreview(null);
+                  setSelectedCandidateIds([]);
+                  networkRequestIdRef.current += 1;
+                  setBusy(false);
                   setNetwork(null);
                   setError(null);
                   setResultMode("idle");
@@ -2475,7 +2503,13 @@ export function ExplorationPage() {
           <div className="panel-header">
             <h2>Candidate similar tropes</h2>
           </div>
-          {renderCandidateCards(network.selected_trope_candidates, busy, handleSelectCandidate)}
+          <p className="muted">Select one or more tropes, then submit to map their combined network.</p>
+          {renderCandidateCards(network.selected_trope_candidates, busy, selectedCandidateIds, handleSelectCandidate)}
+          <div className="button-row">
+            <button className="button" disabled={busy || selectedCandidateIds.length === 0} onClick={handleSubmitCandidates} type="button">
+              Submit
+            </button>
+          </div>
         </section>
       ) : null}
 
@@ -2614,11 +2648,11 @@ export function ExplorationPage() {
         </ExplorationResultBoundary>
       ) : null}
 
-      {network?.selected_trope && !shouldShowMultiSetResults ? (
-        <ExplorationResultBoundary key={network.selected_trope.id}>
+      {resultMode === "map" && network && (network.selected_trope || network.selected_tropes.length > 0) && !shouldShowMultiSetResults ? (
+        <ExplorationResultBoundary key={network.selected_trope?.id || network.selected_tropes.map((trope) => trope.id).join(",")}>
           <section className="panel">
             <div className="panel-header">
-              <h2>{network.selected_trope.text}</h2>
+              <h2>{network.selected_trope?.text || network.selected_tropes.map((trope) => trope.text).join(" · ")}</h2>
             </div>
             <div className="stats-grid">
               <article className="stat-card">
@@ -2637,10 +2671,6 @@ export function ExplorationPage() {
                 <span className="stat-label">No precise location</span>
                 <strong>{originalWithoutLocation.length + relatedWithoutLocation.length}</strong>
               </article>
-            </div>
-            <div className="stack">
-              <strong>Related tropes</strong>
-              {renderRelatedTropes(network.related_tropes)}
             </div>
           </section>
 

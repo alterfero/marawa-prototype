@@ -565,6 +565,7 @@ export interface ExplorationFilterSetResult {
 
 export interface ExplorationNetworkResponse {
   selected_trope: ExplorationSelectedTrope | null;
+  selected_tropes: ExplorationSelectedTrope[];
   selected_trope_candidates: ExplorationCandidate[];
   related_tropes: ExplorationCandidate[];
   original_markers: ExplorationMarker[];

@@ -97,6 +97,7 @@ class StoryFilterSetRequest(BaseModel):
 
 class ExplorationNetworkRequest(BaseModel):
     selected_trope_id: str | None = None
+    selected_trope_ids: list[str] = Field(default_factory=list, max_length=50)
     query: str | None = None
     story_filters: list[StoryFieldFilterRequest] = Field(default_factory=list)
     story_filter_sets: list[StoryFilterSetRequest] = Field(default_factory=list)
@@ -124,6 +125,7 @@ class ExplorationFilterSetResultResponse(BaseModel):
 
 class ExplorationNetworkResponse(BaseModel):
     selected_trope: SelectedTermResponse | None
+    selected_tropes: list[SelectedTermResponse] = Field(default_factory=list)
     selected_trope_candidates: list[TropeCandidateResponse]
     related_tropes: list[TropeCandidateResponse]
     original_markers: list[ExplorationMarkerResponse]
@@ -155,6 +157,7 @@ def build_exploration_network(
                 session,
                 search_service,
                 selected_trope_id=payload.selected_trope_id,
+                selected_trope_ids=payload.selected_trope_ids,
                 query=payload.query,
                 story_filters=[item.model_dump() for item in payload.story_filters],
                 story_filter_sets=[item.model_dump() for item in payload.story_filter_sets],

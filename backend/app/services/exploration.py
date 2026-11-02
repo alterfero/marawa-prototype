@@ -156,6 +156,7 @@ def build_exploration_response(
     *,
     selected_trope_id: str | None,
     query: str | None,
+    selected_trope_ids: list[str] | None = None,
     story_filters: list[dict] | None = None,
     story_filter_sets: list[dict] | None = None,
     min_similarity: float = 0.62,
@@ -166,6 +167,11 @@ def build_exploration_response(
 ) -> dict:
     normalized_story_filters = _normalize_story_filters(story_filters)
     normalized_story_filter_sets = _normalize_story_filter_sets(story_filter_sets)
+    trope_ids = list(dict.fromkeys(([selected_trope_id] if selected_trope_id else []) + (selected_trope_ids or [])))
+    if trope_ids:
+        selected_trope_id = trope_ids[0]
+    if len(trope_ids) > 1 and normalized_story_filter_sets:
+        raise ExplorationValidationError("Multiple selected tropes cannot be combined with story_filter_sets.")
     if selected_trope_id is None and not normalized_story_filters and not normalized_story_filter_sets:
         if not clean_text(query):
             raise ExplorationValidationError(
@@ -289,6 +295,27 @@ def build_exploration_response(
         )
 
     filtered_stories = _apply_story_filters(stories, normalized_story_filters)
+
+    if len(trope_ids) > 1:
+        selected_tropes = [_get_active_trope(session, active_dataset.id, trope_id) for trope_id in trope_ids]
+        if any(trope is None for trope in selected_tropes):
+            raise ExplorationNotFoundError("Selected trope not found in the active dataset.")
+        return _merge_trope_networks(
+            [
+                _selected_trope_story_map_response(
+                    session,
+                    search_service,
+                    active_dataset.id,
+                    trope,
+                    filtered_stories,
+                    min_similarity=min_similarity,
+                    related_limit=related_limit,
+                    actor_role=actor_role,
+                    actor_territories=actor_territories,
+                )
+                for trope in selected_tropes
+            ]
+        )
 
     if selected_trope_id is None:
         return _filtered_story_map_response(
@@ -919,6 +946,54 @@ def _selected_trope_story_map_response(
         "bounds": bounds,
         "missing_original_coords": missing_original_coords,
         "missing_related_coords": missing_related_coords,
+        "filter_set_results": [],
+    }
+
+
+def _merge_trope_networks(networks: list[dict]) -> dict:
+    """Union individual networks, retaining original status and strongest matches."""
+    markers: dict[str, dict] = {}
+    connections: dict[tuple[str, str], dict] = {}
+    for network in networks:
+        for marker in network["original_markers"] + network["related_markers"]:
+            existing = markers.get(marker["story_id"])
+            if existing is None:
+                markers[marker["story_id"]] = {**marker, "matched_tropes": list(marker["matched_tropes"])}
+                continue
+            matches = {trope["id"]: trope for trope in existing["matched_tropes"]}
+            for trope in marker["matched_tropes"]:
+                if trope["id"] not in matches or trope["score"] > matches[trope["id"]]["score"]:
+                    matches[trope["id"]] = trope
+            if (marker["kind"] == "original" and existing["kind"] != "original") or (
+                marker["kind"] == existing["kind"] and marker["similarity"] > existing["similarity"]
+            ):
+                existing.update(marker)
+            existing["matched_tropes"] = sorted(matches.values(), key=lambda item: (-item["score"], item["text"].lower()))
+        for connection in network["connections"]:
+            key = tuple(sorted((connection["source_story_id"], connection["target_story_id"])))
+            existing = connections.get(key)
+            if existing is None or connection["similarity"] > existing["similarity"]:
+                connections[key] = connection
+
+    originals = sorted(
+        (item for item in markers.values() if item["kind"] == "original"),
+        key=lambda item: (item["title"].lower(), item["story_id"]),
+    )
+    related = sorted(
+        (item for item in markers.values() if item["kind"] == "related"),
+        key=lambda item: (-item["similarity"], item["title"].lower(), item["story_id"]),
+    )
+    return {
+        "selected_trope": None,
+        "selected_tropes": [network["selected_trope"] for network in networks],
+        "selected_trope_candidates": [],
+        "related_tropes": _combine_related_tropes(networks),
+        "original_markers": originals,
+        "related_markers": related,
+        "connections": list(connections.values()),
+        "bounds": _merge_bounds([network["bounds"] for network in networks]),
+        "missing_original_coords": sum(not marker["has_location"] for marker in originals),
+        "missing_related_coords": sum(not marker["has_location"] for marker in related),
         "filter_set_results": [],
     }
 

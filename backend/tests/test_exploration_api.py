@@ -226,6 +226,68 @@ def test_exploration_network_builds_markers_connections_and_bounds(monkeypatch, 
     assert body["bounds"] is not None
 
 
+def test_exploration_network_fuses_selected_tropes(monkeypatch, tmp_path) -> None:
+    configure_auth_env(monkeypatch)
+    with build_client(tmp_path, "exploration-union.db") as client:
+        authenticate_admin(client)
+        upload_dataset(client, [
+            make_row(title="First", tropes="§§ first trope", coord="-20, 165"),
+            make_row(title="Variant", tropes="§§ first trope variant", coord="-19, 166"),
+            make_row(title="Shared", tropes="§§ first trope\n§§ first trope variant", coord="-18, 167"),
+            make_row(title="Related", tropes="§§ first echo trope", coord="-17, 168"),
+            make_row(title="Related Missing", tropes="§§ first echo trope"),
+            make_row(title="Missing", tropes="§§ first trope\n§§ first trope variant"),
+            make_row(title="Second", tropes="§§ second trope", coord="-16, 169"),
+        ])
+        request_rebuild(client)
+        process_next_job(client)
+        candidates = client.post("/api/exploration/network", json={"query": "trope"}).json()["selected_trope_candidates"]
+        ids = [next(item["id"] for item in candidates if item["text"] == text)
+               for text in ["first trope", "first trope variant", "second trope"]]
+        individual = [client.post("/api/exploration/network", json={
+            "selected_trope_id": trope_id, "min_similarity": 0.6,
+        }).json() for trope_id in ids]
+        response = client.post("/api/exploration/network", json={
+            "selected_trope_ids": ids + [ids[0]], "min_similarity": 0.6,
+        })
+        assert response.status_code == 200
+        body = response.json()
+        assert [item["id"] for item in body["selected_tropes"]] == ids
+        original_ids = {marker["story_id"] for result in individual for marker in result["original_markers"]}
+        all_ids = {marker["story_id"] for result in individual
+                   for marker in result["original_markers"] + result["related_markers"]}
+        assert {marker["story_id"] for marker in body["original_markers"]} == original_ids
+        assert {marker["story_id"] for marker in body["related_markers"]} == all_ids - original_ids
+        assert len(body["original_markers"]) + len(body["related_markers"]) == len(all_ids)
+        def pair(connection):
+            return frozenset([connection["source_story_id"], connection["target_story_id"]])
+
+        expected_pairs = {pair(connection) for result in individual for connection in result["connections"]}
+        assert {pair(connection) for connection in body["connections"]} == expected_pairs
+        assert len(body["connections"]) == len(expected_pairs)
+        assert body["missing_original_coords"] == 1
+        assert body["missing_related_coords"] == 1
+        assert body["bounds"] == [[-20.0, 165.0], [-16.0, 169.0]]
+        shared = next(marker for marker in body["original_markers"] if marker["title"] == "Shared")
+        assert {trope["id"] for trope in shared["matched_tropes"]} >= set(ids[:2])
+        assert shared["kind"] == "original"
+        assert shared["similarity"] == 1.0
+        for marker in body["original_markers"] + body["related_markers"]:
+            expected_scores = {}
+            for result in individual:
+                for source in result["original_markers"] + result["related_markers"]:
+                    if source["story_id"] == marker["story_id"]:
+                        for trope in source["matched_tropes"]:
+                            expected_scores[trope["id"]] = max(expected_scores.get(trope["id"], 0), trope["score"])
+            assert {trope["id"]: trope["score"] for trope in marker["matched_tropes"]} == expected_scores
+        invalid = client.post("/api/exploration/network", json={"selected_trope_ids": [ids[0], "missing"]})
+        assert invalid.status_code == 404
+        single = client.post("/api/exploration/network", json={"selected_trope_ids": [ids[0]], "min_similarity": 0.6})
+        assert single.status_code == 200
+        for key in ("original_markers", "related_markers", "connections", "bounds"):
+            assert single.json()[key] == individual[0][key]
+
+
 def test_exploration_network_requires_query_or_selected_trope_id(monkeypatch, tmp_path) -> None:
     configure_auth_env(monkeypatch)
     with build_client(tmp_path, "exploration-validation.db") as client:

@@ -955,6 +955,7 @@ export function mergeUnconfirmedKeyword(payload: {
 
 export function buildExplorationNetwork(payload: {
   selected_trope_id?: string | null;
+  selected_trope_ids?: string[];
   query?: string | null;
   story_filters?: Array<{ field: string; selected_values: string[] }>;
   story_filter_sets?: Array<{
