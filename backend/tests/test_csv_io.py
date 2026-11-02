@@ -580,3 +580,22 @@ def test_import_export_round_trip_preserves_story_order_and_canonical_term_seria
     assert rows[0][TROPE_FIELD] == "§§ woman becomes tree"
     assert rows[1][KEYWORD_FIELD] == "canoe ; sea"
     assert rows[1][TROPE_FIELD] == "§§ younger sibling wins\n§§ eldest loses"
+
+
+def test_canoe_name_import_and_full_export_round_trip_preserves_legacy_header(tmp_path):
+    with make_session(tmp_path) as session:
+        dataset = import_csv_bytes(session, make_csv_bytes(
+            [{"Story title (Eng)": "Voyage", "Canoe name": "Hōkūleʻa; Tainui"}],
+            fieldnames=[*CSV_COLUMNS, "Canoe name"],
+        ))
+        activate_dataset(session, dataset)
+        story = session.scalar(select(Story).where(Story.dataset_id == dataset.id))
+        assert story.fields_json["Canoe name"] == "Hōkūleʻa; Tainui"
+        legacy = csv.DictReader(io.StringIO(export_active_dataset_to_csv_bytes(session).decode("utf-8-sig")))
+        assert legacy.fieldnames == CSV_COLUMNS
+        full = export_active_dataset_to_csv_bytes(session, include_marawa_metadata=True)
+        reader = csv.DictReader(io.StringIO(full.decode("utf-8-sig")))
+        assert next(reader)["Canoe name"] == "Hōkūleʻa; Tainui"
+        restored = import_csv_bytes(session, full)
+        restored_story = session.scalar(select(Story).where(Story.dataset_id == restored.id))
+        assert restored_story.fields_json["Canoe name"] == story.fields_json["Canoe name"]

@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 
 from app.core.csv_reader import allow_large_csv_fields
 from app.core.csv_schema import (
-    CSV_COLUMNS, CSV_IMPORT_ALIASES, DATE_OF_RECORDING_FIELD, FULL_EXPORT_COLUMNS,
+    CSV_COLUMNS, STORY_FIELDS, CSV_IMPORT_ALIASES, DATE_OF_RECORDING_FIELD, FULL_EXPORT_COLUMNS,
     KEYWORD_FIELD, MARAWA_STORY_METADATA_FIELD, MARAWA_TERM_CATALOG_FIELD, THEME_FIELD, TROPE_FIELD,
 )
 from app.core.coordinates import parse_space_coord
@@ -91,7 +91,7 @@ def inspect_csv(content: bytes) -> InjectionCSV:
                                  "Check missing separators and quote cells containing commas or line breaks. Keep trailing empty cells.", row=row,
                                  column_number=min(len(values), len(headers)) + 1)
                     continue
-                fields = {c: "" for c in CSV_COLUMNS}
+                fields = {c: "" for c in STORY_FIELDS}
                 for column, value in zip(resolved, values):
                     if column in fields:
                         fields[column] = clean_text(value)

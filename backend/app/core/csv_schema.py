@@ -4,6 +4,7 @@ TROPE_FIELD = "Motifs (Eng)"
 KEYWORD_FIELD = "Keywords (Eng)"
 THEME_FIELD = "Thème"
 TROPE_PROPOSAL_FIELD = "proposition de nouveaux motifs"
+CANOE_NAME_FIELD = "Canoe name"
 DATE_OF_RECORDING_FIELD = "date of recording"
 MARAWA_STORY_METADATA_FIELD = "Marawa story metadata"
 MARAWA_TERM_CATALOG_FIELD = "Marawa term catalog"
@@ -53,11 +54,15 @@ CSV_COLUMNS = [
     "ATU motifs (AI?)",
 ]
 
+# Application metadata extends the fixed legacy CSV schema. Older CSV files
+# remain valid and default these optional fields to blank.
+STORY_FIELDS = [*CSV_COLUMNS, CANOE_NAME_FIELD]
+
 # These columns are deliberately appended after the legacy contract. They are
 # used only by the lossless Marawa export; the legacy export retains the exact
 # header above for interoperability with existing research workflows.
 FULL_EXPORT_COLUMNS = [
-    *CSV_COLUMNS,
+    *STORY_FIELDS,
     MARAWA_STORY_METADATA_FIELD,
     MARAWA_TERM_CATALOG_FIELD,
 ]

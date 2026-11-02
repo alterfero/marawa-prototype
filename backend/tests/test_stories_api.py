@@ -269,6 +269,7 @@ def test_manual_story_can_be_saved_section_by_section_and_revised(client: TestCl
             "expected_story_version": text_story["version"],
             "fields": {
                 "species": "fish",
+                "Canoe name": "Hōkūleʻa",
                 "Connection to other stories": "Related to lagoon journey stories.",
             },
         },
@@ -279,6 +280,7 @@ def test_manual_story_can_be_saved_section_by_section_and_revised(client: TestCl
     assert classification_story["version"] == 3
     assert classification_story["fields"]["Story title (Eng)"] == "The Moon Fisher"
     assert classification_story["fields"]["species"] == "fish"
+    assert classification_story["fields"]["Canoe name"] == "Hōkūleʻa"
 
     revised_source_response = client.patch(
         f"/api/stories/{source_story['id']}",
@@ -294,6 +296,7 @@ def test_manual_story_can_be_saved_section_by_section_and_revised(client: TestCl
     assert revised_story["fields"]["territory"] == "Tahiti"
     assert revised_story["fields"]["1-sentence summary"] == "A fisher follows a moonlit trail across the lagoon."
     assert revised_story["fields"]["species"] == "fish"
+    assert revised_story["fields"]["Canoe name"] == "Hōkūleʻa"
 
 
 @pytest.mark.parametrize("year1, year2", [(1800, 1800), (2024, 2024), (2050, 2050), (1971, 1980)])

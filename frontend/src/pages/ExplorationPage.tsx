@@ -51,8 +51,9 @@ const DENSITY_RADIUS = 72;
 const DENSITY_RADIUS_MIN = 44;
 const DENSITY_RADIUS_MAX = 92;
 const DEFAULT_MARKER_RADIUS = 9;
-const MIN_MARKER_RADIUS = 4;
+const MIN_MARKER_RADIUS = 0.5;
 const MAX_MARKER_RADIUS = 18;
+const MAX_EDGE_FUZZINESS = 12;
 const RELATED_MARKER_RADIUS_OFFSET = 2;
 const BUNDLE_RADIUS_GROWTH = 0.7;
 const BUNDLE_RADIUS_MAX = 42;
@@ -533,7 +534,11 @@ function getMapLegendItems(
 }
 
 function getRelatedMarkerRadius(markerRadius: number): number {
-  return Math.max(MIN_MARKER_RADIUS - 1, markerRadius - RELATED_MARKER_RADIUS_OFFSET);
+  return Math.max(MIN_MARKER_RADIUS, markerRadius - RELATED_MARKER_RADIUS_OFFSET);
+}
+
+function getMarkerStrokeWidth(kind: ExplorationMarker["kind"], radius: number): number {
+  return Math.min(kind === "original" ? 2.5 : 1.5, Math.max(0, radius * 2 - 1));
 }
 
 function getBundleRadius(storyCount: number, markerRadius: number): number {
@@ -607,7 +612,8 @@ function buildDisplayedExplorationMarkers(
     ),
   );
 
-  let merged = true;
+  // At point size, preserve individual dots even when their locations overlap.
+  let merged = markerRadius > MIN_MARKER_RADIUS;
   while (merged) {
     merged = false;
     for (let leftIndex = 0; leftIndex < clusters.length; leftIndex += 1) {
@@ -790,6 +796,8 @@ function mapPointToSvg(map: L.Map, coordinates: CoordinatePair, view: MapExportV
 function createExplorationMapSvg({
   connections,
   densityImage,
+  edgeOpacity,
+  edgeFuzziness,
   filterSetLegends,
   includeBasemap,
   map,
@@ -802,6 +810,8 @@ function createExplorationMapSvg({
 }: {
   connections: RenderableConnection[];
   densityImage: MapExportDensityImage | null;
+  edgeOpacity: number;
+  edgeFuzziness: number;
   filterSetLegends?: FilterSetLegend[];
   includeBasemap: boolean;
   map: L.Map;
@@ -829,7 +839,7 @@ function createExplorationMapSvg({
             }
 
             const { marker, point, radius } = displayedMarker;
-            const strokeWidth = marker.kind === "original" ? 2.5 : 1.5;
+            const strokeWidth = getMarkerStrokeWidth(marker.kind, radius);
             const fillOpacity = marker.kind === "original" ? 0.88 : 0.62;
             return `<circle cx="${point.x}" cy="${point.y}" r="${radius}" fill="${escapeHtml(marker.color)}" fill-opacity="${fillOpacity * markerOpacity}" stroke="${escapeHtml(marker.color)}" stroke-opacity="${markerOpacity}" stroke-width="${strokeWidth}" />`;
           })
@@ -847,7 +857,7 @@ function createExplorationMapSvg({
               .map((coordinates) => mapPointToSvg(map, coordinates as CoordinatePair, view))
               .map((point) => `${point.x},${point.y}`)
               .join(" ");
-            return `<polyline fill="none" opacity="0.62" points="${points}" stroke="${escapeHtml(connection.color)}" stroke-width="2" />`;
+            return `<polyline fill="none" opacity="${edgeOpacity}" points="${points}" stroke="${escapeHtml(connection.color)}" stroke-width="${2 + edgeFuzziness}" stroke-linecap="round" stroke-linejoin="round"${edgeFuzziness > 0 ? ` style="filter:blur(${edgeFuzziness}px)"` : ""} />`;
           })
           .join("")
       : "";
@@ -1285,6 +1295,8 @@ function ExplorationMap({
   const mapViewId = useId();
   const markerSizeId = useId();
   const markerOpacityId = useId();
+  const edgeOpacityId = useId();
+  const edgeFuzzinessId = useId();
   const mapElementRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
   const overlayLayerRef = useRef<L.LayerGroup | null>(null);
@@ -1292,6 +1304,8 @@ function ExplorationMap({
   const [renderMode, setRenderMode] = useState<MapRenderMode>("markers");
   const [markerRadius, setMarkerRadius] = useState(DEFAULT_MARKER_RADIUS);
   const [markerOpacity, setMarkerOpacity] = useState(1);
+  const [edgeOpacity, setEdgeOpacity] = useState(0.5);
+  const [edgeFuzziness, setEdgeFuzziness] = useState(0);
   const [exportStatus, setExportStatus] = useState<"idle" | "preparing">("idle");
   const [exportNotice, setExportNotice] = useState<string | null>(null);
   const dataSignature = buildExplorationMapDataSignature(markers, connections);
@@ -1319,6 +1333,7 @@ function ExplorationMap({
       zoomSnap: 0.25,
       scrollWheelZoom: true,
       worldCopyJump: true,
+      renderer: L.svg({ padding: 0.5 }),
     });
 
     L.control.zoom({ position: "topleft" }).addTo(map);
@@ -1361,7 +1376,7 @@ function ExplorationMap({
 
       const mapCenterLongitude = activeMap.getCenter().lng;
       connections.forEach((connection) => {
-        L.polyline(
+        const edge = L.polyline(
           toNearestWorldConnectionCoordinates(
             connection.source_coordinates,
             connection.target_coordinates,
@@ -1369,10 +1384,15 @@ function ExplorationMap({
           ),
           {
             color: connection.color,
-            opacity: 0.62,
-            weight: 2,
+            opacity: edgeOpacity,
+            weight: 2 + edgeFuzziness,
+            interactive: false,
           },
         ).addTo(activeOverlayLayer);
+        const path = edge.getElement();
+        if (path instanceof SVGElement && edgeFuzziness > 0) {
+          path.style.filter = `blur(${edgeFuzziness}px)`;
+        }
       });
 
       const displayedMarkers = buildDisplayedExplorationMarkers(markers, markerRadius, (marker) =>
@@ -1401,14 +1421,26 @@ function ExplorationMap({
         }
 
         const { marker, radius } = displayedMarker;
-        L.circleMarker(toNearestWorldCoordinates(marker.coordinates, mapCenterLongitude), {
+        const coordinates = toNearestWorldCoordinates(marker.coordinates, mapCenterLongitude);
+        // Leaflet rounds SVG circle radii up to 1px; use a div icon for a true 1px dot.
+        const markerLayer = radius === MIN_MARKER_RADIUS
+          ? L.marker(coordinates, {
+              icon: L.divIcon({
+                className: "map-marker-point",
+                html: `<span style="background:${escapeHtml(marker.color)};opacity:${(marker.kind === "original" ? 0.88 : 0.62) * markerOpacity}"></span>`,
+                iconAnchor: [0.5, 0.5],
+                iconSize: [1, 1],
+              }),
+            })
+          : L.circleMarker(coordinates, {
           color: marker.color,
           fillColor: marker.color,
           fillOpacity: (marker.kind === "original" ? 0.88 : 0.62) * markerOpacity,
           opacity: markerOpacity,
-          weight: marker.kind === "original" ? 2.5 : 1.5,
+          weight: getMarkerStrokeWidth(marker.kind, radius),
           radius,
-        })
+        });
+        markerLayer
           .bindTooltip(escapeHtml(marker.title), {
             direction: "top",
             opacity: 0.92,
@@ -1451,7 +1483,7 @@ function ExplorationMap({
       map.off("moveend", handleMapMoveEnd);
       map.off("zoomend", renderMarkerOverlay);
     };
-  }, [canSelectTrope, dataSignature, densitySignature, markerOpacity, markerRadius, renderMode]);
+  }, [canSelectTrope, dataSignature, densitySignature, edgeOpacity, edgeFuzziness, markerOpacity, markerRadius, renderMode]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -1492,6 +1524,8 @@ function ExplorationMap({
       svg: createExplorationMapSvg({
         connections,
         densityImage,
+        edgeOpacity,
+        edgeFuzziness,
         filterSetLegends,
         includeBasemap,
         map,
@@ -1580,14 +1614,14 @@ function ExplorationMap({
               aria-label="Marker size"
               className="range-input"
               id={markerSizeId}
-              max={MAX_MARKER_RADIUS}
-              min={MIN_MARKER_RADIUS}
-              onChange={(event) => setMarkerRadius(Number(event.target.value))}
+              max={MAX_MARKER_RADIUS * 2}
+              min={MIN_MARKER_RADIUS * 2}
+              onChange={(event) => setMarkerRadius(Number(event.target.value) / 2)}
               step="1"
               type="range"
-              value={markerRadius}
+              value={markerRadius * 2}
             />
-            <output className="pill" htmlFor={markerSizeId}>{markerRadius}px radius</output>
+            <output className="pill" htmlFor={markerSizeId}>{markerRadius * 2}px diameter</output>
           </div>
           {renderMode === "density" ? <span className="map-control-hint">Applied when showing exact locations.</span> : null}
         </label>
@@ -1606,6 +1640,42 @@ function ExplorationMap({
               value={markerOpacity}
             />
             <output className="pill" htmlFor={markerOpacityId}>{Math.round(markerOpacity * 100)}%</output>
+          </div>
+          {renderMode === "density" ? <span className="map-control-hint">Applied when showing exact locations.</span> : null}
+        </label>
+        <label className="field map-edge-control" htmlFor={edgeOpacityId}>
+          <span className="map-view-label">Edge opacity</span>
+          <div className="map-marker-size-row">
+            <input
+              aria-label="Edge opacity"
+              className="range-input"
+              id={edgeOpacityId}
+              max="1"
+              min="0"
+              onChange={(event) => setEdgeOpacity(Number(event.target.value))}
+              step="0.05"
+              type="range"
+              value={edgeOpacity}
+            />
+            <output className="pill" htmlFor={edgeOpacityId}>{Math.round(edgeOpacity * 100)}%</output>
+          </div>
+          {renderMode === "density" ? <span className="map-control-hint">Applied when showing exact locations.</span> : null}
+        </label>
+        <label className="field map-edge-control" htmlFor={edgeFuzzinessId}>
+          <span className="map-view-label">Edge fuzziness</span>
+          <div className="map-marker-size-row">
+            <input
+              aria-label="Edge fuzziness"
+              className="range-input"
+              id={edgeFuzzinessId}
+              max={MAX_EDGE_FUZZINESS}
+              min="0"
+              onChange={(event) => setEdgeFuzziness(Number(event.target.value))}
+              step="1"
+              type="range"
+              value={edgeFuzziness}
+            />
+            <output className="pill" htmlFor={edgeFuzzinessId}>{edgeFuzziness}px blur</output>
           </div>
           {renderMode === "density" ? <span className="map-control-hint">Applied when showing exact locations.</span> : null}
         </label>
@@ -1659,7 +1729,7 @@ function ExplorationMap({
             <p className="map-export-help">
               {renderMode === "density"
                 ? "All exports use the current extent. Density zones are embedded at their displayed resolution; the legend remains vector."
-                : "All exports use the current extent and marker size. The map SVG includes the current basemap, dots or clusters, connections, and legend; the vector-overlay option is for fully vector figures."}
+                : "All exports use the current extent, marker settings, edge opacity, and edge fuzziness. The map SVG includes the current basemap, dots or clusters, connections, and legend; the vector-overlay option is for fully vector figures."}
             </p>
           </div>
         </details>

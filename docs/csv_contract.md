@@ -96,7 +96,7 @@ The legacy CSV export must preserve the exact legacy column names and exact colu
 
 ### Full Marawa Export
 
-`GET /api/dataset/export.csv?format=full` is the lossless CSV export. It appends two JSON columns after the legacy columns, so the legacy prefix remains unchanged:
+`GET /api/dataset/export.csv?format=full` is the lossless CSV export. It appends the optional `Canoe name` field and two JSON columns after the legacy columns, so the legacy prefix remains unchanged:
 
 - `Marawa story metadata` preserves story completeness, original source-row information, and each trope assignment's origin and validation status.
 - `Marawa term catalog` appears on the first story row and preserves every trope, theme, and keyword, including unused terms. It records each term's text and `canonical` or `unconfirmed` confirmation status; tropes and keywords also retain their administrative review status.
@@ -237,3 +237,7 @@ API:
 - `POST /api/dataset/injections/{id}/apply` — JSON `decisions` (`row_number`, `action`, `target_key`) and `acknowledge_warnings`. Target keys are server-provided `story:<id>` or `row:<number>` values. Actions are `keep_both`, `keep_original`, and `keep_injected`; none is preselected.
 
 These endpoints follow the existing dataset administration access controls and maintenance restrictions. A completed request can be retried during its queued rebuild.
+
+### Canoe names
+
+`Canoe name` is optional story metadata alongside species, placenames, and named characters. It supports the same editing, review, and exploration filters. Imports and CSV injections accept this optional column; older CSV files default it to blank. Full Marawa exports include it after the legacy columns. Legacy exports retain their exact existing header and omit canoe names; use the full export to preserve them.

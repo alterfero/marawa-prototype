@@ -6,7 +6,7 @@ from collections import defaultdict
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session, selectinload
 
-from app.core.csv_schema import CSV_COLUMNS, DATE_OF_RECORDING_FIELD, MARAWA_STORY_METADATA_FIELD, MARAWA_TERM_CATALOG_FIELD, TROPE_FIELD, THEME_FIELD, KEYWORD_FIELD
+from app.core.csv_schema import STORY_FIELDS, DATE_OF_RECORDING_FIELD, MARAWA_STORY_METADATA_FIELD, MARAWA_TERM_CATALOG_FIELD, TROPE_FIELD, THEME_FIELD, KEYWORD_FIELD
 from app.core.dates import parse_year_interval
 from app.core.injection import TITLE_FIELDS, TERM_FIELDS, duplicate_keys, inspect_csv, prepare_injection_titles
 from app.core.parsing import normalize_text, serialize_tropes, serialize_themes, serialize_keywords
@@ -18,7 +18,7 @@ from app.services.maintenance import get_dataset_maintenance_status
 from app.services.reviews import queue_story_field_review_item, queue_story_trope_review_item, queue_story_keyword_review_item, queue_term_review_item
 
 
-_INJECTION_VALIDATION_VERSION = 4
+_INJECTION_VALIDATION_VERSION = 5
 
 
 class InjectionError(ValueError):
@@ -38,7 +38,7 @@ def _active_dataset(session: Session) -> Dataset:
 
 
 def _story_fields(story: Story) -> dict:
-    fields = {c: story.fields_json.get(c, "") for c in CSV_COLUMNS}
+    fields = {c: story.fields_json.get(c, "") for c in STORY_FIELDS}
     fields[TROPE_FIELD] = serialize_tropes([l.trope.text for l in _ordered_trope_links(story)])
     fields[THEME_FIELD] = serialize_themes([l.theme.text for l in _ordered_theme_links(story)])
     fields[KEYWORD_FIELD] = serialize_keywords([l.keyword.text for l in _ordered_keyword_links(story)])
@@ -185,7 +185,7 @@ def _queue_injected_story_review(session, *, story, before, actor_user_id, injec
         "review_type": ReviewType.STORY_CREATED if before is None else ReviewType.STORY_UPDATED,
     }
     items = []
-    for column in CSV_COLUMNS:
+    for column in STORY_FIELDS:
         if column in {TROPE_FIELD, KEYWORD_FIELD}:
             continue
         old_value = previous["fields"].get(column, "")

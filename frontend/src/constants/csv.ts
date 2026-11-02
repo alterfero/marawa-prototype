@@ -1,6 +1,7 @@
 export const TROPE_FIELD = "Motifs (Eng)";
 export const KEYWORD_FIELD = "Keywords (Eng)";
 export const THEME_FIELD = "Thème";
+export const CANOE_NAME_FIELD = "Canoe name";
 export const DATE_OF_RECORDING_FIELD = "date of recording";
 
 export const LEGACY_METADATA_SECTIONS: Array<{ title: string; fields: string[] }> = [
@@ -45,6 +46,7 @@ export const LEGACY_METADATA_SECTIONS: Array<{ title: string; fields: string[] }
       "non-human",
       "placenames",
       "named characters",
+      CANOE_NAME_FIELD,
       "external link",
       "description of link",
       "Connection to other stories",

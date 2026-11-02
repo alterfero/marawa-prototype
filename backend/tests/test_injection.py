@@ -528,3 +528,16 @@ def test_missing_abstract_does_not_make_a_title_match_a_duplicate(tmp_path):
         report = preview(session, [{"Story title (Eng)": "Legend"}, {"Story title (Eng)": "Legend"}])
         assert report["duplicate_count"] == report["warning_count"] == 0
         assert [r["fields"]["Story title (Eng)"] for r in report["rows"]] == ["Legend 1", "Legend 2"]
+
+
+def test_injection_preserves_canoe_name(tmp_path):
+    with make_session(tmp_path) as session:
+        dataset = setup_dataset(session)
+        report = preview(session, [{"Story title (Eng)": "Voyage", "Canoe name": "Tainui"}],
+                         fieldnames=[*CSV_COLUMNS, "Canoe name"])
+        assert report["error_count"] == 0
+        assert not any(issue["code"] == "ignored_column" for issue in report["issues"])
+        assert report["rows"][0]["fields"]["Canoe name"] == "Tainui"
+        apply(session, report)
+        stories = session.scalars(select(Story).where(Story.dataset_id == dataset.id)).all()
+        assert next(s for s in stories if s.fields_json["Story title (Eng)"] == "Voyage").fields_json["Canoe name"] == "Tainui"

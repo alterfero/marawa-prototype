@@ -1640,7 +1640,8 @@ p {
   width: min(100%, 17rem);
 }
 
-.map-marker-opacity-control {
+.map-marker-opacity-control,
+.map-edge-control {
   width: min(100%, 17rem);
 }
 
@@ -1740,6 +1741,7 @@ p {
 
   .map-view-control,
   .map-marker-opacity-control,
+  .map-edge-control,
   .map-marker-size-control,
   .map-export-menu {
     width: 100%;
@@ -1759,6 +1761,18 @@ p {
 .map-canvas .leaflet-container {
   height: 100%;
   width: 100%;
+}
+
+.map-marker-point,
+.map-marker-point span {
+  width: 1px;
+  height: 1px;
+  border: 0;
+}
+
+.map-marker-point span {
+  display: block;
+  border-radius: 50%;
 }
 
 .map-marker-bundle-icon {

@@ -29,7 +29,7 @@ def review_payload(admin, story):
 def test_story_data_decision_resolves_all_fields_and_keeps_term_reviews(theme_review_clients, decision, creation):
     admin, contributor = theme_review_clients
     fields = {"Story title (Eng)": "Proposed title", "Abstract (Eng)": "Proposed abstract",
-              "territory": "Tahiti", "date of recording": "[1900, 1900]", THEME_FIELD: "Proposed theme"}
+              "Canoe name": "Hōkūleʻa", "territory": "Tahiti", "date of recording": "[1900, 1900]", THEME_FIELD: "Proposed theme"}
     if creation:
         response = contributor.post("/api/stories", json={
             "expected_dataset_version": 1, "fields": fields,
@@ -57,6 +57,7 @@ def test_story_data_decision_resolves_all_fields_and_keeps_term_reviews(theme_re
     assert after["fields"]["Story title (Eng)"] == ("Admin title" if decision == "approve" else "" if creation else original["fields"]["Story title (Eng)"])
     assert after["fields"]["Abstract (Eng)"] == ("Admin abstract" if decision == "approve" else "")
     assert after["fields"]["date of recording"] == ("[1900, 1900]" if decision == "approve" else "")
+    assert after["fields"]["Canoe name"] == ("Hōkūleʻa" if decision == "approve" else "")
     for kind in ("themes", "tropes", "keywords"):
         assert after[kind] == before_story[kind]
     untouched_ids = {item["id"] for item in before_reviews} - set(payload["review_ids"])

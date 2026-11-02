@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.core.csv_reader import allow_large_csv_fields as _allow_large_csv_fields
 from app.core.csv_schema import (
     CSV_COLUMNS,
+    STORY_FIELDS,
     CSV_IMPORT_ALIASES,
     DATE_OF_RECORDING_FIELD,
     FULL_EXPORT_COLUMNS,
@@ -172,12 +173,12 @@ def _load_csv_rows(csv_bytes: bytes) -> tuple[list[_CSVImportRow], bool]:
                 if len(padded_values) < len(fieldnames):
                     padded_values.extend([""] * (len(fieldnames) - len(padded_values)))
 
-                normalized_row = {column: "" for column in CSV_COLUMNS}
+                normalized_row = {column: "" for column in STORY_FIELDS}
                 extension_values: dict[str, str] = {}
                 for column, value in zip(resolved_columns, padded_values, strict=True):
                     if column is None:
                         continue
-                    if column in CSV_COLUMNS:
+                    if column in STORY_FIELDS:
                         normalized_row[column] = clean_text(value)
                     else:
                         extension_values[column] = clean_text(value)
@@ -186,7 +187,7 @@ def _load_csv_rows(csv_bytes: bytes) -> tuple[list[_CSVImportRow], bool]:
                 rows.append(
                     _CSVImportRow(
                         source_row_number=row_number,
-                        fields={column: normalized_row.get(column, "") for column in CSV_COLUMNS},
+                        fields={column: normalized_row.get(column, "") for column in STORY_FIELDS},
                         story_metadata=_parse_marawa_metadata(
                             extension_values.get(MARAWA_STORY_METADATA_FIELD, ""),
                             column=MARAWA_STORY_METADATA_FIELD,
@@ -757,7 +758,8 @@ def export_dataset_to_csv_bytes(
     serialized_term_catalog = _serialize_metadata(_full_term_catalog(session, dataset.id)) if include_marawa_metadata else ""
 
     for story_index, story in enumerate(stories):
-        row = {column: clean_text(story.fields_json.get(column, "")) for column in CSV_COLUMNS}
+        row_columns = STORY_FIELDS if include_marawa_metadata else CSV_COLUMNS
+        row = {column: clean_text(story.fields_json.get(column, "")) for column in row_columns}
         if story.recording_year_start is not None and story.recording_year_end is not None:
             row[DATE_OF_RECORDING_FIELD] = format_year_interval(story.recording_year_start, story.recording_year_end)
         else:

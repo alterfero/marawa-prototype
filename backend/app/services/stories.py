@@ -8,7 +8,7 @@ from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.coordinates import parse_space_coord
-from app.core.csv_schema import CSV_COLUMNS, DATE_OF_RECORDING_FIELD, KEYWORD_FIELD, THEME_FIELD, TROPE_FIELD
+from app.core.csv_schema import STORY_FIELDS, DATE_OF_RECORDING_FIELD, KEYWORD_FIELD, THEME_FIELD, TROPE_FIELD
 from app.core.dates import YearInterval, format_year_interval, parse_year_interval
 from app.core.parsing import (
     clean_text,
@@ -354,7 +354,7 @@ def create_story(
         reason="story_created",
     )
     if actor_role == UserRole.CONTRIBUTOR and actor_user_id:
-        for column in CSV_COLUMNS:
+        for column in STORY_FIELDS:
             if column in {TROPE_FIELD, KEYWORD_FIELD}:
                 continue
             value = clean_text((story.fields_json or {}).get(column, ""))
@@ -1353,7 +1353,7 @@ def _assert_dataset_version(dataset: Dataset, expected_dataset_version: int) -> 
 
 def _normalize_story_fields(fields: Mapping[str, object] | None) -> dict[str, str]:
     values = fields or {}
-    return {column: clean_text(values.get(column, "")) for column in CSV_COLUMNS}
+    return {column: clean_text(values.get(column, "")) for column in STORY_FIELDS}
 
 
 def _normalize_story_field_updates(fields: Mapping[str, object] | None) -> dict[str, str]:
@@ -1361,7 +1361,7 @@ def _normalize_story_field_updates(fields: Mapping[str, object] | None) -> dict[
         return {}
     editable_columns = {
         column
-        for column in CSV_COLUMNS
+        for column in STORY_FIELDS
         if column not in {TROPE_FIELD, KEYWORD_FIELD}
     }
     return {
@@ -1741,7 +1741,7 @@ def _ordered_theme_links(story: Story) -> list[StoryTheme]:
 
 
 def _build_story_fields(story: Story) -> dict[str, str]:
-    row = {column: clean_text((story.fields_json or {}).get(column, "")) for column in CSV_COLUMNS}
+    row = {column: clean_text((story.fields_json or {}).get(column, "")) for column in STORY_FIELDS}
     if story.recording_year_start is not None and story.recording_year_end is not None:
         row[DATE_OF_RECORDING_FIELD] = format_year_interval(story.recording_year_start, story.recording_year_end)
     else:

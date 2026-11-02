@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from sqlalchemy import and_, case, delete, func, or_, select, union, update
 from sqlalchemy.orm import Session, aliased, selectinload
 
-from app.core.csv_schema import CSV_COLUMNS, KEYWORD_FIELD, THEME_FIELD, TROPE_FIELD
+from app.core.csv_schema import STORY_FIELDS, KEYWORD_FIELD, THEME_FIELD, TROPE_FIELD
 from app.core.parsing import clean_text, normalize_text
 from app.db.models import (
     AssignmentStatus,
@@ -32,7 +32,7 @@ from app.services.audit import record_audit_event
 STORY_FIELD_CHANGE_KIND = "story_field"
 STORY_TROPE_CHANGE_KIND = "story_trope"
 STORY_KEYWORD_CHANGE_KIND = "story_keyword"
-STORY_DATA_FIELDS = set(CSV_COLUMNS) - {THEME_FIELD, TROPE_FIELD, KEYWORD_FIELD}
+STORY_DATA_FIELDS = set(STORY_FIELDS) - {THEME_FIELD, TROPE_FIELD, KEYWORD_FIELD}
 
 
 def utc_now() -> datetime:
