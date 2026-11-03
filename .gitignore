@@ -36,6 +36,7 @@ frontend/dist/
 frontend/.vite/
 frontend/.eslintcache
 frontend/coverage/
+frontend/.test-build/
 frontend/*.tsbuildinfo
 
 # Environment files

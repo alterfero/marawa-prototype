@@ -5,10 +5,10 @@ import tsParser from "@typescript-eslint/parser";
 
 export default [
   {
-    ignores: ["dist"],
+    ignores: ["dist", ".test-build"],
   },
   {
-    files: ["src/**/*.{ts,tsx}"],
+    files: ["src/**/*.{ts,tsx}", "tests/**/*.ts"],
     languageOptions: {
       parser: tsParser,
       parserOptions: {

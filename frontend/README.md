@@ -56,3 +56,15 @@ npm run build
 cd frontend
 npm run lint
 ```
+
+## Tests
+
+```bash
+cd frontend
+npm test
+```
+
+The map layout tests cover shared-location polygons, zoom-dependent clustering,
+stable story positions, marker sizes, and the antimeridian. Stories sharing a
+location separate by zoom level 12; thin guides connect their display positions
+to the recorded location. The live map and SVG/print exports use the same layout.

@@ -717,6 +717,37 @@ p {
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
 }
 
+.exploration-candidate-row {
+  display: grid;
+  grid-template-columns: clamp(6.5rem, 22vw, 10rem) minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: stretch;
+}
+
+.button.exploration-candidate-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 3.5rem;
+  padding: 0.75rem;
+  border: 2px solid #1a676d;
+  background: #fff;
+  color: #125359;
+  font-weight: 700;
+}
+
+.button.exploration-candidate-add[aria-pressed="true"] {
+  background: #125359;
+  color: #fff;
+  box-shadow: 0 0 0 3px rgba(26, 103, 109, 0.18);
+}
+
+.exploration-candidate-add:focus-visible {
+  outline: 3px solid #125359;
+  outline-offset: 3px;
+}
+
 .trope-card-editor {
   margin-top: 0.5rem;
 }

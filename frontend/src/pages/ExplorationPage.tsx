@@ -39,6 +39,7 @@ import {
   toViewportCoordinates,
   type MapViewport,
 } from "../map/antimeridian";
+import { buildStoryMarkerClusters, type ProjectedStoryMarker } from "../map/storyMarkerLayout";
 import { routeHref, useHashSearch } from "../router";
 
 const DEFAULT_CENTER: [number, number] = [-15, 180];
@@ -133,21 +134,13 @@ type MapLegendLayoutItem = MapLegendItem & {
   x: number;
   y: number;
 };
-type ProjectedExplorationMarker = {
-  marker: VisibleExplorationMarker;
-  point: L.Point;
-  radius: number;
-};
-type MarkerCluster = {
-  markers: ProjectedExplorationMarker[];
-  point: L.Point;
-  radius: number;
-};
+type ProjectedExplorationMarker = ProjectedStoryMarker<VisibleExplorationMarker>;
 type DisplayedExplorationMarker =
   | {
       kind: "marker";
       marker: VisibleExplorationMarker;
       point: L.Point;
+      origin?: L.Point;
       radius: number;
     }
   | {
@@ -582,64 +575,34 @@ function chooseBundleColor(markers: ProjectedExplorationMarker[]): string {
   )[0]?.color ?? "#1f7177";
 }
 
-function makeMarkerCluster(markers: ProjectedExplorationMarker[], markerRadius: number): MarkerCluster {
-  const point = markers.reduce((sum, marker) => sum.add(marker.point), new L.Point(0, 0)).divideBy(markers.length);
-  return {
-    markers,
-    point,
-    radius: markers.length === 1 ? markers[0].radius : getBundleRadius(markers.length, markerRadius),
-  };
-}
-
-function clustersOverlap(left: MarkerCluster, right: MarkerCluster): boolean {
-  return left.point.distanceTo(right.point) <= left.radius + right.radius;
-}
-
 function buildDisplayedExplorationMarkers(
   markers: VisibleExplorationMarker[],
   markerRadius: number,
+  zoom: number,
   project: (marker: VisibleExplorationMarker) => L.Point,
 ): DisplayedExplorationMarker[] {
-  const clusters = markers.map((marker) =>
-    makeMarkerCluster(
-      [
-        {
-          marker,
-          point: project(marker),
-          radius: marker.kind === "original" ? markerRadius : getRelatedMarkerRadius(markerRadius),
-        },
-      ],
-      markerRadius,
-    ),
+  const clusters = buildStoryMarkerClusters(
+    markers.map((marker) => ({
+      marker,
+      point: project(marker),
+      radius: marker.kind === "original" ? markerRadius : getRelatedMarkerRadius(markerRadius),
+    })),
+    zoom,
+    (count) => getBundleRadius(count, markerRadius),
+    // At point size, preserve individual dots even when their locations overlap.
+    markerRadius > MIN_MARKER_RADIUS,
   );
-
-  // At point size, preserve individual dots even when their locations overlap.
-  let merged = markerRadius > MIN_MARKER_RADIUS;
-  while (merged) {
-    merged = false;
-    for (let leftIndex = 0; leftIndex < clusters.length; leftIndex += 1) {
-      for (let rightIndex = leftIndex + 1; rightIndex < clusters.length; rightIndex += 1) {
-        if (!clustersOverlap(clusters[leftIndex], clusters[rightIndex])) {
-          continue;
-        }
-        clusters[leftIndex] = makeMarkerCluster(
-          [...clusters[leftIndex].markers, ...clusters[rightIndex].markers],
-          markerRadius,
-        );
-        clusters.splice(rightIndex, 1);
-        merged = true;
-        break;
-      }
-      if (merged) {
-        break;
-      }
-    }
-  }
 
   return clusters.map((cluster) => {
     if (cluster.markers.length === 1) {
-      const [{ marker, point, radius }] = cluster.markers;
-      return { kind: "marker", marker, point, radius };
+      const [{ marker, point, radius, origin }] = cluster.markers;
+      return {
+        kind: "marker",
+        marker,
+        point: L.point(point.x, point.y),
+        radius,
+        origin: origin ? L.point(origin.x, origin.y) : undefined,
+      };
     }
 
     const color = chooseBundleColor(cluster.markers);
@@ -649,7 +612,7 @@ function buildDisplayedExplorationMarkers(
       fontSize: getBundleFontSize(cluster.markers.length, cluster.radius),
       kind: "bundle",
       markers: cluster.markers.map(({ marker }) => marker),
-      point: cluster.point,
+      point: L.point(cluster.point.x, cluster.point.y),
       radius: cluster.radius,
       textColor: getTextColorForBackground(color),
     };
@@ -829,8 +792,13 @@ function createExplorationMapSvg({
   const exportHeight = mapHeight + legend.height;
   const displayedMarkers =
     renderMode === "markers"
-      ? buildDisplayedExplorationMarkers(markers, markerRadius, (marker) => mapPointToSvg(map, marker.coordinates, view))
+      ? buildDisplayedExplorationMarkers(markers, markerRadius, view.zoom, (marker) => mapPointToSvg(map, marker.coordinates, view))
       : [];
+  const locationLineElements = displayedMarkers
+    .map((entry) => entry.kind === "marker" && entry.origin
+      ? `<line x1="${entry.origin.x}" y1="${entry.origin.y}" x2="${entry.point.x}" y2="${entry.point.y}" stroke="#64748b" stroke-width="1" stroke-opacity="${markerOpacity * 0.55}" />`
+      : "")
+    .join("");
   const markerElements =
     renderMode === "markers"
       ? displayedMarkers
@@ -892,7 +860,7 @@ function createExplorationMapSvg({
   <title>Marawa exploration map</title>
   <defs><clipPath id="map-clip"><rect height="${mapHeight}" rx="16" width="${mapWidth}" x="0" y="0" /></clipPath></defs>
   <rect fill="${includeBasemap ? "#dce7e8" : "#ffffff"}" height="${mapHeight}" rx="16" width="${mapWidth}" x="0" y="0" />
-  <g clip-path="url(#map-clip)">${tileElements}${densityElement}${connectionElements}${markerElements}</g>
+  <g clip-path="url(#map-clip)">${tileElements}${densityElement}${connectionElements}${locationLineElements}${markerElements}</g>
   <rect fill="none" height="${mapHeight}" rx="16" stroke="#d4dee0" width="${mapWidth}" x="0.5" y="0.5" />
   ${includeBasemap ? `<text fill="#48656c" font-family="Arial, Helvetica, sans-serif" font-size="10" text-anchor="end" x="${mapWidth - 10}" y="${mapHeight - 10}">© OpenStreetMap contributors</text>` : ""}
   <rect fill="#fffdf9" height="${legend.height}" width="${mapWidth}" x="0" y="${mapHeight}" />
@@ -1084,24 +1052,26 @@ function renderCandidateCards(
 
   return (
     <div className="stack">
-      {candidates.map((candidate) => (
-        <TropeCard
-          key={candidate.id}
-          trope={candidate}
-          actions={
-            <label className="checkbox-row">
-              <input
-                checked={selectedIds.includes(candidate.id)}
-                disabled={busy}
-                onChange={() => onSelect(candidate)}
-                type="checkbox"
-                aria-label={`Select ${candidate.text}`}
-              />
-              Select trope
-            </label>
-          }
-        />
-      ))}
+      {candidates.map((candidate) => {
+        const selected = selectedIds.includes(candidate.id);
+        return (
+          <div className="exploration-candidate-row" key={candidate.id}>
+            <button
+              className="button exploration-candidate-add"
+              aria-label={`Add this trope: ${candidate.text}`}
+              aria-pressed={selected}
+              disabled={busy}
+              onClick={() => onSelect(candidate)}
+              title={selected ? "Click to remove this trope from the selection" : "Add this trope to the selection"}
+              type="button"
+            >
+              <span aria-hidden="true">{selected ? "✓" : "+"}</span>
+              {selected ? "Trope added" : "Add this trope"}
+            </button>
+            <TropeCard trope={candidate} />
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -1404,9 +1374,19 @@ function ExplorationMap({
         }
       });
 
-      const displayedMarkers = buildDisplayedExplorationMarkers(markers, markerRadius, (marker) =>
+      const displayedMarkers = buildDisplayedExplorationMarkers(markers, markerRadius, activeMap.getZoom(), (marker) =>
         activeMap.latLngToContainerPoint(toNearestWorldCoordinates(marker.coordinates, mapCenterLongitude)),
       );
+      // Draw location guides beneath every marker so they never intercept clicks.
+      displayedMarkers.forEach((entry) => {
+        if (entry.kind === "marker" && entry.origin) {
+          L.polyline([
+            activeMap.containerPointToLatLng(entry.origin),
+            activeMap.containerPointToLatLng(entry.point),
+          ], { color: "#64748b", opacity: markerOpacity * 0.55, weight: 1, interactive: false })
+            .addTo(activeOverlayLayer);
+        }
+      });
       displayedMarkers.forEach((displayedMarker) => {
         if (displayedMarker.kind === "bundle") {
           const diameter = displayedMarker.radius * 2;
@@ -1429,8 +1409,8 @@ function ExplorationMap({
           return;
         }
 
-        const { marker, radius } = displayedMarker;
-        const coordinates = toNearestWorldCoordinates(marker.coordinates, mapCenterLongitude);
+        const { marker, radius, point } = displayedMarker;
+        const coordinates = activeMap.containerPointToLatLng(point);
         // Leaflet rounds SVG circle radii up to 1px; use a div icon for a true 1px dot.
         const markerLayer = radius === MIN_MARKER_RADIUS
           ? L.marker(coordinates, {
@@ -1744,6 +1724,12 @@ function ExplorationMap({
         </details>
       </div>
       <div className="map-canvas" ref={mapElementRef} />
+      {renderMode === "markers" ? (
+        <p className="muted">
+          Zoom in to separate stories at the same location, then click a marker to read a story.
+          Thin lines point to the recorded location.
+        </p>
+      ) : null}
       <div className="legend-row">
         {getMapLegendItems(renderMode, filterSetLegends).map((item) => (
           <span className="legend-item" key={`${item.symbol}-${item.color ?? ""}-${item.label}`}>
