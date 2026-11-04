@@ -77,6 +77,10 @@ import type {
 } from "./types";
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || "/api").replace(/\/$/, "");
+
+export function getTmiCatalogue(signal?: AbortSignal): Promise<import("../tmi/types").TmiCatalogue> {
+  return request("/tmi/graph", { signal });
+}
 const CSRF_COOKIE_NAME = import.meta.env.VITE_CSRF_COOKIE_NAME || "marawa_csrf";
 const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 

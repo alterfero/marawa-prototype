@@ -68,3 +68,23 @@ The map layout tests cover shared-location polygons, zoom-dependent clustering,
 stable story positions, marker sizes, and the antimeridian. Stories sharing a
 location separate by zoom level 12; thin guides connect their display positions
 to the recorded location. The live map and SVG/print exports use the same layout.
+
+## TMI atlas
+
+Admins can open **TMI atlas** (`#/tmi`) to explore the complete, separate reference
+catalogue from Katja Mellmann’s CSV (2020), bundled as `legacy_tropes/tmi.csv`.
+The chapter ring grows outward into divisions, sections and dotted codes.
+Overlapping circles become count stickers; clicking a sticker zooms in,
+and clicking an entry opens its complete descendant tree. Breadcrumbs and the
+branch directory lead back to its ancestors. Search accepts codes or words.
+
+Each trope’s inspector displays its bibliography exactly as supplied in the CSV,
+or an explicit message when no sources are listed. Original entry text and row
+numbers are available in CSV-record details. Historical first-edition entries
+remain separately identifiable; the earlier `tmi.txt` is not used.
+
+The canvas supports drag/pinch/wheel navigation, zoom and marker-size sliders,
+fit/reset buttons, and fullscreen presentation. Keyboard users can use search
+and the branch directory, or focus the canvas and use arrows, +/−, and 0.
+The layout tests cover full node coverage, subtree traversal, clustering, and
+cursor-anchored zoom. Source details are documented in `legacy_tropes/README.md`.

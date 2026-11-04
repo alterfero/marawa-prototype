@@ -21,6 +21,7 @@ import { ThemeCurationPage } from "./pages/ThemeCurationPage";
 import { KeywordCurationPage } from "./pages/KeywordCurationPage";
 import { KeywordManagementView } from "./pages/KeywordManagementView";
 import { SemanticGraphsPage } from "./pages/SemanticGraphsPage";
+import { TmiPage } from "./pages/TmiPage";
 import { UsagePage } from "./pages/UsagePage";
 import { useUsageActivity } from "./usage";
 
@@ -49,6 +50,7 @@ const NAV_ITEMS: NavItem[] = [
   { route: "/keyword-management", label: "Keyword management", minimumRole: "admin" },
   { route: "/keyword-curation", label: "Keyword curation", minimumRole: "admin" },
   { route: "/semantic-graphs", label: "Semantic graphs", minimumRole: "admin" },
+  { route: "/tmi", label: "TMI atlas", minimumRole: "admin" },
   { route: "/users", label: "Users", minimumRole: "admin" },
   { route: "/usage", label: "Usage", minimumRole: "admin" },
 ];
@@ -68,6 +70,7 @@ function minimumRoleForRoute(route: AppRoute): UserRole | null {
     case "/keyword-management":
     case "/keyword-curation":
     case "/semantic-graphs":
+    case "/tmi":
     case "/users":
     case "/usage":
       return "admin";
@@ -166,6 +169,8 @@ function CurrentPage({
       return <KeywordCurationPage />;
     case "/semantic-graphs":
       return <SemanticGraphsPage />;
+    case "/tmi":
+      return <TmiPage />;
     case "/users":
       return <AdminUsersPage />;
     case "/usage":

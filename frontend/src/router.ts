@@ -14,6 +14,7 @@ export type AppRoute =
   | "/keyword-management"
   | "/keyword-curation"
   | "/semantic-graphs"
+  | "/tmi"
   | "/users"
   | "/usage"
   | "/exploration";
@@ -33,6 +34,7 @@ const KNOWN_ROUTES: AppRoute[] = [
   "/keyword-management",
   "/keyword-curation",
   "/semantic-graphs",
+  "/tmi",
   "/users",
   "/usage",
   "/exploration",
