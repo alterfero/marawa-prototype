@@ -1,3 +1,5 @@
+from typing import Literal
+
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -11,6 +13,10 @@ class SearchRequest(BaseModel):
     query: str
     limit: int = 10
     include_string_matches: bool = False
+
+
+class TropeSearchRequest(SearchRequest):
+    specificity_levels: list[Literal[1, 2, 3, 4]] | None = None
 
 
 class SearchExplanationResponse(BaseModel):
@@ -47,7 +53,7 @@ def get_search_service(request: Request):
 
 @router.post("/tropes", response_model=SearchResponse)
 def search_tropes(
-    payload: SearchRequest,
+    payload: TropeSearchRequest,
     auth_context: AuthSessionContext = Depends(require_minimum_role(UserRole.GUEST)),
     session: Session = Depends(get_db_session),
     search_service=Depends(get_search_service),
@@ -58,6 +64,7 @@ def search_tropes(
             TermKind.TROPE,
             payload.query,
             limit=payload.limit,
+            specificity_levels=payload.specificity_levels,
             include_string_matches=payload.include_string_matches,
             actor_role=auth_context.user.role,
             actor_territories=auth_context.user.territories,

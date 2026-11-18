@@ -661,7 +661,7 @@ export function CurationPage() {
 
   async function handleDeleteAllUnusedTropes() {
     const shouldDelete = window.confirm(
-      "Delete all unused tropes?\n\nThis permanently removes every trope without story assignments in the active dataset. Rebuilds are manual, so use Rebuild in the menu afterward if you want fresh derived artifacts.",
+      "Delete all unused tropes?\n\nThis permanently removes tropes with no story assignments and no active or pending ontology links. Rebuilds are manual, so use Rebuild in the menu afterward if you want fresh derived artifacts.",
     );
     if (!shouldDelete) {
       return;
@@ -679,7 +679,7 @@ export function CurationPage() {
         title: "Unused tropes deleted",
         body:
           result.deleted_trope_count === 0
-            ? "There were no unused tropes to delete."
+            ? "No unused tropes qualified for deletion."
             : `Deleted ${result.deleted_trope_count} unused trope${result.deleted_trope_count === 1 ? "" : "s"}. Run Rebuild in the menu when you want fresh derived artifacts.`,
       });
       await refresh({ clearNotice: false });

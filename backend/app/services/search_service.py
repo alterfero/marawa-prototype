@@ -28,6 +28,7 @@ from app.db.models import (
     Trope,
     UserRole,
 )
+from app.services.ontology import populate_ontology
 from app.services.snapshots import DatasetSnapshotService
 
 
@@ -40,6 +41,7 @@ class SearchTermRecord:
     text: str
     normalized_text: str
     story_count: int
+    specificity_level: int | None = None
 
 
 def _term_matches_query_string(term: SearchTermRecord, query_marker: str) -> bool:
@@ -67,6 +69,8 @@ class SearchService:
     def handle_full_rebuild_job(self, session: Session, job: Job) -> dict[str, Any]:
         dataset = self._resolve_target_dataset(session, job.dataset_id)
         result = self.rebuild_embeddings(session, dataset_id=dataset.id)
+        result["ontology"] = populate_ontology(session, dataset.id)
+        result["dataset_version"] = dataset.version
         self._promote_dataset_after_successful_rebuild(session, dataset)
         if self.snapshot_service is not None:
             actor_user_id = (job.payload_json or {}).get("actor_user_id")
@@ -157,6 +161,7 @@ class SearchService:
         *,
         limit: int = 10,
         include_string_matches: bool = False,
+        specificity_levels: list[int] | None = None,
         actor_role: UserRole | None = None,
         actor_territories: Iterable[object] | None = None,
     ) -> dict[str, Any]:
@@ -166,6 +171,8 @@ class SearchService:
             actor_role=actor_role,
             actor_territories=actor_territories,
         )
+        if specificity_levels is not None:
+            active_terms = [term for term in active_terms if term.specificity_level in specificity_levels]
         if not active_terms:
             return {
                 "items": [],
@@ -723,13 +730,14 @@ class SearchService:
                     Trope.id,
                     Trope.text,
                     Trope.normalized_text,
+                    Trope.specificity_level,
                     func.count(func.distinct(Story.id)).label("story_count"),
                 )
                 .select_from(Trope)
                 .join(StoryTrope, StoryTrope.trope_id == Trope.id)
                 .join(Story, Story.id == StoryTrope.story_id)
                 .where(Story.dataset_id == dataset_id)
-                .group_by(Trope.id, Trope.text, Trope.normalized_text)
+                .group_by(Trope.id, Trope.text, Trope.normalized_text, Trope.specificity_level)
                 .order_by(Trope.text.asc(), Trope.id.asc())
             ).all()
             return [
@@ -737,6 +745,7 @@ class SearchService:
                     id=row.id,
                     text=row.text,
                     normalized_text=row.normalized_text,
+                    specificity_level=row.specificity_level,
                     story_count=int(row.story_count),
                 )
                 for row in rows

@@ -4,12 +4,16 @@ import csv
 import hashlib
 import io
 import json
+from collections import defaultdict
 from dataclasses import dataclass
+from uuid import UUID
 from typing import Any
 
 from sqlalchemy import case, select
 from sqlalchemy.orm import Session, selectinload
 
+from app.compute.specificity import RATING_SOURCES
+from app.core.ontology import validate_graph
 from app.core.csv_reader import allow_large_csv_fields as _allow_large_csv_fields
 from app.core.csv_schema import (
     CSV_COLUMNS,
@@ -51,6 +55,7 @@ from app.db.models import (
     ThemeConfirmationStatus,
     Trope,
     TropeConfirmationStatus,
+    TropeParent,
 )
 
 
@@ -221,7 +226,7 @@ def _row_hash(fields: dict[str, str]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def _parse_full_export_catalog(rows: list[_CSVImportRow]) -> dict[str, dict[str, dict[str, str]]]:
+def _parse_full_export_catalog(rows: list[_CSVImportRow]) -> dict[str, dict[str, dict[str, Any]]]:
     if rows[0].term_catalog is None or any(row.term_catalog is not None for row in rows[1:]):
         raise CSVImportValidationError(
             "A full Marawa export must include its term catalog exactly once, on the first story row."
@@ -232,7 +237,7 @@ def _parse_full_export_catalog(rows: list[_CSVImportRow]) -> dict[str, dict[str,
     if catalog.get("schema_version") != 1:
         raise CSVImportValidationError("The Marawa term catalog has an unsupported schema version.")
 
-    parsed_catalog: dict[str, dict[str, dict[str, str]]] = {
+    parsed_catalog: dict[str, dict[str, dict[str, Any]]] = {
         "tropes": {},
         "themes": {},
         "keywords": {},
@@ -242,6 +247,8 @@ def _parse_full_export_catalog(rows: list[_CSVImportRow]) -> dict[str, dict[str,
         ("themes", ThemeConfirmationStatus, False),
         ("keywords", KeywordConfirmationStatus, True),
     )
+    levels: dict[str, int] = {}
+    edges: list[tuple[str, str, str]] = []
     for collection, confirmation_enum, includes_review_status in specifications:
         items = catalog.get(collection)
         if not isinstance(items, list):
@@ -275,8 +282,34 @@ def _parse_full_export_catalog(rows: list[_CSVImportRow]) -> dict[str, dict[str,
                     raise CSVImportValidationError(
                         f"The {collection[:-1]} {text!r} has an invalid review status in the Marawa term catalog."
                     ) from exc
+            if collection == "tropes" and "ontology" in item:
+                ontology = item["ontology"]
+                if not isinstance(ontology, dict):
+                    raise CSVImportValidationError(f"Invalid ontology for {text!r}.")
+                key = ontology.get("id")
+                try:
+                    if str(UUID(str(key))) != key or key in levels:
+                        raise ValueError
+                except (ValueError, TypeError):
+                    raise CSVImportValidationError(f"Invalid or repeated ontology ID for {text!r}.") from None
+                level = ontology.get("level")
+                if type(level) is not int or level not in (1, 2, 3, 4) or ontology.get("source") not in RATING_SOURCES:
+                    raise CSVImportValidationError(f"Invalid specificity rating for {text!r}.")
+                broader = ontology.get("broader", [])
+                if not isinstance(broader, list):
+                    raise CSVImportValidationError(f"Invalid broader links for {text!r}.")
+                levels[key] = level
+                for link in broader:
+                    if not isinstance(link, dict) or not all(isinstance(link.get(k), str) for k in ("id", "status")):
+                        raise CSVImportValidationError(f"Invalid broader link for {text!r}.")
+                    edges.append((key, link["id"], link["status"]))
+                parsed_item["ontology"] = ontology
             parsed_catalog[collection][marker] = parsed_item
 
+    try:
+        validate_graph(levels, edges)
+    except ValueError as exc:
+        raise CSVImportValidationError(str(exc)) from exc
     return parsed_catalog
 
 
@@ -405,7 +438,7 @@ def _preload_full_export_catalog(
     session: Session,
     *,
     dataset_id: str,
-    catalog: dict[str, dict[str, dict[str, str]]],
+    catalog: dict[str, dict[str, dict[str, Any]]],
 ) -> tuple[dict[str, Trope], dict[str, Theme], dict[str, Keyword]]:
     tropes: dict[str, Trope] = {}
     themes: dict[str, Theme] = {}
@@ -418,6 +451,10 @@ def _preload_full_export_catalog(
             confirmation_status=TropeConfirmationStatus(item["confirmation_status"]),
             review_status=TermReviewStatus(item["review_status"]),
         )
+        if ontology := item.get("ontology"):
+            tropes[marker].ontology_id = ontology["id"]
+            tropes[marker].specificity_level = ontology["level"]
+            tropes[marker].specificity_source = ontology["source"]
     for marker, item in catalog["themes"].items():
         themes[marker] = Theme(
             dataset_id=dataset_id,
@@ -434,6 +471,11 @@ def _preload_full_export_catalog(
 
     session.add_all([*tropes.values(), *themes.values(), *keywords.values()])
     session.flush()
+    by_key = {trope.ontology_id: trope for trope in tropes.values()}
+    for marker, item in catalog["tropes"].items():
+        for link in item.get("ontology", {}).get("broader", []):
+            session.add(TropeParent(dataset_id=dataset_id, child_id=tropes[marker].id,
+                                    parent_id=by_key[link["id"]].id, status=link["status"]))
     return tropes, themes, keywords
 
 
@@ -681,6 +723,10 @@ def _full_term_catalog(session: Session, dataset_id: str) -> dict[str, Any]:
     keywords = session.scalars(
         select(Keyword).where(Keyword.dataset_id == dataset_id).order_by(Keyword.normalized_text, Keyword.id)
     ).all()
+    by_id = {trope.id: trope.ontology_id for trope in tropes}
+    broader = defaultdict(list)
+    for link in session.scalars(select(TropeParent).where(TropeParent.dataset_id == dataset_id)):
+        broader[link.child_id].append({"id": by_id[link.parent_id], "status": link.status})
     return {
         "schema_version": 1,
         "tropes": [
@@ -688,6 +734,12 @@ def _full_term_catalog(session: Session, dataset_id: str) -> dict[str, Any]:
                 "text": trope.text,
                 "confirmation_status": trope.confirmation_status.value,
                 "review_status": trope.review_status.value,
+                **({"ontology": {
+                    "id": trope.ontology_id,
+                    "level": trope.specificity_level,
+                    "source": trope.specificity_source,
+                    "broader": sorted(broader[trope.id], key=lambda link: link["id"]),
+                }} if trope.specificity_level is not None else {}),
             }
             for trope in tropes
         ],

@@ -15,7 +15,7 @@ def _build_alembic_config(database_url: str | None = None) -> Config:
     config = Config(str(BACKEND_ROOT / "alembic.ini"))
     config.set_main_option("script_location", str(BACKEND_ROOT / "alembic"))
     if database_url is not None:
-        config.set_main_option("sqlalchemy.url", database_url)
+        config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
     return config
 
 

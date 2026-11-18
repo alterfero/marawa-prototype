@@ -34,6 +34,8 @@ class DeleteTropeResponse(BaseModel):
 
 
 class TropeListItemResponse(BaseModel):
+    specificity_level: int
+    specificity_source: str
     id: str
     version: int
     text: str
@@ -58,6 +60,8 @@ class TropeStorySummaryResponse(BaseModel):
 
 
 class TropeDetailResponse(BaseModel):
+    specificity_level: int
+    specificity_source: str
     id: str
     version: int
     text: str
@@ -112,6 +116,7 @@ def _queued_job_summary(job) -> JobSummaryResponse | None:
 @router.get("", response_model=list[TropeListItemResponse])
 def read_tropes(
     unused_only: bool = Query(default=False),
+    specificity_level: int | None = Query(default=None, ge=1, le=4),
     q: str | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=5000),
     include_story_ids: bool = Query(default=False),
@@ -123,6 +128,7 @@ def read_tropes(
         for item in list_canonical_tropes(
             session,
             unused_only=unused_only,
+            specificity_level=specificity_level,
             query=q,
             limit=limit,
             include_story_ids=include_story_ids,

@@ -1,7 +1,7 @@
 """Parse Mellmann's CSV into a reference tree, preserving its text and sources.
 
-Editorial headings and dotted-code ancestry are navigation, not measured
-abstraction. Historical entries have separate IDs; absent prefixes are gaps.
+Editorial headings and dotted codes determine tree depth. Marawa trope specificity
+levels are independent of that depth. Historical entries have separate IDs. Absent prefixes are gaps.
 """
 
 import csv

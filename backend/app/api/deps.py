@@ -106,6 +106,7 @@ _DATASET_MUTATION_PREFIXES = (
     "/keywords",
     "/themes",
     "/curation",
+    "/ontology",
     "/review",
     "/time-machine",
 )

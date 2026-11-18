@@ -4,6 +4,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.db.models import (
+    AuditEvent,
     Dataset,
     DatasetStatus,
     Job,
@@ -152,9 +153,21 @@ def _embedding_status(
             )
 
     ready = latest_successful_rebuild is not None
+    version_current = rebuilt_dataset_version == dataset.version
+    if rebuilt_dataset_version is not None and rebuilt_dataset_version < dataset.version:
+        # A graph edit advances the concurrency token without changing embedding inputs.
+        # Every intervening revision must be accounted for, including gaps between graph edits.
+        revision = AuditEvent.payload_json["dataset_version"].as_integer()
+        ontology_revisions = session.scalar(select(func.count(func.distinct(revision))).where(
+            AuditEvent.dataset_id == dataset.id,
+            AuditEvent.event_type.in_(("trope.ontology_initialized", "trope.specificity_updated",
+                                       "trope.ontology_link_updated")),
+            revision > rebuilt_dataset_version, revision <= dataset.version,
+        ))
+        version_current = ontology_revisions == dataset.version - rebuilt_dataset_version
     current = (
         ready
-        and rebuilt_dataset_version == dataset.version
+        and version_current
         and actual_trope_embeddings == trope_count
         and actual_theme_embeddings == theme_count
         and actual_keyword_embeddings == keyword_count

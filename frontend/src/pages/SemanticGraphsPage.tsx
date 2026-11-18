@@ -1,5 +1,4 @@
-import { forceCenter, forceCollide, forceLink, forceManyBody, forceSimulation } from "d3-force-3d";
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent, type RefObject, type WheelEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent, type WheelEvent } from "react";
 
 import {
   ApiError,
@@ -18,6 +17,7 @@ import type {
   SemanticGraphResponse,
   SemanticGraphScope,
 } from "../api/types";
+import { useElementSize, useForceLayout, type PositionedNode } from "../components/useForceLayout";
 import { useDatasetMaintenance } from "../maintenance";
 
 interface PageNotice {
@@ -26,27 +26,7 @@ interface PageNotice {
   body?: string;
 }
 
-interface ForceNode extends SemanticGraphNode {
-  x: number;
-  y: number;
-  vx?: number;
-  vy?: number;
-  fx?: number | null;
-  fy?: number | null;
-  radius: number;
-}
-
-interface ForceLink {
-  source: string | ForceNode;
-  target: string | ForceNode;
-  similarity: number;
-}
-
-interface ForceSimulationInstance {
-  stop: () => ForceSimulationInstance;
-  alphaTarget: (value: number) => ForceSimulationInstance;
-  restart: () => ForceSimulationInstance;
-}
+type ForceNode = PositionedNode<SemanticGraphNode>;
 
 interface PanState {
   x: number;
@@ -68,7 +48,7 @@ const ITEM_KINDS: Array<{ value: SemanticGraphItemKind; label: string }> = [
 const MINIMUM_SIMILARITY_THRESHOLD = 0.6;
 const MAXIMUM_SIMILARITY_THRESHOLD = 1;
 
-function nodeRadius(storyCount: number): number {
+function nodeRadius({ story_count: storyCount }: SemanticGraphNode): number {
   return Math.min(34, Math.max(11, 9 + Math.sqrt(Math.max(storyCount, 0)) * 5));
 }
 
@@ -123,28 +103,6 @@ function graphNeighborhood(graph: SemanticGraphResponse, rootNodeId: string, max
   };
 }
 
-function useElementSize<T extends HTMLElement>(): [RefObject<T>, { width: number; height: number }] {
-  const ref = useRef<T>(null);
-  const [size, setSize] = useState({ width: 760, height: 600 });
-
-  useEffect(() => {
-    const element = ref.current;
-    if (!element) {
-      return;
-    }
-    const updateSize = () => {
-      const rect = element.getBoundingClientRect();
-      setSize({ width: Math.max(320, rect.width), height: Math.max(400, rect.height) });
-    };
-    updateSize();
-    const observer = new ResizeObserver(updateSize);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, []);
-
-  return [ref, size];
-}
-
 function SemanticForceGraph({
   graph,
   disabled,
@@ -166,10 +124,7 @@ function SemanticForceGraph({
 }) {
   const [viewportRef, viewport] = useElementSize<HTMLDivElement>();
   const svgRef = useRef<SVGSVGElement>(null);
-  const simulationRef = useRef<ForceSimulationInstance | null>(null);
-  const layoutNodesRef = useRef<ForceNode[]>([]);
-  const graphRef = useRef(graph);
-  const animationFrameRef = useRef<number | null>(null);
+  const { liveNodes, nodesById, simulationRef, redraw } = useForceLayout(graph.nodes, graph.links, nodeRadius, viewport);
   const draggingNodeIdRef = useRef<string | null>(null);
   const mergeDragRef = useRef(false);
   const dragStartPointRef = useRef<{ x: number; y: number } | null>(null);
@@ -177,97 +132,12 @@ function SemanticForceGraph({
   const nodeWasDraggedRef = useRef(false);
   const panDragRef = useRef<PanDrag | null>(null);
   const lastGraphPointerRef = useRef<{ clientX: number; clientY: number } | null>(null);
-  const [layoutRevision, setLayoutRevision] = useState(0);
   const [pan, setPan] = useState<PanState>({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   const panRef = useRef<PanState>(pan);
   const zoomRef = useRef(zoom);
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
-  const graphTopologyKey = [
-    graph.nodes.map((node) => `${node.id}:${node.story_count}`).sort().join("|"),
-    graph.links.map((link) => `${link.source}:${link.target}:${link.similarity}`).sort().join("|"),
-  ].join(";");
-  graphRef.current = graph;
-
-  useEffect(() => {
-    simulationRef.current?.stop();
-    if (animationFrameRef.current !== null) {
-      window.cancelAnimationFrame(animationFrameRef.current);
-      animationFrameRef.current = null;
-    }
-
-    const currentGraph = graphRef.current;
-    const priorNodes = new Map(layoutNodesRef.current.map((node) => [node.id, node]));
-    const hasPriorLayout = currentGraph.nodes.some((node) => priorNodes.has(node.id));
-    const forceNodes: ForceNode[] = currentGraph.nodes.map((node, index) => {
-      const priorNode = priorNodes.get(node.id);
-      const angle = index * 2.399963229728653;
-      const distance = 70 + Math.sqrt(index + 1) * 22;
-      return {
-        ...node,
-        radius: nodeRadius(node.story_count),
-        x: priorNode?.x ?? viewport.width / 2 + Math.cos(angle) * distance,
-        y: priorNode?.y ?? viewport.height / 2 + Math.sin(angle) * distance,
-        vx: 0,
-        vy: 0,
-      };
-    });
-    const forceLinks: ForceLink[] = currentGraph.links.map((link) => ({ ...link }));
-    layoutNodesRef.current = forceNodes;
-
-    const simulation = forceSimulation(forceNodes, 2)
-      .force(
-        "link",
-        forceLink<ForceNode, ForceLink>(forceLinks)
-          .id((node: ForceNode) => node.id)
-          .distance((link: ForceLink) => {
-            const source = link.source as ForceNode;
-            const target = link.target as ForceNode;
-            return Math.max(source.radius + target.radius + 18, 280 - link.similarity * 200);
-          })
-          .strength((link: ForceLink) => 0.25 + link.similarity * 0.68),
-      )
-      .force("charge", forceManyBody<ForceNode>().strength(-155))
-      .force("collide", forceCollide<ForceNode>((node: ForceNode) => node.radius + 7).strength(0.98))
-      .force("center", forceCenter(viewport.width / 2, viewport.height / 2))
-      .alpha(hasPriorLayout ? 0.18 : 1)
-      .alphaDecay(hasPriorLayout ? 0.07 : 0.026);
-    simulationRef.current = simulation;
-
-    const renderTick = () => {
-      if (animationFrameRef.current !== null) {
-        return;
-      }
-      animationFrameRef.current = window.requestAnimationFrame(() => {
-        animationFrameRef.current = null;
-        setLayoutRevision((revision) => revision + 1);
-      });
-    };
-    simulation.on("tick", renderTick);
-    renderTick();
-
-    return () => {
-      simulation.stop();
-      if (animationFrameRef.current !== null) {
-        window.cancelAnimationFrame(animationFrameRef.current);
-      }
-    };
-  }, [graphTopologyKey, viewport.height, viewport.width]);
-
-  useEffect(() => {
-    const latestNodes = new Map(graph.nodes.map((node) => [node.id, node]));
-    for (const node of layoutNodesRef.current) {
-      const latestNode = latestNodes.get(node.id);
-      if (latestNode) {
-        Object.assign(node, latestNode, { radius: nodeRadius(latestNode.story_count) });
-      }
-    }
-    setLayoutRevision((revision) => revision + 1);
-  }, [graph]);
-
-  const liveNodes = layoutNodesRef.current;
-  const nodesById = useMemo(() => new Map(liveNodes.map((node) => [node.id, node])), [liveNodes, layoutRevision]);
   const liveLinks = useMemo(
     () =>
       graph.links
@@ -338,7 +208,7 @@ function SemanticForceGraph({
       // Keep the target still while the source is deliberately positioned over it.
       simulationRef.current?.stop();
     }
-    setLayoutRevision((revision) => revision + 1);
+    redraw();
     event.currentTarget.setPointerCapture(event.pointerId);
   }
 
@@ -394,7 +264,7 @@ function SemanticForceGraph({
       setDropTargetId(
         mergeDragRef.current && nodeWasDraggedRef.current ? findMergeTarget(node)?.id ?? null : null,
       );
-      setLayoutRevision((revision) => revision + 1);
+      redraw();
       return;
     }
 

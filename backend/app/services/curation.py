@@ -23,8 +23,10 @@ from app.db.models import (
     TermSimilarityCache,
     Trope,
     TropeConfirmationStatus,
+    TropeParent,
     UserRole,
 )
+from app.services.ontology import incident_links, transfer_merge_links
 from app.services.audit import record_audit_event
 from app.services.stories import sync_story_derived_fields
 
@@ -52,6 +54,7 @@ def list_canonical_tropes(
     session: Session,
     *,
     unused_only: bool = False,
+    specificity_level: int | None = None,
     query: str | None = None,
     limit: int = 100,
     include_story_ids: bool = False,
@@ -68,6 +71,8 @@ def list_canonical_tropes(
             Trope.id,
             Trope.text,
             Trope.version,
+            Trope.specificity_level,
+            Trope.specificity_source,
             Trope.confirmation_status,
             Trope.cached_story_count.label("story_count"),
         )
@@ -76,6 +81,8 @@ def list_canonical_tropes(
     )
     if query_text:
         statement = statement.where(func.lower(Trope.text).contains(query_text.lower()))
+    if specificity_level is not None:
+        statement = statement.where(Trope.specificity_level == specificity_level)
     if unused_only:
         statement = statement.where(Trope.cached_story_count == 0)
 
@@ -112,6 +119,8 @@ def list_canonical_tropes(
         {
             "id": row.id,
             "text": row.text,
+            "specificity_level": row.specificity_level,
+            "specificity_source": row.specificity_source,
             "version": int(row.version or 1),
             "confirmation_status": row.confirmation_status.value,
             "story_count": int(row.story_count or 0),
@@ -723,6 +732,7 @@ def delete_unused_tropes(
                 Trope.dataset_id == active_dataset.id,
                 Trope.cached_story_count == 0,
                 ~Trope.story_links.any(),
+                ~select(TropeParent.child_id).where(incident_links(Trope.id), TropeParent.status != 'rejected').exists(),
             )
         ).all()
     )
@@ -1027,6 +1037,7 @@ def _apply_trope_merge(
     )
     if refreshed_source_trope is not None:
         _delete_trope_artifacts(session, source_trope_id)
+        transfer_merge_links(session, source_trope_id, target_trope_id)
         session.delete(refreshed_source_trope)
 
     return affected_story_ids

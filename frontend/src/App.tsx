@@ -21,6 +21,7 @@ import { ThemeCurationPage } from "./pages/ThemeCurationPage";
 import { KeywordCurationPage } from "./pages/KeywordCurationPage";
 import { KeywordManagementView } from "./pages/KeywordManagementView";
 import { SemanticGraphsPage } from "./pages/SemanticGraphsPage";
+import { OntologyPage } from "./pages/OntologyPage";
 import { TmiPage } from "./pages/TmiPage";
 import { UsagePage } from "./pages/UsagePage";
 import { useUsageActivity } from "./usage";
@@ -43,6 +44,7 @@ const NAV_ITEMS: NavItem[] = [
   { route: "/stories", label: "Stories", minimumRole: "guest" },
   { route: "/create", label: "Create new entry", minimumRole: "contributor" },
   { route: "/review", label: "Review queue", minimumRole: "admin" },
+  { route: "/ontology", label: "Trope ontology", minimumRole: "guest" },
   { route: "/trope-management", label: "Trope management", minimumRole: "admin" },
   { route: "/curation", label: "Trope curation", minimumRole: "admin" },
   { route: "/theme-management", label: "Theme management", minimumRole: "admin" },
@@ -59,6 +61,7 @@ function minimumRoleForRoute(route: AppRoute): UserRole | null {
   switch (route) {
     case "/dataset":
     case "/stories":
+    case "/ontology":
       return "guest";
     case "/create":
       return "contributor";
@@ -149,6 +152,8 @@ function CurrentPage({
       return <RedeemTokenPage />;
     case "/dataset":
       return <DatasetPage canManageDataset={canManageDataset} />;
+    case "/ontology":
+      return <OntologyPage canEdit={canManageDataset} />;
     case "/stories":
       return <StoriesPage canEdit={canEditStories} />;
     case "/create":

@@ -101,6 +101,8 @@ The legacy CSV export must preserve the exact legacy column names and exact colu
 - `Marawa story metadata` preserves story completeness, original source-row information, and each trope assignment's origin and validation status.
 - `Marawa term catalog` appears on the first story row and preserves every trope, theme, and keyword, including unused terms. It records each term's text and `canonical` or `unconfirmed` confirmation status; tropes and keywords also retain their administrative review status.
 
+The optional `ontology` object on each trope records its stable UUID, level (1–4), rating source, and broader links by UUID with their review status. Full dataset replacement restores these decisions, including rejected links. Older files without ontology metadata receive initial ratings from the workbook-calibrated classifier. Injection preserves existing local ratings, imports ratings on new tropes, and submits incoming links for review while retaining prior local decisions.
+
 The standard `GET /api/dataset/export.csv` response remains the strict legacy export for external tools that require the exact legacy header. A full export can be uploaded again to restore this semantic data.
 
 ## Field Value Normalization

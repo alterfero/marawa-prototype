@@ -623,6 +623,8 @@ export interface TropeStorySummary {
 }
 
 export interface TropeDetail {
+  specificity_level: number;
+  specificity_source: string;
   id: string;
   version: number;
   text: string;
@@ -978,4 +980,28 @@ export interface InjectionPreview {
   issues: InjectionIssue[];
   rows: InjectionRow[];
   result?: InjectionResult | null;
+}
+
+export interface OntologyNode {
+  id: string;
+  confirmation_status: TropeConfirmationStatus;
+  text: string;
+  specificity_level: number;
+  specificity_source: string;
+  ontology_id: string;
+}
+
+export interface OntologyLink {
+  child_id: string;
+  parent_id: string;
+  status: "inferred" | "approved" | "pending";
+}
+
+export interface TropeOntology {
+  dataset_id: string;
+  version: number;
+  root: { id: string; text: string; specificity_level: number };
+  root_children: string[];
+  tropes: OntologyNode[];
+  links: OntologyLink[];
 }

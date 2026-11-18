@@ -119,10 +119,31 @@ Stories enter the system through a legacy-compatible CSV import, are edited and 
 - Self-service user registration.
 - Multiple concurrently active datasets.
 - Story deletion through the product UI or API.
-- Hierarchical trope taxonomies, ontology management, or nested trope structures.
 - Similarity search over full stories, abstracts, or arbitrary fields outside tropes and keywords.
 - A separate worker service or distributed queue.
 - Multi-replica web execution.
+
+### Trope specificity levels
+
+Level 0 is reserved for the ontology root. Reviewers assign levels 1–4 to story tropes. Higher numbers indicate more specific participants, actions, relationships, or circumstances. The following examples illustrate the scale.
+
+| Specificity level | Example |
+| --- | --- |
+| 0 (root) | Something happens. |
+| 1 (broadest tropes) | Someone kills their animal sibling. |
+| 2 | Someone kills their animal brother. |
+| 3 | A boy kills his younger animal brother. |
+| 4 (most specific tropes) | A young boy fatally stabs his adopted younger brother, who is a snake. |
+
+The Trope ontology view lists every catalogue trope, including unassigned tropes. A trope can have multiple broader tropes, including one in its own band. Each broader link expresses a generalization that follows from the narrower wording. A compound event may have both a broader compound and an entailed component as parents. Tropes with no active parents appear directly under the level-0 root.
+
+The initial pass uses the lead researcher's workbook. Consistent normalized wording matches carry the researcher rating. Conflicting ratings use the most frequent level, with the broader level used for ties, and appear as disputed. A local classifier trained on the agreed examples estimates a provisional level for other wordings from their participants, actions, qualifiers and phrasing. Both provisional and disputed levels are available for search. Saving a rating in the ontology view marks it as curator-rated.
+
+Full rebuilds seed a small set of explicit generalizations between existing wordings and queue additional candidates for review. The graph distinguishes inferred, approved, pending and rejected links. Public map traversal uses inferred and approved links. Curators can review links from either end, add multiple parents and remove links. Rewording sends affected active links back to review. Merging preserves possible links to the surviving trope for review.
+
+In simple Exploration, candidate search can be filtered by level. Mapping selected tropes starts at the same level and can include broader levels, narrower levels or both. Accepted graph paths expand exact story matches, and similarity search uses the selected bands. The structural root never expands a selection to every story.
+
+Full Marawa CSV exports and Time Machine snapshots preserve stable trope IDs, rating sources and all link decisions. Legacy CSV keeps its historical columns. On legacy imports and newly created tropes, Marawa assigns levels locally. On full dataset replacement it restores the exported ratings. CSV injection keeps existing local ratings and queues incoming links for review.
 
 ## Core User Workflows
 

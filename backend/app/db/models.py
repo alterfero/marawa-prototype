@@ -11,6 +11,7 @@ from sqlalchemy import (
     Enum as SqlEnum,
     Float,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     LargeBinary,
@@ -344,12 +345,20 @@ class Trope(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "tropes"
     __table_args__ = (
         Index("uq_tropes_dataset_normalized_text", "dataset_id", "normalized_text", unique=True),
+        Index("uq_tropes_dataset_id_id", "dataset_id", "id", unique=True),
+        Index("uq_tropes_dataset_ontology_id", "dataset_id", "ontology_id", unique=True),
+        Index("ix_tropes_dataset_specificity", "dataset_id", "specificity_level"),
     )
 
     dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.id", ondelete="RESTRICT"), nullable=False, index=True)
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
     normalized_text: Mapped[str] = mapped_column(String(512), nullable=False)
+    specificity_level: Mapped[int | None] = mapped_column(Integer, CheckConstraint("specificity_level BETWEEN 1 AND 4"))
+    ontology_id: Mapped[str] = mapped_column(String(36), default=generate_uuid, nullable=False)
+    specificity_source: Mapped[str | None] = mapped_column(String(16), CheckConstraint(
+        "specificity_source IN ('researcher', 'curator', 'provisional', 'disputed')"
+    ))
     review_status: Mapped[TermReviewStatus] = mapped_column(
         SqlEnum(
             TermReviewStatus,
@@ -382,9 +391,29 @@ class Trope(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     @validates("text")
     def _sync_text_fields(self, _: str, value: str) -> str:
+        from app.compute.specificity import classify
+
         cleaned = clean_text(value)
-        self.normalized_text = normalize_text(cleaned)
+        marker = normalize_text(cleaned)
+        if self.normalized_text != marker:
+            self.specificity_level, self.specificity_source = classify(marker)
+        self.normalized_text = marker
         return cleaned
+
+
+class TropeParent(Base):
+    __tablename__ = "trope_parents"
+    __table_args__ = (
+        ForeignKeyConstraint(["dataset_id", "child_id"], ["tropes.dataset_id", "tropes.id"], ondelete="CASCADE"),
+        ForeignKeyConstraint(["dataset_id", "parent_id"], ["tropes.dataset_id", "tropes.id"], ondelete="CASCADE"),
+        CheckConstraint("child_id <> parent_id"),
+        CheckConstraint("status IN ('inferred', 'pending', 'approved', 'rejected')"),
+        Index("ix_trope_parents_dataset_parent", "dataset_id", "parent_id"),
+    )
+    dataset_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    child_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    parent_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    status: Mapped[str] = mapped_column(String(12), nullable=False)
 
 
 class Keyword(UUIDPrimaryKeyMixin, TimestampMixin, Base):

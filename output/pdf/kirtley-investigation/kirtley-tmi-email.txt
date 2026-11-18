@@ -1,0 +1,686 @@
+Subject: Kirtley / Thompson (1955–58): discrepant entries, reused starred numbers and “+” additions
+
+The following inventory compares Bacil F. Kirtley’s A Motif-Index of Traditional Polynesian Narratives (1971), in the supplied digital edition, with Thompson’s revised and enlarged Motif-Index (1955–58).
+
+Scope: all 6,062 entry starts in Kirtley’s main index were screened. The comparison concerns the index numbers and descriptions, not an independent reading of every narrative cited by Kirtley. The working TMI reference is Katja Mellmann’s transcription of the revised edition, supplemented by Thompson’s text and targeted checks of the printed first volume. A claim of complete agreement with every page of all six printed TMI volumes would go beyond these checks.
+
+Page numbers below are those printed in the supplied Kirtley PDF; add 36 to locate the corresponding PDF-viewer page. Kirtley’s descriptions are transcribed with line breaks removed and bibliographical references omitted. TMI descriptions are paraphrased unless individual words are quoted. Repeated labels are retained as separate entries.
+
+As requested, list 1 contains unmarked entries only. Entries with “+” belong in list 3. Entries carrying both “*” and “+” appear in both lists 2 and 3 when their numerical code already exists in TMI.
+
+RESULTS
+- List 1: 11 substantive description mismatches, plus 10 explicitly qualified cases for review.
+- List 2: 28 starred entry occurrences using 25 existing TMI heading numbers; one additional number, A939.1, survives as a cross-reference and is reported separately.
+- List 3: 397 entries with a textual “+”, plus three entries with graphical cross-like marks whose interpretation as “+” remains provisional.
+
+Kirtley expressly allows minor variants of Thompson’s motifs. Ordinary shortening, spelling differences, local names, and compatible examples are therefore not counted automatically as different motifs. Nor does an asterisk on an existing number necessarily imply a different meaning.
+
+1. UNMARKED ENTRIES WITH SUBSTANTIVE DESCRIPTION MISMATCHES
+
+These are discrepancies between the descriptions as written. Where a typographical error could explain the discrepancy, it is identified below; these should not all be described as deliberate reassignments.
+
+1. A714.7 — p. 47
+   Kirtley: Origin of sun: from right eye of god when he dies.
+   TMI: Rama tears out his eyes following his brother’s death; they become the sun and moon.
+   Comment: The death concerns a different person, and Kirtley specifies the right eye and the sun alone. This changes the event, beyond merely replacing a deity’s name.
+
+2. A1335.3 — p. 80
+   Kirtley: Origin of death from unsuccessful imitation of bad creator. The bad creator attempts in vain to endow his creations with life like the good creator. Fails and thus introduces death.
+   TMI: People lose everlasting life through an unwise choice between two bundles.
+   Comment: Kirtley repeats A1335.3 on this page. The other occurrence (unwise choice) agrees with TMI. The unsuccessful-imitation entry corresponds to TMI A1335.2.
+
+3. A2775 — p. 112
+   Kirtley: Why babies have soft spots in head.
+   TMI: Explanation of why some trees are stunted.
+   Comment: Human anatomy is assigned a number used by TMI for the stunted growth of trees.
+
+4. C984.3 — p. 163
+   Kirtley: Storm because of broken tabu.
+   TMI: A broken taboo causes a flood.
+   Comment: Kirtley repeats C984.3 on this page. The flood entry agrees with TMI; the storm entry corresponds to TMI C984.2.
+
+5. D434.3 — p. 178
+   Kirtley: Transformation: canoe-builder to person.
+   TMI: A canoe-bailer becomes a person.
+   Comment: Builder and bailer are different entities. This is a caption-level error candidate, probably a typographical substitution rather than a deliberately new classification; the shared Beckwith reference supports that possibility.
+
+6. D491.3 — p. 181
+   Kirtley: Magic dog shrinks in size.
+   TMI: A saint confines a large volume of water in a small ditch.
+   Comment: An animal shrinking and water being compressed into a ditch are different specific motifs.
+
+7. D1882 — p. 217
+   Kirtley: Rejuvenation of supernatural person.
+   TMI: A supernatural being rejuvenates someone.
+   Comment: The supernatural person changes from the agent of rejuvenation to its recipient. This is a caption-level role reversal; a one-word typographical error remains possible.
+
+8. E235.2.2 — p. 242
+   Kirtley: Ghost returns because corpse was not properly buried.
+   TMI: A ghost returns because its corpse was improperly cremated.
+   Comment: Burial replaces cremation. TMI E235.2 is the broader proper-burial category; E235.2.2 specifically concerns burning.
+
+9. F420.5.2.2.2 — p. 293
+   Kirtley: Water-spirits kidnap mortals and keep them under water.
+   TMI: A mistreated boy calls on water spirits to take him; rising water engulfs him.
+   Comment: Kirtley’s wording corresponds to TMI F420.5.2.2, the parent category. The extra final .2 assigns it to a different, more specific episode.
+
+10. H1535 — p. 366
+   Kirtley: Precipice test: jumping from cliff, survivor is winner.
+   TMI: A hero is pushed over a precipice as a test.
+   Comment: Kirtley describes a jumping contest; Thompson describes a hero being pushed over a precipice.
+
+11. K98.1 — p. 379
+   Kirtley: Cock fight won by deception.
+   TMI: A beauty contest is won through deception involving leaves.
+   Comment: The competition is changed from a beauty contest to a cockfight.
+
+1A. ADDITIONAL UNMARKED CASES REQUIRING INTERPRETATION
+
+These ten cases are included to make the review transparent, but are not counted among the eleven substantive mismatches above. They may be legitimate variants, imprecise wording or transcription errors.
+
+1. A617.2 — p. 40
+   Kirtley: Creation of earth from calabash.
+   TMI: The universe is created from a calabash.
+   Qualification: Earth is narrower than universe. This may be a local cosmological adaptation rather than a separate motif.
+
+2. D1651.14 — p. 206
+   Kirtley: Magic cock flies only at owner’s command.
+   TMI: The digital reference says “clock” where Kirtley says “cock”.
+   Qualification: Likely a transcription or printing problem in the reference: both point to Métraux, Ethnology, p.367. Do not count this as an established Kirtley misclassification without checking the printed D-volume.
+
+3. E113 — p. 239
+   Kirtley: Resuscitation from blood.
+   TMI: Blood is used to restore life.
+   Qualification: “From” may mean reconstruction from blood, whereas “by” describes a means of revival. The cited narratives must decide whether the distinction is real.
+
+4. E607.2.2 — p. 255
+   Kirtley: Rebirth by crawling into woman’s womb. (Idea present in Maui story, though hero fails at accomplishment.)
+   TMI: Rebirth takes place by entering a woman’s womb.
+   Qualification: The title agrees, but Kirtley explicitly says Maui fails. This is an acknowledged use for an attempted, unsuccessful version of the motif.
+
+5. E783.2 — p. 267
+   Kirtley: Severed head grows.
+   TMI: A severed head grows back.
+   Qualification: Growth in size and regeneration differ, but the missing “re-” may simply be a typographical or shorthand issue.
+
+6. K831 — p. 391
+   Kirtley: Victim killed by being bathed.
+   TMI: The victim is killed during a bath.
+   Qualification: Kirtley’s “by” makes bathing the means of killing; Thompson’s “while” only specifies the occasion. The source story must decide whether this is imprecision or a different mechanism.
+
+7. K891.5.3 — p. 393
+   Kirtley: Dupes deceived into falling over precipice.
+   TMI: The victims are persuaded to let themselves be thrown over a precipice.
+   Qualification: Falling through deception does not necessarily mean agreeing to be thrown. Kirtley may be broadening or loosely paraphrasing the same episode.
+
+8. L50 — p. 412
+   Kirtley: Victorious younger daughter.
+   TMI: The youngest daughter triumphs.
+   Qualification: Younger does not necessarily mean youngest. It may nevertheless describe the same person in the cited stories.
+
+9. Q272 — p. 432
+   Kirtley: Greed (gluttony) punished.
+   TMI: Avarice is punished.
+   Qualification: Gluttony concerns eating, whereas avarice concerns possessiveness or wealth. Kirtley signals his extension in parentheses, consistent with his stated practice for minor variants.
+
+10. T145.0.1 — p. 459
+   Kirtley: Polygamy.
+   TMI: Polygyny: a man has multiple wives.
+   Qualification: Polygamy includes polygyny and polyandry; polygyny is narrower. The citations may all concern polygyny, in which case this is terminological broadening.
+
+2. STARRED ENTRIES WHOSE NUMERICAL CODE ALREADY EXISTS AS A TMI HEADING
+
+28 occurrences, representing 25 numerical codes: 22 entries without “+”, and six entries with both “*” and “+”. The latter six also appear in list 3. This is a number-overlap inventory, not a claim that all 28 meanings are unrelated.
+
+1. *A282.0.2. — p. 25
+   Kirtley: Wind-children.
+   Existing TMI A282.0.2: An angel associated with wind.
+
+2. *A651.1.0.1. — p. 42
+   Kirtley: In lands in sky, day is eternal.
+   Existing TMI A651.1.0.1: The highest celestial region contains twenty heavens.
+
+3. *A751.9.3. — p. 52
+   Kirtley: Markings on moon are ovens of god of meteors.
+   Existing TMI A751.9.3: A giant inhabits the moon.
+
+4. *A754.1.1. — p. 52
+   Kirtley: Moon emerges from a pit.
+   Existing TMI A754.1.1: A man rescues the moon after it falls into a pit.
+
+5. *A2681.12. — p. 108
+   Kirtley: Origin of casuarina trees.
+   Existing TMI A2681.12: Origin of the palm-wine tree.
+
+6. *A2681.13. — p. 108
+   Kirtley: Origin of Tahitian chestnuts.
+   Existing TMI A2681.13: Origin of the cedar.
+
+7. *C526. — p. 152
+   Kirtley: Tabu: touching certain stone.
+   Existing TMI C526: A prohibition against touching a sacred mountain.
+
+8. *D1009.2.1. — p. 190
+   Kirtley: Teeth magically removed and restored.
+   Existing TMI D1009.2.1: A dead man’s tooth has magical power.
+
+9. *D1470.1.2. — p. 197
+   Kirtley: Magic wishing-tree.
+   Existing TMI D1470.1.2: A tree fulfils wishes.
+   Comment: Same motif: the issue here is the asterisk, not a change of meaning.
+
+10. *D1812.5.0.15.1. — p. 212
+   Kirtley: Magic knowledge of weather gained from sound of wind in a tree.
+   Existing TMI D1812.5.0.15.1: Divination using wind.
+   Comment: A narrower application of an existing motif, rather than an unrelated meaning.
+
+11. *D1841.6. — p. 217
+   Kirtley: Immunity from drowning.
+   Existing TMI D1841.6: Protection against drowning.
+   Comment: Same motif: the issue here is the asterisk, not a change of meaning.
+
+12. *D2122.5. — p. 225
+   Kirtley: Man magically clears obstructions from his path.
+   Existing TMI D2122.5: A saint travels at supernatural speed.
+
+13. *D2146.2.4. — p. 229
+   Kirtley: Darkness of night made blacker by sorcery.
+   Existing TMI D2146.2.4: The earth becomes dark after the Sun loses a race to Coyote.
+
+14. *E186.1. — p. 240
+   Kirtley: Spirit returns to body and finds it partially corrupted.
+   Existing TMI E186.1: Excessive anxiety causes an attempt to revive someone to fail.
+
+15. *E232.2. — p. 241
+   Kirtley: Ghosts of birds cause their slayer to fall in his own oven and perish.
+   Existing TMI E232.2: A ghost kills someone who injured it during life.
+   Comment: Related to the existing revenge motif, with birds and an oven specified.
+
+16. *E423.6. — p. 250
+   Kirtley: Test of whether being is ghost or not: some thing done to startle it. If ghost, it disappears.
+   Existing TMI E423.6: A returning dead person appears as a centaur.
+
+17. *E782.0.1. — p. 267
+   Kirtley: Man has himself killed and cut in two so that his legs and buttocks may be affixed to body of murdered king which lacks these members.
+   Existing TMI E782.0.1: A man successfully uses borrowed limbs.
+   Comment: Related to the existing substituted-limbs motif; the specific episode differs.
+
+18. *F755.7. — p. 320
+   Kirtley: Fight between a magically rising mountain and an elastic man.
+   Existing TMI F755.7: A mountain fights to defend its honour.
+
+19. *G13.2. — p. 337
+   Kirtley: Enemy’s eyeballs are drunk in a cup of kava.
+   Existing TMI G13.2: An ogre eats a beautiful girl to acquire her beauty.
+
+20. *G72.4. — p. 339
+   Kirtley: Cruel uncle kills and eats his nephews.
+   Existing TMI G72.4: An eaten child’s voice is heard from the cannibal’s heart.
+
+21. *J2495.1. — p. 377
+   Kirtley: People told of heaven enter house, lash selves to beams, and wait to be transported.
+   Existing TMI J2495.1: A man chooses to pray to a geographically nearer Virgin, expecting quicker help.
+
+22. *K991.+ — p. 398
+   Kirtley: Cave caused to crush man. Thief is killed by mouth of his cave, which opens and shuts at command, when a pursuer fathoms cave’s secret.
+   Existing TMI K991: A victim is persuaded into a dangerous place and killed.
+   Comment: Also in list 3. The plus sign signals provisional placement; do not treat the shared base number alone as proof of an accidental collision.
+
+23. *K1078.+ — p. 399
+   Kirtley: People in fort given dried crawfish by attackers and soon surrender because of thirst.
+   Existing TMI K1078: A victim lies on a supposed royal bed, falls into the well below, and dies.
+   Comment: Also in list 3; it carries both markers.
+
+24. *T541.1.1.1. — p. 464
+   Kirtley: Hero born from a blood-defiled apron thrown away.
+   Existing TMI T541.1.1.1: A saint creates a boy from a clot of blood.
+
+25. *T585.9.+ — p. 470
+   Kirtley: Infant hurls axe five miles.
+   Existing TMI T585.9: A child is circumcised at birth.
+   Comment: Also in list 3; first of four distinct entries with this label.
+
+26. *T585.9.+ — p. 470
+   Kirtley: Precocious infant pulls up all potato vines planted by supposed father.
+   Existing TMI T585.9: A child is circumcised at birth.
+   Comment: Also in list 3; second occurrence.
+
+27. *T585.9.+ — p. 470
+   Kirtley: Precocious infant sets mother up as ruler.
+   Existing TMI T585.9: A child is circumcised at birth.
+   Comment: Also in list 3; third occurrence.
+
+28. *T585.9.+ — p. 470
+   Kirtley: Infant kills men sent against it.
+   Existing TMI T585.9: A child is circumcised at birth.
+   Comment: Also in list 3; fourth occurrence.
+
+Additional cross-reference-only case:
+
+*A939.1. — p. 60
+   Kirtley: Origin of river currents: two rivers race each other to see who can first reach their common ancestress, the ocean.
+   Thompson’s printed volume I, p. 169, uses A939.1 in a cross-reference for a river emerging from a well in pursuit. The corresponding full entry is A934.7 on p. 172, and A939.1 is absent from the working CSV’s current-heading field. Thus the number was not wholly unused, but this is not the same kind of collision as the 28 current-heading matches above. It should be retained as a numbering inconsistency requiring attention.
+
+3. ENTRIES MARKED “+”
+
+The following 397 occurrences have an explicit textual plus sign. Labels retain any accompanying asterisk. Repeated codes are intentionally listed repeatedly because they introduce separate descriptions.
+
+1. A2.+ — p. 1: Two creators.
+2. A15.2.+ — p. 1: Twin creators.
+3. A32.3.2.+ — p. 2: Creator god marries his daughter.
+4. A38.1.+ — p. 2: Winds as creator’s companions.
+5. A72.+ — p. 2: Creator gods complete work of primordial creator god.
+6. A104.1.+ — p. 3: Men once gods and gods once men.
+7. A111.3.+ — p. 4: God of double sex.
+8. A112.7.2.+ — p. 4: God born from boil on his mother’s arm.
+9. A112.11.+ — p. 5: Goddess born at bottom of the sea.
+10. A112.11.+ — p. 5: Gods originate as descent of coupling of seaweed and slime, which gave birth to a stone, which gave birth to twins: male and female.
+11. A120.1.+ — p. 7: God who is sometimes man, sometimes rock.
+12. A120.1.+ — p. 7: Goddess appears to young men as a beautiful princess, to women as an ugly hag.
+13. A120.3.+ — p. 7: Ghost gods.
+14. A123.2.2.+ — p. 8: God whose mouth forms a gateway to his father’s territory: it opens for desirable entrants, closes for undesirable.
+15. A123.2.2.+ — p. 8: God with long tongue sucks in all edible things.
+16. A123.4.2.+ — p. 8: God in form of a rolling head.
+17. A123.4.2.+ — p. 8: God who is a giant head.
+18. A123.4.2.+ — p. 8: Son of god with eight ears.
+19. A123.7.+ — p. 8: Purple goddess.
+20. A123.7.+ — p. 8: Red and white god.
+21. A123.7.+ — p. 9: God with striped body.
+22. A123.7.+ — p. 9: Albino god (Tu).
+23. A125.4.+ — p. 9: God with sandy hair.
+24. A136.1.8.+ — p. 11: God flies.
+25. A139.7.+ — p. 12: Perfumed odor emanates from god.
+26. A159.+ — p. 15: Canoe bailer of god.
+27. A159.+ — p. 15: Rainbow as sign of a god’s presence.
+28. A159.+ — p. 15: Gods wreathe themselves in mists.
+29. K991.+ — p. 397: Persons tipped off precarious bridge if they do not pay ordered fee.
+30. K991.+ — p. 397: Fishes invited aboard canoe. As they sit, trickster puts knife under them and kills them.
+31. K991.+ — p. 397: Man deceived into letting hair hang loose during battle; enemies seize him by hair in ambush.
+32. *K991.+ — p. 398: Cave caused to crush man. Thief is killed by mouth of his cave, which opens and shuts at command, when a pursuer fathoms cave’s secret.
+33. *K1078.+ — p. 399: People in fort given dried crawfish by attackers and soon surrender because of thirst.
+34. K1340.+ — p. 400: Ugly man comes to women only at night.
+35. K1377.+ — p. 400: Twin sister of bride given to groom (instead of supposed).
+36. K1377.+ — p. 400: Woman seduced by magic.
+37. K1399.5.+ — p. 401: Man, hoping to take woman from her lover, tells her distant sound of cheering is an audience responding to her lover’s defamations of her character.
+38. K1399.5.+ — p. 401: In order to marry girl whose father wants a good fisherman to be her husband, man rubs self with fish oil and intestines to appear a thorough going fisherman.
+39. K1399.5.+ — p. 401: Deserted woman pretends to have new husband and her man returns.
+40. K1399.5.+ — p. 401: Seduction by trick: man pretends to lose his foreskin. Woman is shown what he means.
+41. K1399.5.+ — p. 401: Lovers trick unwelcome person into leaving in order to have intercourse.
+42. K1399.5.+ — p. 401: Woman keeps man hidden and to herself on Island of Women.
+43. K1399.5.+ — p. 401: Brother lures sister to top of platform by pretending he sees a distant ship: seduces her.
+44. K1628.+ — p. 402: Servant sent to kill trickster and get his blood. Instead, trickster kills servant, gets blood; people drinking it become ill, die.
+45. K1756.+ — p. 403: Enemies frightened by loud sound.
+46. K1825.5.+ — p. 404: Anonymous hero: person wins king’s battles then flees without revealing his identity.
+47. K1839.15.+ — p. 404: Person puts calabash on his head so as to appear bald from a distance.
+48. K1839.15.+ — p. 404: Man, to escape attentions of a female, smears his body with stinking shark oil.
+49. K1875.+ — p. 405: Person catches thrown spear between elbow and body and pretends to be wounded.
+50. K1894.+ — p. 406: Captive told roar of sea is sound of bushes waving.
+51. K1894.+ — p. 406: Shell-fish, sea-shells put in coffin; children believe that their father is dead.
+52. K1894.+ — p. 406: Women, to get rid of unwelcome visitors to their island, go out in canoes at night, appear off island at daylight, and appear to be hostile fleet to strangers.
+53. K1894.+ — p. 406: Trickster, to prevent rival tribe from fishing in river, makes artificial water monster.
+54. K1894.+ — p. 406: Man paints self with turmeric so that his rival will believe it came from sleeping with a woman.
+55. K1894.+ — p. 406: Ugly man takes handsome man’s place by window, so that in the dark a young woman mistakenly marks his face with a scratch, which shows him to be her chosen suitor.
+56. K1994.+ — p. 408: Ogress eats fish she catches: returns home and complains of ill luck.
+57. K1994.+ — p. 408: Underseas party: trickster pretends to have gotten garland at party being held beneath sea.
+58. K2098.+ — p. 408: Heron fighting serpent begs hero for help, but snake says the two are having friendly contest. Hero believes latter.
+59. K2098.+ — p. 408: King tells daughter rescuer went to another land; in reality father has forbidden hero’s seeing her.
+60. K2098.+ — p. 408: Hypocritical excuse. Hero tells ogress that fake cooking fires are a greeting to her.
+61. K2142.+ — p. 409: Two brothers create trouble between chiefs. At the point of battle, they make peace and are richly rewarded by weaker chief, who considers them saviors.
+62. K2142.+ — p. 409: Men from country district are taught English by trickster. They are beaten by sailors when they use profane phrases.
+63. K2142.+ — p. 409: Hero goes to brothers for breadfruit, and after they give it to him, he breaks it open. He tells his father his brothers gave it to him in this state.
+64. K2142.+ — p. 409: Hero strikes own skin with thorny bush and tells father his brother-in-law injured him.
+65. K2142.+ — p. 409: Two boys gash heads and say it was caused by the shark of god.
+66. K2142.+ — p. 409: Person breaks wind in woman’s house, an act causing husband to quarrel with his wife about a smelly house.
+67. K2388.+ — p. 411: Person visits enemy at night and leaves a token showing that he could have killed the latter.
+68. K2388.+ — p. 411: Watercourse of river altered by trick.
+69. K2388.+ — p. 411: Parents secretly get food from other world; do not let children know.
+70. K2388.+ — p. 411: Small trickster rewarded. Told he can have all the food he can carry away, he takes the whole crop.
+71. K2388.+ — p. 411: Father of hero eats cooked food (does not disclose that it is cooked), gives his son raw food.
+72. K2388.+ — p. 411: Hero (Maui) gets fire from fire-god and repeatedly puts it out on way back to world.
+73. L10.2.+ — p. 412: Abused youngest son (by his elder brothers).
+74. L113.1.+ — p. 413: Abused half-brother as hero.
+75. L131.+ — p. 413: Cave abode of hero.
+76. L140.+ — p. 414: Hero catches more fish with crude hook (tackle) than rivals do with splendid equipment.
+77. L142.+ — p. 414: Child defeats men in riddling contest.
+78. L142.+ — p. 414: Child who is first inept later bests all other children at all games.
+79. L142.+ — p. 414: Four sons of great warrior have turtles taken away by villagers; when grown into powerful fighters, sons catch turtles and force villagers to try previous theft.
+80. L151.+ — p. 414: Boy outsails brothers in canoe made of coconut sheath.
+81. L151.+ — p. 414: Long-ear people dig pit, build oven to kill and cook short-ear people. Latter discover plan and turn the tables.
+82. L156.1.+ — p. 414: Dog destined to be eaten instead eats its masters.
+83. L161.2.+ — p. 414: Youngest of brothers wins famed beauty.
+84. L162.+ — p. 414: Brother and sister refugees marry children of king.
+85. L215.+ — p. 415: Unpromising magic object chosen. Twins, told to select bright fishhook, pick dull one, which is magical.
+86. L351.+ — p. 415: Contest between fire and water.
+87. L419.+ — p. 415: Dancing of leper judged better than dancing of king.
+88. L431.+ — p. 415: Girls refuse two ugly boys. Boys are magically beautified; they reject girls, who then throw themselves off cliff.
+89. L432.4.+ — p. 415: In famine couple must beg from son-in-law they drove away.
+90. L435.+ — p. 415: Wife restored to rightful place after usurping ogress burned.
+91. M149.7.+ — p. 416: Chief vows to marry no one from his own island.
+92. M150.+ — p. 416: Voyager vows to trample on breasts of gods.
+93. M150.+ — p. 416: Vow to effect vengeance.
+94. M203.3.+ — p. 416: Before battle, chief calls his warriors brothers. A warrior later claims literal kinship, and the king ackowledges him.
+95. M218.+ — p. 417: Ruler of underworld teaches mortals. Her pupils rush from her house, and she takes the last two as payment.
+96. M221.+ — p. 417: Life spared in bargain: person at another’s mercy is allowed to live as part of bargain.
+97. M292.+ — p. 417: In return for passage on canoe, man promises to overcome all obstacles met on journey.
+98. M292.+ — p. 417: Fish releases boat from back in return for woman.
+99. M292.+ — p. 417: Sun gives man fishhooks in return for release.
+100. M292.+ — p. 417: Man lets woman plant taro on his land in exchange for sexual favors.
+101. M292.+ — p. 417: Wise god bargains for shell fish of another island: gives mosquitoes in exchange.
+102. M312.+ — p. 418: Prophecy: the coming of a canoe without an outrigger.
+103. M353.+ — p. 418: Brother prophesies that his pregnant sister will give birth to fish which he will eat.
+104. M399.+ — p. 418: Dying mother tells murderer that her son will someday bite his hand.
+105. M399.+ — p. 418: Warrior leaving on voyage warns people not to leave land vacant lest it be occupied by demons.
+106. N15.2.+ — p. 419: Wager: two chiefs bet their land upon whether one of them can successfully woo a princess.
+107. N78.+ — p. 419: Chiefs lay wager about the kind of fish which is caught on line.
+108. N78.+ — p. 419: Wager upon whether or not food is cooked.
+109. N170.+ — p. 419: Party of fishermen dream they are swept away at whirlpool. Lurking enemy hears relation of dream, kills them, and throws them into whirlpool.
+110. N325.+ — p. 420: Man kills his uncle by mistake.
+111. N339.17.+ — p. 420: Man from bravado jumps in an earth oven, and a hot stone explodes and kills him.
+112. N349.3.+ — p. 420: Father has unrecognized son thrown into sea (killed).
+113. N349.3.+ — p. 420: Trickster unknowingly fights and kills his own grandfather.
+114. N659.2.+ — p. 420: Man spared from sacrifice because of sound of mudhen.
+115. N688.+ — p. 421: Three boys make wishes overheard by king’s spy. The king grants the wishes.
+116. N792.+ — p. 421: Following thrown spear leads to adventure.
+117. N813.+ — p. 421: Ghost of dead as helper.
+118. N813.+ — p. 421: Ancestral spirit as helper.
+119. P0.+ — p. 423: Name chant for royalty.
+120. P10.+ — p. 423: College of chiefs.
+121. P16.3.+ — p. 423: Kings killed for neglect of duty.
+122. P16.3.+ — p. 423: Person who hides king’s corpse killed lest he disclose burial location.
+123. P17.+ — p. 423: At coronation, head of king is anointed with oil.
+124. P17.+ — p. 423: At coronation, king stands on special stone.
+125. P17.+ — p. 423: Heir to kingship has wooden dummy crowned in place of himself.
+126. P19.5.+ — p. 423: Shadow of highest chief renders ground tapu.
+127. P19.5.+ — p. 423: Knowledge of calendar belongs to kings only.
+128. P19.5.+ — p. 423: Garments of king sacred.
+129. P38.+ — p. 424: Prince and his mistress unable to go ashore together.
+130. P40.+ — p. 424: Princess of a mountain.
+131. P90.+ — p. 424: Both chiefs and priests are royal.
+132. P210.+ — p. 424: Couple lives in husband’s land after marriage.
+133. P210.+ — p. 424: Girl returns to home of parents when pregnant, leaving her husband temporarily.
+134. P250.1.+ — p. 425: Eldest sister sleeps in door facing west as soon as sun sets; sleeps in door facing east as soon as sun rises.
+135. P360.+ — p. 425: Skilled runners used by chiefs to bring fish from different ponds.
+136. P475.+ — p. 425: Trained thieves used by chiefs to steal from enemy.
+137. P475.+ — p. 425: Bone-breaking art (lua) practised by highwayman.
+138. P555.+ — p. 425: Head of slain foe cut off and saved.
+139. P682.+ — p. 426: People go to bathe at third crowing of cock.
+140. P682.+ — p. 426: Voyage begun at night.
+141. P682.+ — p. 426: Kava-drinking ceremony.
+142. P682.+ — p. 426: Names exchanged.
+143. Q65.+ — p. 427: Mercy rewarded.
+144. Q72.+ — p. 427: Obedience rewarded.
+145. Q115.+ — p. 428: Reward: person made chief (ruler).
+146. Q135.+ — p. 428: Marriage as reward.
+147. Q135.+ — p. 428: Reward: chief’s daughter.
+148. Q147.+ — p. 428: Man rewarded for piety by being brought to earthly paradise.
+149. Q211.0.3.+ — p. 428: Murder by sorcery punished.
+150. Q211.7.+ — p. 429: Punishment for cannibalism.
+151. Q211.13.+ — p. 429: Wizard’s familiar punishes tribe of sorcerer who killed its master.
+152. Q217.+ — p. 429: Arson punished.
+153. Q220.1.+ — p. 429: Man violating tabu is killed.
+154. Q221.8.+ — p. 430: Man who mocks sacred animal has stomach swell, dies.
+155. Q221.8.+ — p. 430: Men boast they are gods: afterwards, nothing prospers for them.
+156. Q221.8.+ — p. 430: As punishment for broken vow to goddess of cold, a man’s bride is made numb with cold on their wedding night.
+157. Q221.8.+ — p. 430: Girl who compares her beauty with that of goddess is killed.
+158. Q221.8.+ — p. 430: Theft from gods punished.
+159. Q222.6.+ — p. 430: Two boys put to death for playing sacred drum.
+160. Q222.6.+ — p. 430: Any person touched by temple smoke is sacrificed.
+161. Q222.6.+ — p. 430: People caught abroad during time of sacred assembly are killed.
+162. Q227.3.+ — p. 430: Death as punishment for those disbelieving prophet.
+163. Q235.1.+ — p. 431: Woman who cursed the moon translated there as punishment.
+164. Q237.+ — p. 431: Incessant invocation of gods punished.
+165. Q257.+ — p. 431: Men lying about seducing girl punished by death.
+166. Q268.+ — p. 432: Woman stowaway upon canoe punished.
+167. Q322.+ — p. 432: Person killed for urinating in water hole.
+168. Q325.+ — p. 433: Sacred image which refuses to board a canoe is smashed.
+169. Q380.+ — p. 433: Weakness punished.
+170. Q395.+ — p. 433: Mischievous youngster is killed for urinating upon sleepers.
+171. Q411.15.+ — p. 433: Priest making an error in ceremony is killed.
+172. Q429.4.+ — p. 434: Punishment: disembowlment.
+173. Q431.19.+ — p. 434: Women taken to the moon as a punishment for insulting this orb.
+174. Q433.2.+ — p. 434: Demon condemned to live in sea (for eating human flesh).
+175. Q433.2.+ — p. 434: Rebel god punished by being sent to lower world.
+176. Q478.1.4.+ — p. 435: Man feeds his adulterous wife’s heart to their son.
+177. Q478.5.+ — p. 435: Punishment: eating foods tabu to eater.
+178. Q495.+ — p. 435: Woman paraded nude as punishment.
+179. Q499.8.+ — p. 435: Man avenges insult to wife by feeding oily fish to offenders, who disgrace themselves with incontinent bowel movements.
+180. Q499.8.+ — p. 435: Warrior urinates upon head of defeated enemy.
+181. Q499.8.+ — p. 435: Captive must serve as latrine attendant.
+182. Q499.8.+ — p. 435: Person’s body used as receptacle for filth.
+183. Q503.1.+ — p. 435: Origin of first ghost: punishment for adultery.
+184. Q552.2.3.2.3.+ — p. 436: Island turned over as punishment.
+185. Q552.3.1.1.+ — p. 436: Sterility of land as punishment.
+186. Q557.8.+ — p. 436: Miraculous punishment through fish.
+187. Q559.11.+ — p. 436: Rock used as latrine punishes people by leaving island, thus depriving them of good harbor.
+188. Q581.3.+ — p. 437: Boy who kills his grandfather is in turn slain by his father.
+189. Q581.3.+ — p. 437: Man who kills caterpillars is in turn killed by them.
+190. Q581.3.+ — p. 437: Children sent to feed a dragon eat its food. Dragon eats them.
+191. Q581.3.+ — p. 437: Wizard evokes spell to kill first woman coming up path. Victim proves to be his sweetheart.
+192. Q581.3.+ — p. 437: Hero slays warrior who defeated his father.
+193. Q581.3.+ — p. 437: A killed squid comes alive; its killer acquires an unappeasible appetite for squid.
+194. Q582.9.+ — p. 437: People practicing sorcery are themselves killed by magic.
+195. Q582.9.+ — p. 437: Greedy chief who always takes his subjects’ fish is given so many fish that his boat sinks and he drowns.
+196. Q582.9.+ — p. 437: Person who persecutes fisherman chokes to death on a fish.
+197. Q582.9.+ — p. 437: Man eats fish which ate his son.
+198. Q582.9.+ — p. 437: Treacherous tribesmen who intend to massacre a group of guests are themselves murdered.
+199. Q585.4.+ — p. 437: People wasteful of fish punished when all fish leave their district.
+200. Q589.3.+ — p. 437: Fisherman who eats rare fish without giving chief his share is made to eat meal of fishes’ scales.
+201. Q599.+ — p. 437: An affronted god betrays his worshipper to enemies.
+202. Q599.+ — p. 437: Girl disinherited for marrying person not chosen by her family.
+203. Q599.+ — p. 437: Person magically made hot as punishment.
+204. R13.3.2.+ — p. 438: Person abducted by bat.
+205. R13.4.1.+ — p. 438: Sea-creature abduction of persons.
+206. R13.4.1.+ — p. 439: Abduction by a fish (eel).
+207. R22.1.+ — p. 439: Abduction during sleep (often person’s bed or part of house carried along).
+208. R39.2.+ — p. 439: Man made captive by reptile-woman.
+209. R39.2.+ — p. 439: Abduction by mermaid.
+210. R39.2.+ — p. 439: Abduction by moon.
+211. R39.2.+ — p. 439: Girl borne away in a mist.
+212. R41.7.+ — p. 439: Man keeps wife prisoner in hut surrounded by nets.
+213. R43.+ — p. 439: Captivity on floating island.
+214. R49.3.+ — p. 440: Captivity in the sky.
+215. R49.3.+ — p. 440: Captivity on inaccessible cliff (mountainside).
+216. R49.3.+ — p. 440: Captivity beneath stone.
+217. R49.3.+ — p. 440: Captivity in a basket.
+218. R49.3.+ — p. 440: Prisoner kept immersed in latrine.
+219. R51.4.+ — p. 440: Captive’s body used as basket or holder.
+220. R111.1.5.+ — p. 441: Rescue of princess from giant snake.
+221. R135.1.1.+ — p. 441: Person breaks branches to mark his path, but adversary magically restores the plants.
+222. R169.16.+ — p. 442: Woman on porpoise saves shipwrecked mariner.
+223. R169.16.+ — p. 442: Sea-monster as rescuer.
+224. R215.1.+ — p. 442: Escape from pyre by praying for rain.
+225. R219.2.+ — p. 442: Escape from house through smoke hole.
+226. R219.2.+ — p. 442: Escape (from island or raft at sea) by clutching legs or wings of great bird.
+227. R228.+ — p. 442: Girl punished (for allowing bark cloth to get wet) runs away from home.
+228. R231.2.1.+ — p. 443: Atalanta pursuit reversed: pursuing ogre magically causes food to appear before fugitives; they linger to eat it.
+229. R236.4.+ — p. 443: Persons descend from cliff cave by means of a rainbow.
+230. R245.2.+ — p. 443: Defeated warriors escape their foes while riding upon shark’s back.
+231. R261.1.+ — p. 443: Pursuit by headless body.
+232. R272.+ — p. 444: Ogress swims in relentless pursuit of ship.
+233. R272.+ — p. 444: Pursuit into sky.
+234. R272.+ — p. 444: Pursuit upon a sea-dragon.
+235. R311.1.+ — p. 444: Tree magically opens and hides fugitive.
+236. R315.2.+ — p. 444: Refuge in a stone.
+237. R336.+ — p. 444: Goddess takes refuge in her giant brother’s loin-cloth.
+238. R345.+ — p. 444: Mountain refuge.
+239. R345.+ — p. 444: Refuge within friendly animal.
+240. R355.+ — p. 444: Harbor entrance closed against escaping canoe’s egress by a wizard.
+241. S11.1.+ — p. 445: Father cuts open son’s stomach to see if boy had eaten stolen fruit.
+242. S21.1.+ — p. 446: Infant born without head, arms or legs, bores way into woman, kills her.
+243. S56.+ — p. 446: Cruel brother-in-law.
+244. S63.+ — p. 446: Cruel wife.
+245. S73.1.4.+ — p. 447: Fratricide among sons of first man.
+246. *S75.1.+ — p. 447: Cruel grandchild.
+247. *S75.1.+ — p. 447: Cruel (treacherous) brother-in-law.
+248. S110.1.1.+ — p. 448: Hero (Maui) starves grandfather to death.
+249. S110.5.+ — p. 448: Regicide.
+250. S110.5.+ — p. 448: Repeated murder: person, resuscitated after first death, is beaten to death a second time.
+251. S110.5.+ — p. 448: Person burying bones of dead chief kills confederate who shares knowledge of interment site.
+252. S110.5.+ — p. 448: Animal relative slain.
+253. S111.9.+ — p. 448: Person is forced to eat tabu food, which kills him.
+254. S116.6.+ — p. 449: Murder by clubbing.
+255. S116.6.+ — p. 449: Murder by jumping down from height upon victim.
+256. S116.6.+ — p. 450: Humans used as skids for launching canoe.
+257. S118.2.+ — p. 450: Pregnant woman ripped open and baby removed.
+258. S131.1.+ — p. 450: Murder by drowning in urine.
+259. S131.1.+ — p. 450: Men tie cord around woman’s neck and tow her behind canoe until she dies.
+260. S139.2.1.1.+ — p. 450: Scalps of murdered persons taken as trophies.
+261. S162.5.+ — p. 451: Chief has handsomely tattooed legs and arms of subjects cut off and brought to him.
+262. S163.+ — p. 451: Mutilation: slitting tongue.
+263. S163.+ — p. 451: Mutilation: lower jaw cut off.
+264. S166.+ — p. 451: Mutilation: implements (usually fishhooks) made of bones of dead.
+265. S166.+ — p. 451: Mutilation: dead bodies defiled.
+266. S176.1.+ — p. 451: Mutilation: breasts of all women to be cut off by proclamation of chief.
+267. S176.1.+ — p. 451: Leg and arm bones are torn out as mutilation.
+268. S139.7.+ — p. 452: Persons impaled.
+269. S141.3.+ — p. 452: Exposure at sea in wooden bowl.
+270. S145.+ — p. 452: Person marooned by enemy on rock so that he will drown at high tide.
+271. S153.+ — p. 452: Woman abandoned when people flee ravaging ogre.
+272. S182.+ — p. 453: Children impaled and dragged in wake of ship.
+273. S183.2.+ — p. 453: Murderers have teeth pulled then must chew dry kava.
+274. S191.+ — p. 453: Old man tossed about as ball in a game.
+275. S191.+ — p. 453: Person’s entire body—including inside of eyelids—tattooed as torture.
+276. S191.+ — p. 453: Victims strung upon line like fish.
+277. S191.+ — p. 453: Person tickled to death.
+278. S191.+ — p. 453: Woman’s throat pierced so that when she trys to drink water pours out the wound.
+279. S191.+ — p. 453: Captor urinates in eyes of captives.
+280. S191.+ — p. 453: Person suspended by hook under his chin.
+281. S263.4.1.+ — p. 454: Daily sacrifice to sun.
+282. S314.+ — p. 454: First born of twins slain.
+283. S481.+ — p. 455: Cousin of two sisters relentlessly drives them from places where they try to settle.
+284. S481.+ — p. 455: Elder sister, jealous of younger sisters’ relations with her husband, drives them off and persecutes them wherever they settle.
+285. S481.+ — p. 455: Man’s body used as a latrine by demon captors.
+286. S481.+ — p. 455: Person’s head stuck in ground and feet used as rack for baskets.
+287. S481.+ — p. 455: Strangers arriving during time of sacred ceremony seized for sacrifice.
+288. S481.+ — p. 455: Cannibal monster placated with human bride.
+289. T11.5.+ — p. 456: Princess falls in love with chief whose sleep- talking is carried to her upon a stream.
+290. T30.+ — p. 457: Village virgin.
+291. T35.1.+ — p. 457: Lovers’ meeting at bathing pool.
+292. T35.1.+ — p. 457: Lake as lovers’ rendezvous. Man plays trumpet at night so his lover can swim lake to him using sound as guide.
+293. T51.1.+ — p. 457: Goddess sent by sister to fetch latter’s lover from distant land falls in love with him herself.
+294. T131.+ — p. 459: Half-brothers and sisters destined to marry.
+295. T458.+ — p. 461: Man coming to Island of Women is killed by their persistent attentions.
+296. T467.+ — p. 462: Young men masturbate with stones.
+297. T467.+ — p. 462: Woman preserves member of murdered paramour.
+298. T494.+ — p. 463: Princess in Land of Women keeps male castaway all to herself.
+299. T494.+ — p. 463: Bird sleeps with woman when her husband is away.
+300. *T585.9.+ — p. 470: Infant hurls axe five miles.
+301. *T585.9.+ — p. 470: Precocious infant pulls up all potato vines planted by supposed father.
+302. *T585.9.+ — p. 470: Precocious infant sets mother up as ruler.
+303. *T585.9.+ — p. 470: Infant kills men sent against it.
+304. T597.+ — p. 470: Relation between conception of children and the phases of the moon.
+305. T597.+ — p. 470: Mother who gives birth unaware when event happens.
+306. T605.+ — p. 470: Child raised in lower world.
+307. T611.11.+ — p. 470: Child raised by spirits.
+308. T611.11.+ — p. 471: Child lives upon stones, which he swallows and rejects.
+309. T611.11.+ — p. 471: Child nourished on air.
+310. T611.11.+ — p. 471: Children raised solely upon kava.
+311. T611.11.+ — p. 471: Children raised solely on bananas.
+312. T688.+ — p. 472: Mother instructs her son upon how to be recognized by his father.
+313. V1.4.4.+ — p. 473: Worship of the Pleiades.
+314. V1.6.1.1.+ — p. 473: Sacred valley.
+315. V1.6.1.1.+ — p. 473: Sacred isle.
+316. V5.+ — p. 474: Mistake in ceremony produces fatal results.
+317. V10.+ — p. 474: Human sacrifice.
+318. V19.+ — p. 475: First fruits of harvest presented to god.
+319. V19.+ — p. 475: Heart of first slain enemy sacrificed to war god.
+320. V61.3.0.3.+ — p. 475: Dead buried with feet toward sun.
+321. V61.11.+ — p. 475: Dead buried with bundles of leaves beneath their arms.
+322. V62.2.+ — p. 476: Body not buried until an insect comes to it.
+323. V63.+ — p. 476: Bones painted red.
+324. V67.5.+ — p. 476: Mourning rites.
+325. V134.4.+ — p. 476: Sacred pools.
+326. V151.1.+ — p. 476: Sacred red garments.
+327. V202.+ — p. 477: Town god.
+328. V205.1.+ — p. 477: Dead chiefs deified.
+329. V205.1.+ — p. 477: Sacred albino.
+330. V235.3.+ — p. 477: Gods visit pious man.
+331. V347.+ — p. 477: Blasphemer of Christian God blinded by lightning.
+332. V512.2.+ — p. 477: Word of God (Christian) comes down in lightning flashes.
+333. V540.+ — p. 477: Mana. Personal spiritual power (possessed in eminent degree by priests and chiefs).
+334. W11.4.+ — p. 478: Person kills own child to feed guest.
+335. W11.4.+ — p. 478: Hero feeds brother with own blood.
+336. W11.4.+ — p. 478: God transforms self into breadfruit tree out of pity for starving family.
+337. W11.5.1.1.+ — p. 478: Hero feeds starving brothers who tried to murder him.
+338. W11.5.1.1.+ — p. 478: Warrior enters hut of his sleeping enemy, but only leaves a token that he was there and had spared him.
+339. W28.4.+ — p. 478: Youngest brother saves his elder brothers from being sacrificed by offering his own life.
+340. W28.4.+ — p. 478: Son starves self during famine to feed his father.
+341. W28.4.+ — p. 478: Girl wishes to be eaten by cannibal in place of her lover.
+342. W28.4.+ — p. 478: Faithful retainer of chief gives his body to chief for manufacture of fishing gear: his thigh bone is used as hook, his intestines as line, his head as sinker, and his flesh as bait.
+343. W28.4.+ — p. 478: A mother offers to take son’s place as human sacrifice.
+344. W28.4.+ — p. 478: Girl dies rather than tell hiding place of brother.
+345. W28.4.+ — p. 478: Man sacrifices life that others may kill foe.
+346. W28.4.+ — p. 478: Whale, from compassion, tries to die alongside his brother.
+347. W34.4.+ — p. 479: The youngest sister jumps in a swamp into which another sister was pushed in order to die with her.
+348. W34.4.+ — p. 479: A son dies from sorrow at his father’s death.
+349. W34.4.+ — p. 479: Brother spurned by others retrieves lost battle for them.
+350. W111.5.+ — p. 479: Suitor obliged to perform task secretly breaks tools and blames failure on their weakness.
+351. W121.8.+ — p. 479: Man falls from cliff and is impaled on a tree. War party thinks he is alive and defiant: immediately retreats.
+352. W121.8.+ — p. 479: Warrior declines to fight for his mistress.
+353. W121.8.+ — p. 479: People see ogress pursuing children. They flee, leaving children to their fate.
+354. W121.8.+ — p. 479: Men chosen as victims of cannibal meals on long sea voyage give their children as alternate victims.
+355. W121.8.+ — p. 479: Man flees and leaves his wife and children to be killed by his enemies.
+356. W133.+ — p. 479: Hero wins princess after many tests; then, offended by these, he rejects her.
+357. W133.+ — p. 479: Prince no longer desires girl after her magic clothes disappear.
+358. W154.5.1.3.+ — p. 480: Ungrateful man causes bird who has trans ported him on long voyage to get killed.
+359. W154.28.+ — p. 480: Person kills the sons of the man who has saved his life and raised him to maturity.
+360. W154.28.+ — p. 480: Girl, given knife by strangers, slits their tongues.
+361. W226.+ — p. 480: Child cries at night if not in the moonlight.
+362. Z71.16.16.+ — p. 482: Formulistic number: seventy.
+363. Z71.16.16.+ — p. 482: Formulistic number: one hundred and forty.
+364. Z100.+ — p. 482: Coconuts as phallic symbols.
+365. Z100.+ — p. 482: Phallic symbolism of god in aspect of spearthruster (Kane).
+366. Z100.+ — p. 482: Gourd symbol of fructifying powers.
+367. Z100.+ — p. 482: Spring of water symbol of female reproductivity.
+368. Z100.+ — p. 482: Priests purify with salt water: symbol of god’s making ocean salt.
+369. Z122.4.+ — p. 483: Summer personified.
+370. Z139.8.+ — p. 483: Light personified.
+371. Z139.8.+ — p. 483: Night and day personified.
+372. Z139.8.+ — p. 483: Rain personified.
+373. Z139.8.+ — p. 483: Thunder personified.
+374. Z139.8.+ — p. 483: Lightning personified.
+375. Z139.8.+ — p. 483: Knowledge personified.
+376. Z139.8.+ — p. 483: Evil (Whiro) personified.
+377. Z139.8.+ — p. 483: Procreative power personified.
+378. Z139.8.+ — p. 483: Volcanoes personified.
+379. Z139.8.+ — p. 483: Earthquakes personified.
+380. Z139.8.+ — p. 483: Floods personified.
+381. Z139.8.+ — p. 483: Clouds personified.
+382. Z139.8.+ — p. 483: Fire personified.
+383. Z139.8.+ — p. 483: Hurricanes personified.
+384. Z210.1.+ — p. 484: Twins as heroes.
+385. Z221.+ — p. 484: Hero with ruddy skin.
+386. Z221.+ — p. 484: Albinos as heroes.
+387. Z221.+ — p. 484: Insane hero.
+388. Z221.+ — p. 484: Diminutive hero.
+389. Z221.+ — p. 484: One-eyed hero (Muni).
+390. Z221.+ — p. 484: Hero with flattened head.
+391. Z221.+ — p. 485: Hero with club foot.
+392. Z221.+ — p. 485: Inactive hero. (Cf. L114.1.)
+393. Z311.+ — p. 485: Eel that can be killed only by being pounded on head.
+394. Z312.4.+ — p. 485: Unique vulnerability: person who can be killed only with hurled stones.
+395. Z316.+ — p. 485: Two persons with extraordinarily hard heads can be killed only when their heads are smashed together.
+396. Z357.+ — p. 486: Warrior is master of all weapons except one.
+397. Z357.+ — p. 486: Wife teaches husband all her arts but one: that of stone-throwing.
+
+Three additional entries with graphical cross-like marks:
+
+These marks are visible in the supplied PDF but absent from its extracted text. They resemble slanted crosses. Their identification as Kirtley’s plus sign, and their provenance, have not been established, so they are separated from the 397 unambiguous textual-plus entries. They are provisionally kept here rather than silently treated as unmarked.
+
+G1. J2048 [graphical mark] — p. 375: Men sent to carry message forget it before they arrive.
+    TMI J2048 concerns a fool who receives things for himself and relatives but forgets his own share.
+G2. J2048 [graphical mark] — p. 375: Lobster forgets to hide its antennae in game of hide-and-seek.
+    TMI J2048 concerns a fool who receives things for himself and relatives but forgets his own share.
+G3. K48 [graphical mark] — p. 378: Yam-staking contest won by hero who plants his stakes by throwing them as darts.
+    TMI K48 concerns a bridge-building contest won by deception.
+
+If these three marks are confirmed to be plus signs, list 3 totals 400 occurrences. If they are not entry markers, all three are additional unmarked meaning conflicts for list 1. Both J2048 occurrences differ from Thompson and from each other.
+
+REFERENCE AND VERIFICATION NOTES
+
+- Kirtley source: the supplied “Bacil Kirtley- MOTIF-INDEX.pdf”, 522 PDF pages; the main index is numbered 1–486. Findings are attributed to this digital witness. Distinguishing Kirtley’s original typesetting from later digitisation errors requires comparison with a 1971 print copy.
+- TMI working reference: Katja Mellmann, Thompson’s Motif-Index as CSV File: https://doi.org/10.17605/OSF.IO/XEB67 ; source documentation: https://github.com/KatjaMellmann/TMI_as_CSV/wiki/Source-Information . The transcription incorporates corrections and omits cross-reference-only entries, so absence from its code column is not conclusive evidence of absence from the printed TMI.
+- Thompson volume I facsimile used for targeted checks, including A939.1: https://www.centrostudirpinia.it/wp-content/uploads/2025/03/1-Motif-index-of-folk-literature.pdf . See printed pp. 169 and 172 for the cross-reference/full-entry distinction.
+- Supporting TMI textual reproductions: https://www.ruthenia.ru/folklore/thompson/a.htm ; https://www.ruthenia.ru/folklore/thompson/d.htm ; https://ctsf.ru/materials/thompson/e.htm .
+- The Kirtley headings for all entries in lists 1, 1A and 2, and the three graphical-mark cases, were checked against rendered PDF passages. The plus inventory was checked across the entire extracted main index, retaining separate occurrences of duplicate codes.
+- Entries with a number absent from the working reference are outside the requested existing-number categories. In particular, Kirtley’s D261.3.1.1 (p. 233) appears to be a malformed D2161.3.1.1; it is not counted as an existing-number collision. Conversely, B872 (“Giant birds”, p. 140), missing from the CSV, is present with the same meaning in Thompson’s printed volume I, p. 483, and is not a conflict.

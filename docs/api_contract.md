@@ -785,3 +785,11 @@ Contract notes:
 - Admins own dataset actions, user management, curation, and review.
 - Contributor-created content is visible immediately and unmarked in the normal UI.
 - Important auth, admin, review, dataset, and write actions must be auditable.
+
+## Trope ontology and specificity
+
+- `GET /api/ontology` returns the active dataset ID and version, every catalogue trope with its specificity and source, visible links, the structural root, and the IDs directly beneath it. Admins also receive pending links.
+- `PUT /api/ontology/level` accepts `dataset_id`, `expected_version`, `trope_id`, and an integer `level` from 1 to 4. Saving a level marks its source as `curator`.
+- `PUT /api/ontology/link` accepts the same dataset/version pair plus `child_id`, `parent_id`, and `status` (`approved` or `rejected`). The child is the narrower wording. Both edit routes use the existing admin and CSRF checks and return the new version. Stale edits return 409. Active cycles and inverted specificity return 422.
+- `GET /api/tropes` accepts an optional `specificity_level`. Trope summary and detail responses include `specificity_level` and `specificity_source`. `POST /api/search/tropes` accepts optional `specificity_levels` and filters candidates before ranking.
+- `POST /api/exploration/network` accepts `candidate_level` for a text query and `specificity_scope` for selected tropes. Values are `same`, `broader`, `narrower`, or `both`. Each includes the selected band. With a scope, active ontology paths expand the original story matches, and semantic matches use only the allowed bands. Omitting the scope retains the original map behavior.

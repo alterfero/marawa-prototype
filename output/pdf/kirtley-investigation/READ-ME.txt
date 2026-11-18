@@ -1,0 +1,183 @@
+KIRTLEY / THOMPSON INVESTIGATION STARTER
+Prepared 6 November 2026
+
+STATUS
+Source extraction and initial whole-book structural screening are complete.
+This is NOT a completed scholarly audit or a validated entry-level database.
+No application code or data was changed. No custom extraction program was
+written. Existing PDF and text utilities were used.
+
+SOURCE IDENTITIES
+Bacil F. Kirtley, A Motif-Index of Traditional Polynesian Narratives,
+University of Hawaii Press, 1971. The supplied PDF is the open-access digital
+edition created 1 October 2019. It contains 522 physical PDF pages. Its main
+index is numbered 1-486, beginning at physical PDF page 37. Thus printed main
+index page n is physical PDF page n+36 in this file. Front matter has Roman
+page labels. The supplied file was preserved without modification.
+
+Original supplied path:
+/Users/sebastienchristian/Desktop/Bacil Kirtley- MOTIF-INDEX.pdf
+PDF SHA-256:
+c64134e992bd0da831975ff0b2d5e93315bd4bed8e1a47520fe9361400edb347
+
+Comparison baseline, confirmed by the user: Thompson's revised and enlarged
+1955-1958 edition. For the initial screening, the existing repository copy of
+Katja Mellmann's TMI CSV was used, not the older tmi.txt file.
+
+Original local reference path:
+/Users/sebastienchristian/d/CODE LAB/marawa/legacy_tropes/tmi.csv
+Reference SHA-256:
+4fea6e7bff2830b51403379c5b19c16cab6240c16ff6d8df4324a6403dd5c0ec
+
+Attribution: Katja Mellmann, Thompson's Motif-Index as CSV File,
+Open Science Framework, 2020. https://doi.org/10.17605/OSF.IO/XEB67
+Repository: https://github.com/KatjaMellmann/TMI_as_CSV
+Provenance: https://github.com/KatjaMellmann/TMI_as_CSV/wiki/Source-Information
+The repository documents the CSV as referring to the 1955-1958 edition.
+Its source notes explain that corrections and additions have been incorporated
+and that cross-reference-only entries were removed. It also includes explicit
+first-edition material. Consequently, absence from this CSV is not proof that
+a label is absent from Thompson's printed volumes. Disputed cases require
+consulting the printed edition, its corrections, and cross-references.
+
+FILES
+source-kirtley.pdf
+  Exact copy of the supplied PDF. Final authority for what this supplied
+  digital witness displays, including marks not represented in extracted text.
+reference-tmi.csv
+  Exact copy of the local Mellmann reference snapshot used for screening.
+kirtley-1971-layout.txt
+  Complete UTF-8 text extraction with approximate page layout and form-feed
+  page breaks. Headers, bibliography, source wording and printed numbers remain.
+kirtley-1971-coordinates.xhtml
+  Complete Poppler bounding-box extraction: 522 page elements, with blocks,
+  lines, words and page coordinates. This is evidence-location data, not a
+  formatted reading website and not a transcription of graphic marks.
+entry-start-candidates.txt
+  6,062 candidate entry starts, each prefixed by its line number in the full
+  layout text. Continuation lines and citations remain in the full text.
+  This is a navigation aid, not 6,062 validated structured records.
+repeated-label-candidates.txt
+  82 repeated extracted labels, with occurrence counts. Internal code spacing
+  was ignored for this screen. Markers were retained. 74 repeated labels
+  contain '+'. The other eight require distinct kinds of review; see findings.
+unmarked-codes-not-found-candidates.txt
+  Five unique unmarked extracted codes not found in the conventional revised
+  code field of the reference snapshot. Not a list of five confirmed errors.
+starred-codes-already-in-tmi-candidates.txt
+  22 unique starred, non-plus codes whose numeric portions occur in the
+  reference's conventional code field. These are collision candidates, not
+  22 adjudicated semantic errors.
+starred-collision-kirtley-entry-starts.txt
+  Starting lines for those 22 entries, with full-extraction line numbers.
+starred-collision-tmi-record-starts.txt
+  Matching reference record starts, prefixed by physical reference-file line
+  numbers. These are not spreadsheet record numbers; quoted CSV fields may
+  span multiple lines. Consult reference-tmi.csv for the complete records.
+initial-findings.txt
+  Evidence and classifications for the initial reviewed cases.
+SHA256SUMS.txt
+  Checksums for the source snapshots and derived investigation files.
+
+EXTRACTION AND SCREENING LIMITS
+Poppler pdftotext 26.09.0 was used, in layout and bounding-box layout modes.
+The PDF has a text layer; no blanket OCR was applied. Text alone is insufficient:
+visual marks beside J2048 on printed p.375 are absent from extracted text and
+remain visible when PDF annotations are hidden. Their provenance is unresolved.
+
+The candidate screen considered entry-like labels at the left margin in the
+main index, excluding range headings and front-matter synopsis. It allowed
+asterisk/plus markers, internal spaces after decimal points, and trailing
+commas as well as periods. It does not establish completeness of segmentation,
+resolve every malformed code, or distinguish all inherited headings and
+cross-references. No descriptions or citations were silently corrected.
+The 82 repeated labels are groups, not a count of erroneous entries.
+
+Visual inspection covered physical PDF pages 8, 40, 41, 42, 116, 199, 269,
+270, 349, 358, 411 and 415. This is targeted verification, not a visual review
+of all 522 pages. Printed pages, continuations, markers and duplicate wording
+were checked on the relevant rendered pages. Final printed page 486 was also
+checked by text extraction.
+
+RECOMMENDED INVESTIGATION FORMAT
+Keep two layers: immutable source evidence and a reviewable structured corpus.
+Use linked UTF-8 CSV tables, optionally presented as workbook tabs. The corpus
+should be independent of application story-import CSVs: one index entry is not
+one story, and one bibliographic reference is not necessarily one narrative.
+
+1. Entry occurrences
+   One row per actual occurrence in Kirtley, even when labels repeat.
+   Stable occurrence ID independent of the trope code; document identity;
+   physical PDF page and printed page; entry order; source coordinates and
+   text line span; raw label and raw complete text; transcribed caption and
+   descriptive continuation; literal '*'/'+' marks; uncertainty about graphic
+   marks; normalized code stored separately; surrounding heading and explicit
+   cross-references; transcription/review status.
+   Example proposed ID: KIRTLEY1971-p379-e02. Do not use K98.1 as the row key.
+
+2. Bibliographic works
+   Full bibliography entries exactly as given; stable work IDs; author and
+   year as transcribed; proposed resolved author, title and edition separately;
+   unresolved abbreviations and identity questions explicitly recorded.
+
+3. Citation occurrences
+   One row per entry-to-source citation. Preserve geographic labels, raw
+   reference, volume, page/number/note locators, bibliography link and inherited
+   context. Preserve ambiguous joint places and grouped citations. Do not
+   assume a citation uniquely identifies a story. Do not split mechanically
+   on every comma or semicolon without checking reference structure.
+
+4. TMI reference records
+   Separate namespace and edition identity, exact source text, reference
+   snapshot and locator. Preserve first-edition links and editorial corrections
+   as separate information. Resolve cross-reference-only omissions from a
+   suitable printed/digital witness before declaring a code absent.
+
+5. Alignment assertions
+   Link each Kirtley occurrence to zero, one or several TMI records. Record
+   exact equivalence, narrower meaning, broader meaning, partial overlap,
+   incompatible meaning, proposed new trope, or unresolved alignment. Keep
+   Kirtley's stated classification separate from the investigator's conclusion.
+   Same number is a candidate link, not proof of equivalence.
+
+6. Issues and decisions
+   Issue ID; affected occurrences; issue type; evidence from both witnesses;
+   suggested correction or alternative links; confidence; reviewer; decision
+   and date. Allow multiple issues per entry. Preserve earlier decisions and
+   source wording. Never renumber the historical source to conceal a conflict.
+
+KIRTLEY'S OWN CONVENTIONS
+The introduction, printed p.viii / PDF p.8, distinguishes inherited entries,
+parenthetically qualified variants, starred proposed additions with plausible
+numbering, and '+' additions whose placement he considered uncertain.
+Repeated '+' placements therefore require interpretation, not automatic
+rejection. Asterisks before bibliographic authorities are a different context
+from asterisks attached to entry labels. Preserve their position.
+
+AUDIT ORDER AND COMPLETION CRITERIA
+A. Validate transcription and segmentation across every page. Assign IDs,
+   preserve continuations and markers, and reconcile totals by chapter/page.
+B. Resolve structural issues: repeated labels, syntax, order, hierarchy,
+   reference existence, edition differences and new-code collisions.
+C. Compare all unmarked and qualified entries against the correct TMI wording;
+   compare additions with their proposed parent and possible equivalents
+   elsewhere in TMI. Check both meaning and classification granularity.
+D. Review all citations against the bibliography for identity, years, volumes,
+   locations and locators. Consult the underlying narratives to establish
+   whether they actually support Kirtley's assigned trope. Catalogue comparison
+   alone cannot establish that narrative-level claim.
+E. Record cultural/translation mismatches separately from numerical mistakes.
+   Kirtley himself discusses the difficulty of translating Polynesian categories
+   into Thompson's scheme on printed p.ix. TMI agreement is not the sole test
+   of an analytically sound classification.
+F. Publish a coverage ledger: every occurrence has an extraction status, an
+   alignment status and a citation-review status; every unresolved issue stays
+   visible. Report reviewed/total counts for each pass. Do not claim that a
+   candidate screen has checked all incoherences.
+
+NEXT REQUIRED WORK
+Create and validate the entry-occurrence corpus from these evidence files,
+then adjudicate the candidate queues and review the remaining alignments and
+bibliographic claims. The supplied digital reissue must also be distinguished
+from the 1971 printed witness before attributing every discrepancy to Kirtley
+rather than to later digitization or editing.

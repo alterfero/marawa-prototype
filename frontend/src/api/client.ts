@@ -960,6 +960,8 @@ export function mergeUnconfirmedKeyword(payload: {
 export function buildExplorationNetwork(payload: {
   selected_trope_id?: string | null;
   selected_trope_ids?: string[];
+  specificity_scope?: "same" | "broader" | "narrower" | "both";
+  candidate_level?: number;
   query?: string | null;
   story_filters?: Array<{ field: string; selected_values: string[] }>;
   story_filter_sets?: Array<{
@@ -990,8 +992,10 @@ export function searchTropes(payload: {
   query: string;
   limit?: number;
   include_string_matches?: boolean;
-}): Promise<TropeSearchResponse> {
+  specificity_levels?: number[];
+}, signal?: AbortSignal): Promise<TropeSearchResponse> {
   return request<TropeSearchResponse>("/search/tropes", {
+    signal,
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -1022,8 +1026,9 @@ export function buildSemanticGraph(payload: {
   scope?: "all" | "canonical";
   similarity_threshold?: number;
   max_links_per_node?: number;
-}): Promise<SemanticGraphResponse> {
+}, signal?: AbortSignal): Promise<SemanticGraphResponse> {
   return request<SemanticGraphResponse>("/visualizations/semantic-graph", {
+    signal,
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -1218,5 +1223,21 @@ export function applyInjection(id: string, decisions: import("./types").Injectio
   return request(`/dataset/injections/${encodeURIComponent(id)}/apply`, {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ decisions, acknowledge_warnings: acknowledgeWarnings }),
+  });
+}
+
+export function getTropeOntology(signal?: AbortSignal): Promise<import("./types").TropeOntology> {
+  return request("/ontology", { signal });
+}
+
+export type OntologyEdit =
+  | { trope_id: string; level: number }
+  | { child_id: string; parent_id: string; status: "approved" | "rejected" };
+
+export function editTropeOntology(dataset_id: string, expected_version: number, edit: OntologyEdit) {
+  return request<{ version: number }>("trope_id" in edit ? "/ontology/level" : "/ontology/link", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ dataset_id, expected_version, ...edit }),
   });
 }

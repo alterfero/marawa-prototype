@@ -1,0 +1,145 @@
+INITIAL FINDINGS - NOT AN EXHAUSTIVE AUDIT
+6 November 2026
+
+Evidence levels:
+- PDF-verified: visible in the supplied PDF, not just extracted text.
+- Reference comparison: compared with the local Mellmann CSV snapshot.
+- Proposed correction: a review hypothesis, not a change to source data.
+
+Printed pages below are Kirtley's page labels. PDF pages are one-based.
+Text line numbers refer to kirtley-1971-layout.txt.
+
+01. K98.1: two different meanings under one unmarked label.
+Printed p.379; PDF p.415; text lines 22145 and 22149.
+First entry: beauty contest won through deception, with other contestants
+covered with leaves; Tonga, Gifford 1924, p.186.
+Second entry: cockfight won through deception; Tonga, Collocott 1928, p.45.
+TMI K98.1 corresponds to the first entry, including the Gifford reference.
+Assessment: PDF-verified duplicate with a clear reference-description conflict
+for the second occurrence. No replacement code has been assigned. The second
+story needs review before choosing a different alignment or a local addition.
+
+02. A1335.3: likely mistyped code for the first of two occurrences.
+Printed p.80; PDF p.116; text lines 5951 and 5957.
+First concerns death arising through the bad creator's unsuccessful imitation;
+the cited Hawaiian source is Beckwith 1940, p.61.
+Second concerns death arising from an unwise choice.
+The reference assigns the first subject to A1335.2 and the second to A1335.3.
+Assessment: PDF-verified collision; strong proposed correction A1335.2 for the
+first occurrence. Its short caption also warrants comparison with its own
+explanation: wording about imitation can reverse who imitates whom.
+
+03. C984.3: storm and flood conflated by numbering.
+Printed p.163; PDF p.199; text lines 10447 and 10452.
+The first entry is a storm resulting from breaking a tabu; the second is a flood.
+The reference assigns storm to C984.2 and flood to C984.3.
+Assessment: PDF-verified collision; strong proposed correction C984.2 for the
+first occurrence. Individual narrative citations have not been adjudicated.
+
+04. *A115.8: duplicate proposed addition identifier.
+Printed p.6; PDF p.42; text lines 1797 and 1800.
+First: a goddess falls from heaven; Lau Islands, Hocart 1929, p.196.
+Second: a god is fished up with an island; Ontong Java, Parkinson 1898, p.194.
+Assessment: PDF-verified reuse of a starred label for distinct subjects.
+Both occurrences need independent local IDs. Neither may overwrite the other.
+
+05. D2188.2: repeated entry, not conflicting meaning.
+Printed p.234; PDF p.270; text lines 14349 and 14357.
+Both concern a person vanishing. The second repeats the Tuamotu Stimson
+manuscript citation already present in the longer first occurrence.
+The reference also gives D2188.2 for a person vanishing.
+Assessment: PDF-verified duplicate occurrence with overlapping evidence.
+This is a different issue class from K98.1; preserve both historical occurrences.
+
+06. *F628.5.2: two descriptions under one proposed addition label.
+Printed p.313; PDF p.349; text lines 18646 and 18651.
+First: a hero punches through opponents' chests and backs.
+Second: a hero splits an opponent with a club blow.
+Assessment: PDF-verified identifier reuse. The subjects are related strength
+feats but have different actions. Review granularity and nearby F628.2.5
+hierarchy before proposing any corrected code.
+
+07. *F809.5.3: two stone-return descriptions under one proposed label.
+Printed p.322; PDF p.358; text lines 19151 and 19155.
+First: a stone returns to the river bed when the observer blinks.
+Second: a moved stone always returns to its original location.
+Assessment: PDF-verified repeated label. Possible specialization/overlap rather
+than an unrelated meaning; retain separate occurrences pending review.
+
+08. J2048: textual duplicate with missing graphic information.
+Printed p.375; PDF p.411; text lines 21973 and 21976.
+First concerns messengers forgetting a message; second a lobster failing to hide
+its antennae during hide-and-seek. The reference's J2048 concerns a fool who
+forgets to take his own things while collecting things for himself and relatives.
+However, the rendered page contains visible cross/slash-like marks after BOTH
+J2048 labels that the text extraction does not capture. The marks remain when
+annotations are hidden. Their intended value and provenance are unresolved.
+Assessment: PDF-verified distinct occurrences and reference-description
+mismatch, but NOT yet an adjudicated unmarked-code misuse. Inspect an independent
+witness before deciding whether these are '+' extensions or other interventions.
+
+09. A112.11.+: repeated uncertain-placement additions.
+Printed p.5; PDF p.41; text lines 1746 and 1749.
+The two additions concern a goddess born at the sea bottom and a divine genealogy
+from seaweed/slime through a stone to twins. The ordinary A112.11 entry immediately
+above concerns offspring of a god and a hen and agrees with the reference.
+Assessment: PDF-verified use of two '+' entries alongside the inherited entry.
+Under Kirtley's declared convention these must not be collapsed into A112.11 or
+classified automatically as accidental duplicate standard codes.
+
+10. D261.3.1.1: likely dropped digit.
+Printed p.233; PDF p.269; text line 14278.
+The entry concerns magical replacement of torn-out eyes. The reference has the
+same caption at D2161.3.1.1, consistent with neighboring D2161.3.1 and D2161.3.7.
+Assessment: PDF-verified spelling; strong proposed correction D2161.3.1.1.
+The PDF itself prints D261.3.1.1, so this is not merely a pdftotext mistake.
+Whether it originated in 1971 or the later digital witness remains unverified.
+
+11. Starred additions can collide with already occupied TMI numbers.
+22 candidate numeric collisions were found across the main index.
+Examples in extracted text, printed p.108 / PDF p.144:
+- *A2681.12 (line 7476): origin of casuarina trees; reference A2681.12 concerns
+  the origin of the palm-wine tree.
+- *A2681.13 (line 7479): origin of Tahitian chestnuts; reference A2681.13 concerns
+  the origin of the cedar tree.
+Other examples in extracted text:
+- *C526: touching a particular stone; reference C526 is touching a sacred mountain.
+- *G72.4: an uncle kills and eats nephews; reference G72.4 concerns the eaten
+  child's voice issuing from the cannibal's heart.
+Assessment: reference-description conflicts requiring review. These examples
+were compared textually; their PDF pages were not included in the visual sample.
+A star identifies a Kirtley addition but does not guarantee an unused TMI number.
+The complete 22-code candidate list and matched record starts are supplied.
+
+12. Unmarked labels missing from the reference need different explanations.
+Five candidates: B478, B872, D261.3.1.1, K1823.6, S73.
+- B478 ('helpful crab'): the CSV gives revised B495.1 and explicitly lists B478
+  in its first-edition column. This suggests an edition carryover.
+- D261.3.1.1: see the probable dropped digit above.
+- K1823.6 ('disguise as crab'): may be an unmarked addition; not adjudicated.
+- B872 and S73: remain unresolved. Missing headings or cross-reference-only
+  material in the derivative reference are possible, so absence alone is not
+  proof of invention or error.
+Assessment: candidates, not five confirmed invalid codes.
+
+13. Apparent A151 duplication is a text-processing false positive.
+Printed pp.13-14; text lines 2229 and 2287.
+The later label is transcribed as 'A151. 12.' with an internal space, not A151.
+Accounting for internal code spacing removed this apparent duplicate from the
+final repeated-label candidate list. Raw source text was preserved.
+Two other punctuation anomalies, not silently repaired:
+- A1122, at line 5392.
+- A1546.0.2, at line 6529.
+These require checking against the page and historical witness before assigning
+responsibility to typography, digitization or extraction.
+
+BOUNDARY OF THIS REVIEW
+Eight non-plus repeated-label groups remained after allowing internal spacing;
+seven have no unresolved graphic-marker issue in the reviewed pages, while
+J2048 requires the visual qualification above. Seventy-four additional repeated
+labels contain '+'. All are retained in the candidate queue.
+
+The candidate scan does not cover every possible semantic mismatch. It has not
+validated all entry boundaries, all bibliographic identities, all page locators,
+or the cited narratives themselves. A full investigation must preserve explicit
+coverage and uncertainty, rather than present these findings as all errors.

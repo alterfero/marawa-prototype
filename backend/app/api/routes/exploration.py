@@ -1,3 +1,5 @@
+from typing import Literal
+
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -96,6 +98,8 @@ class StoryFilterSetRequest(BaseModel):
 
 
 class ExplorationNetworkRequest(BaseModel):
+    specificity_scope: Literal["same", "broader", "narrower", "both"] | None = None
+    candidate_level: int | None = Field(default=None, ge=1, le=4)
     selected_trope_id: str | None = None
     selected_trope_ids: list[str] = Field(default_factory=list, max_length=50)
     query: str | None = None
@@ -164,6 +168,8 @@ def build_exploration_network(
                 min_similarity=payload.min_similarity,
                 related_limit=payload.related_limit,
                 candidate_limit=payload.candidate_limit,
+                specificity_scope=payload.specificity_scope,
+                candidate_level=payload.candidate_level,
                 actor_role=auth_context.user.role if auth_context else None,
                 actor_territories=auth_context.user.territories if auth_context else None,
             )

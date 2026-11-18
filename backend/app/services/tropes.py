@@ -24,6 +24,7 @@ from app.db.models import (
     TropeConfirmationStatus,
     UserRole,
 )
+from app.services.ontology import review_reworded_links, transfer_merge_links
 from app.services.audit import record_audit_event
 from app.services.reviews import queue_term_review_item
 from app.services.stories import sync_story_derived_fields
@@ -228,6 +229,8 @@ def get_trope_detail(
         "id": trope.id,
         "version": trope.version,
         "text": trope.text,
+        "specificity_level": trope.specificity_level,
+        "specificity_source": trope.specificity_source,
         "confirmation_status": trope.confirmation_status.value,
         "story_count": len(stories),
         "stories": [
@@ -351,6 +354,7 @@ def merge_unconfirmed_trope(
     target_trope.version += 1
     target_trope.updated_by_user_id = actor_user_id
     _delete_trope_artifacts(session, source_trope.id)
+    transfer_merge_links(session, source_trope.id, target_trope.id)
     session.delete(source_trope)
     active_dataset.version += 1
     record_audit_event(
@@ -419,6 +423,8 @@ def update_trope_text(
         return _serialize_trope_summary(trope)
 
     previous_text = trope.text
+    if marker != trope.normalized_text:
+        review_reworded_links(session, trope.id)
     trope.text = trope_text
     trope.version += 1
     trope.updated_by_user_id = actor_user_id
@@ -503,6 +509,8 @@ def _serialize_trope_summary(trope: Trope) -> dict:
         "id": trope.id,
         "version": trope.version,
         "text": trope.text,
+        "specificity_level": trope.specificity_level,
+        "specificity_source": trope.specificity_source,
         "confirmation_status": trope.confirmation_status.value,
         "story_count": int(trope.cached_story_count or 0),
     }

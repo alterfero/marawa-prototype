@@ -141,6 +141,11 @@ export function TropeBrowserProvider({ children }: { children: ReactNode }) {
               </button>
             </div>
 
+            {detail && (
+              <p>Specificity {detail.specificity_level} · {detail.specificity_source} · {" "}
+                <a href={routeHref("/ontology", { trope: detail.id })} onClick={closeTrope}>Open in ontology</a>
+              </p>
+            )}
             {loading ? <p className="muted">Loading story titles...</p> : null}
             {error ? <p className="notice-inline">{error}</p> : null}
 

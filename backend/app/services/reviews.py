@@ -27,6 +27,7 @@ from app.db.models import (
     Trope,
     UserRole,
 )
+from app.services.ontology import transfer_merge_links
 from app.services.audit import record_audit_event
 
 STORY_FIELD_CHANGE_KIND = "story_field"
@@ -1467,6 +1468,7 @@ def _apply_trope_merge(
     )
     if source_trope is not None:
         _delete_trope_artifacts(session, source_trope_id)
+        transfer_merge_links(session, source_trope_id, target_trope_id)
         session.delete(source_trope)
     return affected_story_ids
 

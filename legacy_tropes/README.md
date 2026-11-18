@@ -37,7 +37,8 @@ remain separate from similarly numbered entries (D300-D399 is not D300). Absent
 decimal prefixes become dashed placeholders with no invented description.
 Bracketed decimal additions retain their published code; for example,
 M202.1[.1] attaches to M202.1. Historical entries attach to their stated section.
-This editorial navigation depth is not a measured semantic abstraction level.
+Tree depth records an entry’s place in the source hierarchy. Marawa’s trope
+specificity levels are independent of that depth.
 
 Display adaptations: heading dashes are normalized and “motifs” becomes “tropes”
 in heading labels. A leading code is separated from the entry description for

@@ -11,6 +11,7 @@ from app.core.dates import parse_year_interval
 from app.core.injection import TITLE_FIELDS, TERM_FIELDS, duplicate_keys, inspect_csv, prepare_injection_titles
 from app.core.parsing import normalize_text, serialize_tropes, serialize_themes, serialize_keywords
 from app.db.models import CSVInjection, Dataset, DatasetStatus, Story, StoryCompleteness, StoryTropeOrigin, AssignmentStatus, ReviewType, TermKind, TermReviewStatus, TropeConfirmationStatus, ThemeConfirmationStatus, KeywordConfirmationStatus, StoryTrope, StoryTheme, StoryKeyword, Trope, Theme, Keyword
+from app.db.models import TropeParent
 from app.services.audit import record_audit_event
 from app.services.csv_io import CSVImportValidationError, _CSVImportRow, _parse_full_export_catalog, _parse_full_story_metadata, _row_hash, _full_story_metadata, _ordered_trope_links, _ordered_theme_links, _ordered_keyword_links
 from app.services.jobs import queue_job
@@ -264,6 +265,7 @@ def _apply_injection(session, injection_id, *, decisions, acknowledge_warnings, 
     catalog = draft.plan_json["catalog"]
     new_term_count = 0
     new_terms = []
+    incoming_ontology = {}
     for collection, model in (("tropes", Trope), ("themes", Theme), ("keywords", Keyword)):
         cache = {t.normalized_text: t for t in session.scalars(select(model).where(model.dataset_id == dataset.id))}
         desired = dict(catalog[collection]) if catalog else {}
@@ -273,20 +275,39 @@ def _apply_injection(session, injection_id, *, decisions, acknowledge_warnings, 
                 continue
             for term in row["terms"][collection]:
                 desired.setdefault(normalize_text(term), {"text": term})
+        local_keys = {t.ontology_id: t.normalized_text for t in cache.values()} if model is Trope else {}
         for marker, item in desired.items():
+            ontology = item.get("ontology") if model is Trope else None
+            if ontology:
+                if ontology["id"] in local_keys and local_keys[ontology["id"]] != marker:
+                    raise InjectionError(f"The ontology ID for {item['text']!r} belongs to another local wording.")
+                incoming_ontology[ontology["id"]] = (marker, ontology)
             if marker not in cache:
                 attributes = dict(item)
+                attributes.pop("ontology", None)
                 if "confirmation_status" in attributes:
                     enum = {"tropes": TropeConfirmationStatus, "themes": ThemeConfirmationStatus, "keywords": KeywordConfirmationStatus}[collection]
                     attributes["confirmation_status"] = enum(attributes["confirmation_status"])
                 if collection in {"tropes", "keywords"}:
                     attributes["review_status"] = TermReviewStatus.PENDING_REVIEW
                 cache[marker] = model(dataset_id=dataset.id, created_by_user_id=actor_user_id, **attributes)
+                if ontology:
+                    cache[marker].ontology_id = ontology["id"]
+                    cache[marker].specificity_level = ontology["level"]
+                    cache[marker].specificity_source = ontology["source"]
                 session.add(cache[marker])
                 new_terms.append((collection, cache[marker]))
                 new_term_count += 1
         caches[collection] = cache
     session.flush()
+    for marker, ontology in incoming_ontology.values():
+        child = caches["tropes"][marker]
+        for link in ontology.get("broader", []):
+            parent_marker, _ = incoming_ontology[link["id"]]
+            parent = caches["tropes"][parent_marker]
+            if session.get(TropeParent, (dataset.id, child.id, parent.id)) is None:
+                status = "rejected" if link["status"] == "rejected" else "pending"
+                session.add(TropeParent(dataset_id=dataset.id, child_id=child.id, parent_id=parent.id, status=status))
     for collection, term in new_terms:
         if collection in {"tropes", "keywords"}:
             item = queue_term_review_item(

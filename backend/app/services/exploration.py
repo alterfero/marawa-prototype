@@ -8,6 +8,7 @@ import unicodedata
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+from app.services.ontology import related_ontology_ids
 from app.core.coordinates import parse_space_coord
 from app.core.csv_schema import THEME_FIELD
 from app.core.parsing import clean_text, split_themes
@@ -162,6 +163,8 @@ def build_exploration_response(
     min_similarity: float = 0.62,
     related_limit: int = 60,
     candidate_limit: int = 12,
+    specificity_scope: str | None = None,
+    candidate_level: int | None = None,
     actor_role: UserRole | None = None,
     actor_territories: Iterable[object] | None = None,
 ) -> dict:
@@ -182,6 +185,7 @@ def build_exploration_response(
             TermKind.TROPE,
             clean_text(query),
             limit=candidate_limit,
+            specificity_levels=[candidate_level] if candidate_level is not None else None,
             actor_role=actor_role,
             actor_territories=actor_territories,
         )
@@ -239,6 +243,7 @@ def build_exploration_response(
                     filtered_entries,
                     min_similarity=min_similarity,
                     related_limit=related_limit,
+                    specificity_scope=specificity_scope,
                     original_color=filter_set.color,
                     related_color=_lighten_hex_color(filter_set.color, amount=0.45),
                     connection_color=filter_set.color,
@@ -310,6 +315,7 @@ def build_exploration_response(
                     filtered_stories,
                     min_similarity=min_similarity,
                     related_limit=related_limit,
+                    specificity_scope=specificity_scope,
                     actor_role=actor_role,
                     actor_territories=actor_territories,
                 )
@@ -339,6 +345,7 @@ def build_exploration_response(
         filtered_stories,
         min_similarity=min_similarity,
         related_limit=related_limit,
+        specificity_scope=specificity_scope,
         actor_role=actor_role,
         actor_territories=actor_territories,
     )
@@ -353,19 +360,7 @@ def _get_active_trope(
     dataset_id: str,
     trope_id: str,
 ) -> Trope | None:
-    trope = session.scalar(
-        select(Trope)
-        .join(StoryTrope, StoryTrope.trope_id == Trope.id)
-        .join(Story, Story.id == StoryTrope.story_id)
-        .where(
-            Trope.id == trope_id,
-            Story.dataset_id == dataset_id,
-        )
-        .group_by(Trope.id)
-    )
-    if trope is None:
-        return None
-    return trope
+    return session.scalar(select(Trope).where(Trope.dataset_id == dataset_id, Trope.id == trope_id))
 
 
 def _selected_trope_payload(trope: Trope, story_count: int) -> dict:
@@ -766,6 +761,7 @@ def _selected_trope_story_map_response(
     *,
     min_similarity: float,
     related_limit: int,
+    specificity_scope: str | None = None,
     original_color: str | None = None,
     related_color: str | None = None,
     connection_color: str | None = None,
@@ -783,7 +779,15 @@ def _selected_trope_story_map_response(
         for trope_id, trope_entries in stories_by_trope_id.items()
     }
 
-    selected_entries = stories_by_trope_id.get(selected_trope.id, [])
+    matching_ids = {selected_trope.id}
+    allowed_levels = None
+    if specificity_scope:
+        level = selected_trope.specificity_level
+        lowest = 1 if specificity_scope in ("broader", "both") else level
+        highest = 4 if specificity_scope in ("narrower", "both") else level
+        allowed_levels = list(range(lowest, highest + 1))
+        matching_ids = related_ontology_ids(session, selected_trope, allowed_levels)
+    selected_entries = [entry for entry in entries if any(t["id"] in matching_ids for t in entry.tropes)]
     if not selected_entries:
         return {
             "selected_trope": _selected_trope_payload(selected_trope, story_counts_by_trope_id.get(selected_trope.id, 0)),
@@ -803,13 +807,14 @@ def _selected_trope_story_map_response(
         session,
         TermKind.TROPE,
         selected_trope.text,
-        limit=related_limit + 1,
+        limit=related_limit + len(matching_ids),
+        specificity_levels=allowed_levels,
         actor_role=actor_role,
         actor_territories=actor_territories,
     )
     related_tropes = []
     for item in related_search["items"]:
-        if item["id"] == selected_trope.id:
+        if item["id"] in matching_ids:
             continue
         if float(item["score"]) < min_similarity:
             continue
@@ -839,11 +844,12 @@ def _selected_trope_story_map_response(
                 similarity=1.0,
                 matched_tropes=[
                     {
-                        "id": selected_trope.id,
-                        "text": selected_trope.text,
+                        "id": trope["id"],
+                        "text": trope["text"],
                         "score": 1.0,
-                        "story_count": story_counts_by_trope_id.get(selected_trope.id, 0),
+                        "story_count": story_counts_by_trope_id[trope["id"]],
                     }
+                    for trope in entry.tropes if trope["id"] in matching_ids
                 ],
                 story_counts_by_trope_id=story_counts_by_trope_id,
                 color=original_color or similarity_to_color(1.0, min_similarity),

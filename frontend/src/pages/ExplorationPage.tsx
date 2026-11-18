@@ -1753,6 +1753,8 @@ export function ExplorationPage() {
   const networkRequestIdRef = useRef(0);
   const [interfaceMode, setInterfaceMode] = useState<"simple" | "expert">("simple");
   const [query, setQuery] = useState("");
+  const [specificityScope, setSpecificityScope] = useState<"same" | "broader" | "narrower" | "both">("same");
+  const [candidateLevel, setCandidateLevel] = useState("");
   const [selectedTropeId, setSelectedTropeId] = useState<string | null>(null);
   const [selectedTropePreview, setSelectedTropePreview] = useState<string | null>(null);
   const [selectedCandidateIds, setSelectedCandidateIds] = useState<string[]>([]);
@@ -1783,6 +1785,8 @@ export function ExplorationPage() {
   async function requestNetwork(payload: {
     selected_trope_id?: string | null;
     selected_trope_ids?: string[];
+    specificity_scope?: typeof specificityScope;
+    candidate_level?: number;
     query?: string | null;
     story_filters?: Array<{ field: string; selected_values: string[] }>;
     story_filter_sets?: Array<{
@@ -1927,6 +1931,7 @@ export function ExplorationPage() {
     setResultMode("map");
     const timeoutId = window.setTimeout(() => {
       void requestNetwork({
+        specificity_scope: specificityScope,
         ...(selectedTropeIdsParam
           ? { selected_trope_ids: selectedTropeIdsParam.split(",") }
           : { selected_trope_id: selectedTropeId }),
@@ -1937,7 +1942,7 @@ export function ExplorationPage() {
     return () => {
       window.clearTimeout(timeoutId);
     };
-  }, [canUseSingleTropeExploration, selectedTropeId, selectedTropeIdsParam, threshold]);
+  }, [canUseSingleTropeExploration, selectedTropeId, selectedTropeIdsParam, threshold, specificityScope]);
 
   async function handleSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1948,6 +1953,7 @@ export function ExplorationPage() {
     setResultMode("candidate_search");
     await requestNetwork({
       query,
+      candidate_level: candidateLevel ? Number(candidateLevel) : undefined,
       min_similarity: threshold,
     });
   }
@@ -2264,6 +2270,9 @@ export function ExplorationPage() {
               placeholder="Type a phrase to find candidate tropes"
               value={query}
             />
+            <label>Candidate specificity <select value={candidateLevel} onChange={e => setCandidateLevel(e.target.value)}>
+              <option value="">All levels</option>{[1, 2, 3, 4].map(l => <option key={l} value={l}>Level {l}</option>)}
+            </select></label>
             <button className="button" disabled={busy || !query.trim()} type="submit">
               {busy ? "Loading..." : "Find candidates"}
             </button>
@@ -2289,6 +2298,13 @@ export function ExplorationPage() {
           </form>
           <div className="field">
             <div className="card-row">
+              <label>Map specificity <select value={specificityScope}
+                onChange={e => setSpecificityScope(e.target.value as typeof specificityScope)}>
+                <option value="same">Same level only</option>
+                <option value="broader">Same and broader levels</option>
+                <option value="narrower">Same and narrower levels</option>
+                <option value="both">Same, broader and narrower levels</option>
+              </select></label>
               <label htmlFor="similarity-threshold">
                 <strong>Similarity threshold</strong>
               </label>
