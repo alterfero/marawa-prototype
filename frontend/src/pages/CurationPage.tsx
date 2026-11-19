@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
+import { SpecificitySelect } from "../components/SpecificitySelect";
 import {
   canonicalizeTropes,
   createCanonicalTrope,
@@ -122,6 +123,7 @@ export function CurationPage() {
   const [targetOverrides, setTargetOverrides] = useState<Record<string, PairTargetOverride>>({});
   const [pendingMerges, setPendingMerges] = useState<PendingMergeDecision[]>([]);
   const [editingPairId, setEditingPairId] = useState<string | null>(null);
+  const [tropeSpecificity, setTropeSpecificity] = useState<number | undefined>(undefined);
   const [editingTargetQuery, setEditingTargetQuery] = useState("");
   const [editingTargetResults, setEditingTargetResults] = useState<TropeSearchItem[]>([]);
   const [editingTargetSearchStatus, setEditingTargetSearchStatus] = useState<"idle" | "loading" | "ready">("idle");
@@ -137,6 +139,7 @@ export function CurationPage() {
   function resetTargetEditor() {
     setEditingPairId(null);
     setEditingTargetQuery("");
+    setTropeSpecificity(undefined);
     setEditingTargetResults([]);
     setEditingTargetSearchStatus("idle");
     setModalNotice(null);
@@ -534,7 +537,7 @@ export function CurationPage() {
     try {
       setBusy(true);
       setNotice(null);
-      const result = await createCanonicalTrope(editingTargetQuery.trim());
+      const result = await createCanonicalTrope(editingTargetQuery.trim(), tropeSpecificity);
       if (!applyPairTargetSelection(pair, result.trope)) {
         return;
       }
@@ -1002,6 +1005,7 @@ export function CurationPage() {
             </label>
 
             <div className="card subdued">
+              <SpecificitySelect value={tropeSpecificity} onChange={setTropeSpecificity} disabled={mutationDisabled} />
               <div className="card-row">
                 <h3>Keep typed trope</h3>
                 <button

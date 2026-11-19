@@ -3,10 +3,11 @@ import { useEffect, useState } from "react";
 import { searchKeywords, searchThemes, searchTropes } from "../api/client";
 import type { SearchItem, StoryDetail } from "../api/types";
 import { normalizeDraftText } from "../constants/csv";
+import { SpecificitySelect } from "./SpecificitySelect";
 import { TermCard } from "./TermCard";
 
 export type StoryItemKind = "theme" | "trope" | "keyword";
-export type StoryItemInput = { text: string } | { id: string };
+export type StoryItemInput = { text: string; specificity_level?: number } | { id: string };
 
 const itemKinds = [
   { kind: "theme", label: "Theme", plural: "Themes", field: "themes" },
@@ -23,6 +24,7 @@ export function StoryReviewItemAdder({
   disabled: boolean;
   onAdd: (kind: StoryItemKind, input: StoryItemInput) => Promise<boolean>;
 }) {
+  const [specificity, setSpecificity] = useState<number | undefined>(undefined);
   const [kind, setKind] = useState<StoryItemKind>("theme");
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchItem[]>([]);
@@ -64,7 +66,10 @@ export function StoryReviewItemAdder({
 
   async function addItem(input: StoryItemInput) {
     if (interactionDisabled) return;
-    if (await onAdd(kind, input)) changeQuery("");
+    if (await onAdd(kind, input)) {
+      changeQuery("");
+      setSpecificity(undefined);
+    }
   }
 
   return (
@@ -76,13 +81,14 @@ export function StoryReviewItemAdder({
 
       <form className="page-stack" onSubmit={(event) => {
         event.preventDefault();
-        if (query.trim() && !alreadyAssigned) void addItem(exactMatch ? { id: exactMatch.id } : { text: query.trim() });
+        if (query.trim() && !alreadyAssigned) void addItem(exactMatch ? { id: exactMatch.id } : { text: query.trim(), ...(kind === "trope" ? { specificity_level: specificity } : {}) });
       }}>
         <label className="field">
           <span>Item type</span>
           <select className="input" disabled={interactionDisabled} value={kind} onChange={(event) => {
             setKind(event.target.value as StoryItemKind);
             changeQuery("");
+            setSpecificity(undefined);
           }}>
             {itemKinds.map((item) => <option key={item.kind} value={item.kind}>{item.label}</option>)}
           </select>
@@ -97,6 +103,9 @@ export function StoryReviewItemAdder({
             value={query}
           />
         </label>
+        {kind === "trope" && !exactMatch ? (
+          <SpecificitySelect value={specificity} onChange={setSpecificity} disabled={interactionDisabled} />
+        ) : null}
         <div className="button-row wrap-row">
           <button className="button" disabled={interactionDisabled || !query.trim() || alreadyAssigned} type="submit">
             {exactMatch ? `Add existing ${kind}` : `Create and add ${kind}`}

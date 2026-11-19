@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { SpecificitySelect } from "../components/SpecificitySelect";
 import {
   addStoryKeyword,
   addStoryTheme,
@@ -164,6 +165,7 @@ export function StoriesPage({ canEdit: canEditStories }: { canEdit: boolean }) {
   const [storyQuery, setStoryQuery] = useState("");
   const [draftFilters, setDraftFilters] = useState<StoryFieldFilter[]>([]);
   const [appliedFilters, setAppliedFilters] = useState<StoryFieldFilter[]>([]);
+  const [tropeSpecificity, setTropeSpecificity] = useState<number | undefined>(undefined);
   const [tropeQuery, setTropeQuery] = useState("");
   const [tropeResults, setTropeResults] = useState<TropeSearchItem[]>([]);
   const [tropeSearchStatus, setTropeSearchStatus] = useState<"idle" | "loading" | "ready">("idle");
@@ -745,6 +747,7 @@ export function StoriesPage({ canEdit: canEditStories }: { canEdit: boolean }) {
         addStoryTrope(detail.id, {
           expected_story_version: detail.version,
           text: tropeQuery.trim(),
+          specificity_level: tropeSpecificity,
         }),
       {
         tone: "success",
@@ -753,6 +756,7 @@ export function StoriesPage({ canEdit: canEditStories }: { canEdit: boolean }) {
       },
       () => {
         setTropeQuery("");
+        setTropeSpecificity(undefined);
         setTropeResults([]);
         setTropeSearchStatus("idle");
         keepAddTropeSectionInView();
@@ -1704,6 +1708,7 @@ export function StoriesPage({ canEdit: canEditStories }: { canEdit: boolean }) {
               </label>
 
               <div className="card subdued">
+                <SpecificitySelect value={tropeSpecificity} onChange={setTropeSpecificity} disabled={interactionDisabled} />
                 <div className="card-row">
                   <h3>Keep typed trope</h3>
                   <button

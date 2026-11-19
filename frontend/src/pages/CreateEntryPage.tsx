@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 
+import { SpecificitySelect } from "../components/SpecificitySelect";
 import {
   addStoryKeyword,
   addStoryTrope,
@@ -38,7 +39,12 @@ interface PageNotice {
   body?: string;
 }
 
-type DraftTerm = TropeReference;
+type DraftTerm = TropeReference & { specificity_level?: number };
+
+function tropeSpecificityLevels(tropes: DraftTerm[]): Record<string, number> {
+  return Object.fromEntries(tropes.flatMap((trope) =>
+    trope.specificity_level === undefined ? [] : [[trope.text, trope.specificity_level]]));
+}
 
 function sameFields(left: Record<string, string>, right: Record<string, string>): boolean {
   const fields = new Set([...Object.keys(left), ...Object.keys(right)]);
@@ -214,6 +220,7 @@ export function CreateEntryPage() {
   const [keywordResults, setKeywordResults] = useState<SearchItem[]>([]);
   const [keywordSearchStatus, setKeywordSearchStatus] = useState<"idle" | "loading" | "ready">("idle");
   const [draftTropes, setDraftTropes] = useState<DraftTerm[]>([]);
+  const [tropeSpecificity, setTropeSpecificity] = useState<number | undefined>(undefined);
   const [tropeQuery, setTropeQuery] = useState("");
   const [tropeResults, setTropeResults] = useState<SearchItem[]>([]);
   const [tropeSearchStatus, setTropeSearchStatus] = useState<"idle" | "loading" | "ready">("idle");
@@ -277,12 +284,13 @@ export function CreateEntryPage() {
   function restoreDraft(recovery: EntryDraftRecovery, story?: StoryDetail) {
     setFields({ ...buildBlankStoryFields(), ...recovery.fields });
     setDraftTropes(recoveryTerms(recovery.tropes, "trope").map((trope) =>
-      story?.tropes.find((item) => normalizeDraftText(item.text) === normalizeDraftText(trope.text)) ?? trope));
+      story?.tropes.find((item) => normalizeDraftText(item.text) === normalizeDraftText(trope.text)) ?? { ...trope, specificity_level: recovery.tropeSpecificityLevels?.[trope.text] }));
     setDraftKeywords(recoveryTerms(recovery.keywords, "keyword"));
     setKeywordQuery("");
     setKeywordResults([]);
     setKeywordSearchStatus("idle");
     setTropeQuery("");
+    setTropeSpecificity(undefined);
     setTropeResults([]);
     setTropeSearchStatus("idle");
   }
@@ -310,6 +318,7 @@ export function CreateEntryPage() {
     setKeywordSearchStatus("idle");
     setDraftTropes([]);
     setTropeQuery("");
+    setTropeSpecificity(undefined);
     setTropeResults([]);
     setTropeSearchStatus("idle");
     setSavedStory(null);
@@ -409,6 +418,7 @@ export function CreateEntryPage() {
       storyId: savedStory?.id || null,
       fields,
       tropes: draftTropes.map((trope) => trope.text),
+      tropeSpecificityLevels: tropeSpecificityLevels(draftTropes),
       keywords: draftKeywords.map((keyword) => keyword.text),
     };
     recoveredDraftRef.current = recovery;
@@ -651,6 +661,7 @@ export function CreateEntryPage() {
     }
 
     setDraftTropes((current) => [...current, nextTrope]);
+    setTropeSpecificity(undefined);
     setTropeQuery("");
     setTropeResults([]);
     setTropeSearchStatus("idle");
@@ -691,6 +702,7 @@ export function CreateEntryPage() {
     addDraftTrope({
       id: `draft:${normalizeDraftText(trimmedQuery)}`,
       text: trimmedQuery,
+      specificity_level: tropeSpecificity,
       story_count: 0,
     });
   }
@@ -770,6 +782,7 @@ export function CreateEntryPage() {
       const result = await addStoryTrope(story.id, {
         expected_story_version: story.version,
         text: draftTrope.text,
+        specificity_level: draftTrope.specificity_level,
       });
       story = {
         ...story,
@@ -886,6 +899,7 @@ export function CreateEntryPage() {
           expected_dataset_version: datasetVersion,
           fields: { ...fieldsToSave, territory: fields["territory"] || "" },
           tropes: includeTerms ? draftTropes.map((trope) => trope.text) : [],
+          trope_specificity_levels: includeTerms ? tropeSpecificityLevels(draftTropes) : {},
           keywords: includeTerms ? draftKeywords.map((keyword) => keyword.text) : [],
         });
       }
@@ -1204,6 +1218,7 @@ export function CreateEntryPage() {
                   <TropeCard
                     key={trope.id}
                     minimumStoryCount={0}
+                    meta={trope.id.startsWith("draft:") ? (trope.specificity_level ? `Specificity level ${trope.specificity_level}` : "Automatic specificity rating") : undefined}
                     trope={trope}
                     editDisabled={interactionDisabled}
                     onEditDraft={() => handleEditDraftTrope(trope)}
@@ -1243,6 +1258,7 @@ export function CreateEntryPage() {
             </label>
 
             <div className="card subdued">
+              <SpecificitySelect value={tropeSpecificity} onChange={setTropeSpecificity} disabled={interactionDisabled} />
               <div className="card-row">
                 <h3>Keep typed trope</h3>
                 <button className="button" disabled={interactionDisabled || !tropeQuery.trim()} onClick={() => handleKeepTypedTrope()} type="button">

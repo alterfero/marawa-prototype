@@ -29,11 +29,36 @@ export function OntologyGraphCanvas({ graph, forces, selectedId, selectedEdge, c
   const [hoveredEdge, setHoveredEdge] = useState<{ source: string; target: string; kind: "ontology" | "similarity" } | null>(null);
   const [preview, setPreview] = useState<(Point & { source: string; target?: string }) | null>(null);
   const [camera, setCamera] = useState<Camera>({ x: 0, y: 0, scale: 1 });
+  const [centeredId, setCenteredId] = useState<string | null>(null);
+  const previousRating = useRef<{ id: string; level: number } | null>(null);
   const arrowId = useId().replace(/:/g, "");
   const activeEdgeId = selectedEdge && linkKey(selectedEdge);
   const tooltipId = useId();
   const edgeSource = hoveredEdge && nodesById.get(hoveredEdge.source);
   const edgeTarget = hoveredEdge && nodesById.get(hoveredEdge.target);
+  const selectedNode = selectedId ? nodesById.get(selectedId) : undefined;
+  useEffect(() => {
+    if (!selectedNode) {
+      previousRating.current = null;
+      setCenteredId(null);
+      return;
+    }
+    const previous = previousRating.current;
+    if (previous?.id === selectedNode.id && previous.level !== selectedNode.specificity_level) {
+      setCenteredId(selectedNode.id);
+    } else if (previous?.id !== selectedNode.id) {
+      setCenteredId(null);
+    }
+    previousRating.current = { id: selectedNode.id, level: selectedNode.specificity_level };
+  }, [selectedNode?.id, selectedNode?.specificity_level]);
+  const centeredNode = centeredId === selectedId && !selectedEdge ? selectedNode : undefined;
+  const viewCamera = centeredNode ? {
+    scale: camera.scale,
+    x: size.width / 2 - centeredNode.x * camera.scale,
+    y: size.height / 2 - centeredNode.y * camera.scale,
+  } : camera;
+  const viewCameraRef = useRef(viewCamera);
+  viewCameraRef.current = viewCamera;
 
   // Bring a catalogue selection into view, while keeping an on-screen pick in place.
   useEffect(() => {
@@ -55,7 +80,8 @@ export function OntologyGraphCanvas({ graph, forces, selectedId, selectedEdge, c
       e.preventDefault();
       if (drag.current) return;
       const rect = element!.getBoundingClientRect();
-      setCamera(c => zoomAt(c, e.deltaY > 0 ? 0.9 : 1.11, { x: e.clientX - rect.left, y: e.clientY - rect.top }));
+      setCenteredId(null);
+      setCamera(zoomAt(viewCameraRef.current, e.deltaY > 0 ? 0.9 : 1.11, { x: e.clientX - rect.left, y: e.clientY - rect.top }));
     }
     element.addEventListener("wheel", wheel, { passive: false });
     return () => element.removeEventListener("wheel", wheel);
@@ -69,12 +95,13 @@ export function OntologyGraphCanvas({ graph, forces, selectedId, selectedEdge, c
       top = Math.min(top, n.y - n.radius); bottom = Math.max(bottom, n.y + n.radius);
     }
     const scale = Math.min(1.5, (size.width - 32) / (right - left), (size.height - 32) / (bottom - top));
+    setCenteredId(null);
     setCamera({ scale, x: (size.width - (left + right) * scale) / 2, y: (size.height - (top + bottom) * scale) / 2 });
   }
 
   function graphPoint(e: PointerEvent<SVGSVGElement>): Point {
     const rect = e.currentTarget.getBoundingClientRect();
-    return { x: (e.clientX - rect.left - camera.x) / camera.scale, y: (e.clientY - rect.top - camera.y) / camera.scale };
+    return { x: (e.clientX - rect.left - viewCamera.x) / viewCamera.scale, y: (e.clientY - rect.top - viewCamera.y) / viewCamera.scale };
   }
 
   function dropTarget(point: Point, source: string) {
@@ -92,7 +119,9 @@ export function OntologyGraphCanvas({ graph, forces, selectedId, selectedEdge, c
     const id = target.closest("[data-node]")?.getAttribute("data-node");
     const node = id && nodesById.get(id);
     const start = { x: e.clientX, y: e.clientY };
-    const base = { pointer: e.pointerId, start, camera, moved: false, version: graph.version };
+    const base = { pointer: e.pointerId, start, camera: viewCamera, moved: false, version: graph.version };
+    setCamera(viewCamera);
+    setCenteredId(null);
     drag.current = node
       ? { ...base, kind: e.shiftKey && canWrite ? "link" : "move", id: node.id, origin: { x: node.x, y: node.y } }
       : { ...base, kind: "pan" };
@@ -154,7 +183,7 @@ export function OntologyGraphCanvas({ graph, forces, selectedId, selectedEdge, c
       <defs><marker id={arrowId} markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse">
         <path d="M0 0 L8 4 L0 8 Z" fill="context-stroke" /></marker></defs>
       <rect className="semantic-graph-background" width={size.width} height={size.height} />
-      <g transform={`translate(${camera.x} ${camera.y}) scale(${camera.scale})`}>
+      <g transform={`translate(${viewCamera.x} ${viewCamera.y}) scale(${viewCamera.scale})`}>
         {forces.map(link => {
           const a = nodesById.get(link.source), b = nodesById.get(link.target);
           const segment = a && b && { x1: a.x, y1: a.y, x2: b.x, y2: b.y };
@@ -187,7 +216,7 @@ export function OntologyGraphCanvas({ graph, forces, selectedId, selectedEdge, c
           </g>;
         })}
         {liveNodes.map(n => {
-          const x = n.x * camera.scale + camera.x, y = n.y * camera.scale + camera.y, r = n.radius * camera.scale;
+          const x = n.x * viewCamera.scale + viewCamera.x, y = n.y * viewCamera.scale + viewCamera.y, r = n.radius * viewCamera.scale;
           if (x + r < 0 || y + r < 0 || x - r > size.width || y - r > size.height) return null;
           const active = !selectedEdge && n.id === selectedId;
           const target = preview?.target === n.id;
@@ -218,8 +247,8 @@ export function OntologyGraphCanvas({ graph, forces, selectedId, selectedEdge, c
       <div><strong>{edgeTarget.text}</strong><span>{specificityLabel(edgeTarget)}</span></div>
     </aside>}
     <div className="semantic-graph-zoom-controls" role="group" aria-label="Graph zoom controls">
-      <button className="semantic-graph-zoom-button" aria-label="Zoom in" onClick={() => setCamera(c => zoomAt(c, 1.25, center))}>+</button>
-      <button className="semantic-graph-zoom-button" aria-label="Zoom out" onClick={() => setCamera(c => zoomAt(c, 0.8, center))}>−</button>
+      <button className="semantic-graph-zoom-button" aria-label="Zoom in" onClick={() => { setCenteredId(null); setCamera(zoomAt(viewCamera, 1.25, center)); }}>+</button>
+      <button className="semantic-graph-zoom-button" aria-label="Zoom out" onClick={() => { setCenteredId(null); setCamera(zoomAt(viewCamera, 0.8, center)); }}>−</button>
       <button className="semantic-graph-show-all-button" onClick={fit}>Fit graph</button>
     </div>
   </div>;

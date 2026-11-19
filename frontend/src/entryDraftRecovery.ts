@@ -3,6 +3,7 @@ export interface EntryDraftRecovery {
   storyId: string | null;
   fields: Record<string, string>;
   tropes: string[];
+  tropeSpecificityLevels?: Record<string, number>;
   keywords: string[];
 }
 
@@ -27,6 +28,12 @@ function isEntryDraftRecovery(value: unknown): value is EntryDraftRecovery {
     draft.version === 1 &&
     (typeof draft.storyId === "string" || draft.storyId === null) &&
     isStringRecord(draft.fields) &&
+    (draft.tropeSpecificityLevels === undefined || (
+      typeof draft.tropeSpecificityLevels === "object" && draft.tropeSpecificityLevels !== null &&
+      !Array.isArray(draft.tropeSpecificityLevels) &&
+      Object.values(draft.tropeSpecificityLevels).every((level) =>
+        typeof level === "number" && Number.isInteger(level) && level >= 1 && level <= 4)
+    )) &&
     Array.isArray(draft.tropes) &&
     draft.tropes.every((term) => typeof term === "string") &&
     Array.isArray(draft.keywords) &&

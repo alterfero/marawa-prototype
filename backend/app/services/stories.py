@@ -245,6 +245,7 @@ def create_story(
     expected_dataset_version: int,
     fields: Mapping[str, object] | None = None,
     tropes: list[str] | None = None,
+    trope_specificity_levels: Mapping[str, int] | None = None,
     keywords: list[str] | None = None,
     actor_user_id: str | None = None,
     actor_role: UserRole | None = None,
@@ -286,11 +287,16 @@ def create_story(
     newly_created_keywords: list[Keyword] = []
     newly_created_theme_ids: list[str] = []
 
+    specificity_levels = {normalize_text(text): level for text, level in (trope_specificity_levels or {}).items()}
+    for level in specificity_levels.values():
+        _validate_creation_specificity(level)
+
     for position, trope_text in enumerate(_normalize_term_list(tropes)):
         trope, created = _resolve_trope(
             session,
             active_dataset.id,
             text=trope_text,
+            specificity_level=specificity_levels.get(normalize_text(trope_text)),
             actor_user_id=actor_user_id,
             actor_role=actor_role,
         )
@@ -538,6 +544,7 @@ def add_story_trope(
     expected_story_version: int,
     trope_id: str | None = None,
     text: str | None = None,
+    specificity_level: int | None = None,
     origin: StoryTropeOrigin = StoryTropeOrigin.HUMAN_ENTERED,
     actor_user_id: str | None = None,
     actor_role: UserRole | None = None,
@@ -561,6 +568,7 @@ def add_story_trope(
         active_dataset.id,
         trope_id=trope_id,
         text=text,
+        specificity_level=specificity_level,
         actor_user_id=actor_user_id,
         actor_role=actor_role,
     )
@@ -791,6 +799,7 @@ def replace_story_trope(
     expected_story_version: int,
     trope_id: str | None = None,
     text: str | None = None,
+    specificity_level: int | None = None,
     actor_user_id: str | None = None,
     actor_role: UserRole | None = None,
     actor_territories: Iterable[object] | None = None,
@@ -814,6 +823,7 @@ def replace_story_trope(
         active_dataset.id,
         trope_id=trope_id,
         text=text,
+        specificity_level=specificity_level,
         actor_user_id=actor_user_id,
         actor_role=actor_role,
     )
@@ -1394,15 +1404,22 @@ def _normalize_term_list(values: list[str] | None) -> list[str]:
     return dedupe_preserve_order(values)
 
 
+def _validate_creation_specificity(level: int | None) -> None:
+    if level is not None and (type(level) is not int or not 1 <= level <= 4):
+        raise StoryMutationValidationError("Story tropes use specificity levels 1 through 4.")
+
+
 def _resolve_trope(
     session: Session,
     dataset_id: str,
     *,
     trope_id: str | None = None,
     text: str | None = None,
+    specificity_level: int | None = None,
     actor_user_id: str | None = None,
     actor_role: UserRole | None = None,
 ) -> tuple[Trope, bool]:
+    _validate_creation_specificity(specificity_level)
     has_trope_id = bool(clean_text(trope_id))
     has_text = bool(clean_text(text))
     if has_trope_id == has_text:
@@ -1440,6 +1457,8 @@ def _resolve_trope(
         created_by_user_id=actor_user_id,
         updated_by_user_id=actor_user_id,
     )
+    if specificity_level is not None:
+        trope.specificity_level, trope.specificity_source = specificity_level, "curator"
     session.add(trope)
     session.flush()
     return trope, True

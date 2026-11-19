@@ -6,7 +6,7 @@ export function SpecificityEditor({ node, busy, onSave }: {
   node: OntologyNode; busy: boolean; onSave: (level: number) => void;
 }) {
   const inputId = useId();
-  return <form className="ontology-actions" onSubmit={e => {
+  return <form className="ontology-actions" aria-label={`Specificity of ${node.text}`} onSubmit={e => {
     e.preventDefault();
     onSave(Number(new FormData(e.currentTarget).get("level")));
   }}>

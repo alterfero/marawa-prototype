@@ -303,13 +303,13 @@ export function getTropeDetail(tropeId: string): Promise<TropeDetail> {
   return request<TropeDetail>(`/tropes/${tropeId}`);
 }
 
-export function createCanonicalTrope(text: string): Promise<CreateTropeResponse> {
+export function createCanonicalTrope(text: string, specificity_level?: number): Promise<CreateTropeResponse> {
   return request<CreateTropeResponse>("/tropes", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({ text, specificity_level }),
   });
 }
 
@@ -414,6 +414,7 @@ export function createStory(payload: {
   expected_dataset_version: number;
   fields: Record<string, string>;
   tropes: string[];
+  trope_specificity_levels?: Record<string, number>;
   keywords: string[];
 }): Promise<CreateStoryResponse> {
   return request<CreateStoryResponse>("/stories", {
@@ -431,7 +432,7 @@ export function getStoryTropes(storyId: string): Promise<StoryTropesResponse> {
 
 export function addStoryTrope(
   storyId: string,
-  payload: { expected_story_version: number; trope_id?: string; text?: string; origin?: string },
+  payload: { expected_story_version: number; trope_id?: string; text?: string; specificity_level?: number; origin?: string },
 ): Promise<StoryTropeMutationResponse> {
   return request<StoryTropeMutationResponse>(`/stories/${storyId}/tropes`, {
     method: "POST",
@@ -445,7 +446,7 @@ export function addStoryTrope(
 export function replaceStoryTrope(
   storyId: string,
   tropeId: string,
-  payload: { expected_story_version: number; trope_id?: string; text?: string },
+  payload: { expected_story_version: number; trope_id?: string; text?: string; specificity_level?: number },
 ): Promise<StoryTropeMutationResponse> {
   return request<StoryTropeMutationResponse>(`/stories/${storyId}/tropes/${tropeId}`, {
     method: "PUT",

@@ -80,7 +80,8 @@
   justify-content: center;
 }
 
-.ontology-active select {
+.ontology-active select,
+.ontology-band .ontology-actions select {
   width: auto;
 }
 

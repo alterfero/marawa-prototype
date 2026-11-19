@@ -46,6 +46,7 @@ class TropeListItemResponse(BaseModel):
 
 class CreateTropeRequest(BaseModel):
     text: str = Field(min_length=1)
+    specificity_level: int | None = Field(default=None, ge=1, le=4, strict=True)
 
 
 class CreateTropeResponse(BaseModel):
@@ -167,6 +168,7 @@ def create_canonical_trope(
         trope, created = ensure_canonical_trope(
             session,
             payload.text,
+            specificity_level=payload.specificity_level,
             actor_user_id=auth_context.user.id,
             actor_role=auth_context.user.role,
             actor_territories=auth_context.user.territories,

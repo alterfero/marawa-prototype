@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { editTropeOntology, searchTropes } from "../api/client";
 import type { OntologyNode, SearchResponse, TropeOntology } from "../api/types";
+import { SpecificityEditor } from "../ontology/SpecificityEditor";
 import { exactWordMatches, relationChoices, relations, specificityLabel, type Direction } from "../ontology/relationships";
 import { routeHref } from "../router";
 
@@ -99,7 +100,10 @@ export function OntologyRelations({ direction, graph, node, nodes, canEdit, busy
       if (!trope) return null;
       return <li className="ontology-row" key={trope.id}>
         <div><a href={routeHref("/ontology", { trope: trope.id })}>{trope.text}</a>
-          <small>{specificityLabel(trope)} · {edge.status} link</small></div>
+          <small>{specificityLabel(trope)} · {edge.status} link</small>
+          {canEdit && <SpecificityEditor node={trope} busy={busy}
+            onSave={level => void save({ trope_id: trope.id, level })} />}
+        </div>
         {canEdit && <div className="ontology-actions">
           {edge.status !== "approved" && <button type="button" className="button button-ghost" disabled={busy}
             onClick={() => void save({ ...edge, status: "approved" })}>Approve link</button>}

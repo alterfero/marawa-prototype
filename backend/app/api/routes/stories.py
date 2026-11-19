@@ -1,3 +1,5 @@
+from typing import Annotated
+
 from fastapi import APIRouter, Body, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -142,6 +144,7 @@ class CreateStoryRequest(BaseModel):
     expected_dataset_version: int
     fields: dict[str, str] = Field(default_factory=dict)
     tropes: list[str] = Field(default_factory=list)
+    trope_specificity_levels: dict[str, Annotated[int, Field(ge=1, le=4, strict=True)]] = Field(default_factory=dict)
     keywords: list[str] = Field(default_factory=list)
 
 
@@ -155,6 +158,7 @@ class AddStoryTropeRequest(BaseModel):
     expected_story_version: int
     trope_id: str | None = None
     text: str | None = None
+    specificity_level: int | None = Field(default=None, ge=1, le=4, strict=True)
     origin: StoryTropeOrigin = StoryTropeOrigin.HUMAN_ENTERED
 
 
@@ -174,6 +178,7 @@ class ReplaceStoryTropeRequest(BaseModel):
     expected_story_version: int
     trope_id: str | None = None
     text: str | None = None
+    specificity_level: int | None = Field(default=None, ge=1, le=4, strict=True)
 
 
 class ReplaceStoryKeywordRequest(BaseModel):
@@ -335,6 +340,7 @@ def create_story_record(
             expected_dataset_version=payload.expected_dataset_version,
             fields=payload.fields,
             tropes=payload.tropes,
+            trope_specificity_levels=payload.trope_specificity_levels,
             keywords=payload.keywords,
             actor_user_id=auth_context.user.id,
             actor_role=auth_context.user.role,
@@ -482,6 +488,7 @@ def create_story_trope(
             expected_story_version=payload.expected_story_version,
             trope_id=payload.trope_id,
             text=payload.text,
+            specificity_level=payload.specificity_level,
             origin=payload.origin,
             actor_user_id=auth_context.user.id,
             actor_role=auth_context.user.role,
@@ -595,6 +602,7 @@ def update_story_trope(
             expected_story_version=payload.expected_story_version,
             trope_id=payload.trope_id,
             text=payload.text,
+            specificity_level=payload.specificity_level,
             actor_user_id=auth_context.user.id,
             actor_role=auth_context.user.role,
             actor_territories=auth_context.user.territories,

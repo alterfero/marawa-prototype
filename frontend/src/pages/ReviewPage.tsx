@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import { SpecificitySelect } from "../components/SpecificitySelect";
 import {
   addStoryTrope,
   ApiError,
@@ -79,10 +80,12 @@ export function ReviewPage() {
   const [selectedStoryId, setSelectedStoryId] = useState<string | null>(null);
   const [detail, setDetail] = useState<StoryDetail | null>(null);
   const [storyQuery, setStoryQuery] = useState("");
+  const [tropeSpecificity, setTropeSpecificity] = useState<number | undefined>(undefined);
   const [tropeQuery, setTropeQuery] = useState("");
   const [tropeResults, setTropeResults] = useState<TropeSearchItem[]>([]);
   const [tropeSearchStatus, setTropeSearchStatus] = useState<"idle" | "loading" | "ready">("idle");
   const [editingTropeId, setEditingTropeId] = useState<string | null>(null);
+  const [editingTropeSpecificity, setEditingTropeSpecificity] = useState<number | undefined>(undefined);
   const [editingTropeQuery, setEditingTropeQuery] = useState("");
   const [editingTropeResults, setEditingTropeResults] = useState<TropeSearchItem[]>([]);
   const [editingTropeSearchStatus, setEditingTropeSearchStatus] = useState<"idle" | "loading" | "ready">("idle");
@@ -317,6 +320,7 @@ export function ReviewPage() {
   function handleStartEditingTrope(trope: StoryDetail["tropes"][number]) {
     setEditingTropeId(trope.id);
     setEditingTropeQuery(trope.text);
+    setEditingTropeSpecificity(undefined);
     setEditingTropeResults([]);
     setEditingTropeSearchStatus("idle");
     setNotice(null);
@@ -351,6 +355,7 @@ export function ReviewPage() {
         replaceStoryTrope(detail.id, tropeId, {
           expected_story_version: detail.version,
           text: editingTropeQuery.trim(),
+          specificity_level: editingTropeSpecificity,
         }),
       {
         tone: "success",
@@ -391,6 +396,7 @@ export function ReviewPage() {
         addStoryTrope(detail.id, {
           expected_story_version: detail.version,
           text: tropeQuery.trim(),
+          specificity_level: tropeSpecificity,
         }),
       {
         tone: "success",
@@ -606,6 +612,7 @@ export function ReviewPage() {
                             value={editingTropeQuery}
                           />
                         </label>
+                        <SpecificitySelect value={editingTropeSpecificity} onChange={setEditingTropeSpecificity} disabled={interactionDisabled} />
 
                         <div className="button-row wrap-row">
                           <div className="button-row wrap-row">
@@ -695,6 +702,7 @@ export function ReviewPage() {
             </label>
 
             <div className="card subdued">
+              <SpecificitySelect value={tropeSpecificity} onChange={setTropeSpecificity} disabled={interactionDisabled} />
               <div className="card-row">
                 <h3>Keep typed trope</h3>
                 <button

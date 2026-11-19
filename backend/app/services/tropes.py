@@ -121,10 +121,13 @@ def ensure_canonical_trope(
     session: Session,
     text: str,
     *,
+    specificity_level: int | None = None,
     actor_user_id: str | None = None,
     actor_role: UserRole | None = None,
     actor_territories: Iterable[object] | None = None,
 ) -> tuple[dict, bool]:
+    if specificity_level is not None and (type(specificity_level) is not int or not 1 <= specificity_level <= 4):
+        raise TropeMutationValidationError("Story tropes use specificity levels 1 through 4.")
     active_dataset = session.scalar(select(Dataset).where(Dataset.status == DatasetStatus.ACTIVE))
     if active_dataset is None:
         raise TropeMutationValidationError("No active dataset is available.")
@@ -150,6 +153,8 @@ def ensure_canonical_trope(
         created_by_user_id=actor_user_id,
         updated_by_user_id=actor_user_id,
     )
+    if specificity_level is not None:
+        trope.specificity_level, trope.specificity_source = specificity_level, "curator"
     session.add(trope)
     try:
         session.flush()
@@ -172,6 +177,8 @@ def ensure_canonical_trope(
             payload={
                 "created": True,
                 "review_status": trope.review_status.value,
+                "specificity_level": trope.specificity_level,
+                "specificity_source": trope.specificity_source,
             },
         )
         session.commit()
