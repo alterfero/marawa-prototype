@@ -43,7 +43,9 @@ function SearchMatches({ query, candidates, levels, position, busy, onLink }: {
 
   function match(trope: OntologyNode) {
     return <li className="ontology-row" key={trope.id}>
-      <div><a href={routeHref("/ontology", { trope: trope.id })}>{trope.text}</a>
+      <div>{onLink ? <button type="button" className="ontology-match-name" disabled={busy}
+        title={`Link ${position} the active trope`} onClick={() => onLink(trope.id)}>{trope.text}</button>
+        : <a href={routeHref("/ontology", { trope: trope.id })}>{trope.text}</a>}
         <small>{specificityLabel(trope)}</small></div>
       {onLink && <button type="button" className="button button-ghost" disabled={busy}
         aria-label={`Link ${trope.text} ${position}`} onClick={() => onLink(trope.id)}>Link {position}</button>}

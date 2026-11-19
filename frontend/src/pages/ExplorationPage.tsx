@@ -1753,7 +1753,7 @@ export function ExplorationPage() {
   const networkRequestIdRef = useRef(0);
   const [interfaceMode, setInterfaceMode] = useState<"simple" | "expert">("simple");
   const [query, setQuery] = useState("");
-  const [specificityScope, setSpecificityScope] = useState<"same" | "broader" | "narrower" | "both">("same");
+  const [specificityScope, setSpecificityScope] = useState<"same" | "broader" | "narrower" | "both">("both");
   const [candidateLevel, setCandidateLevel] = useState("");
   const [selectedTropeId, setSelectedTropeId] = useState<string | null>(null);
   const [selectedTropePreview, setSelectedTropePreview] = useState<string | null>(null);
@@ -1769,6 +1769,7 @@ export function ExplorationPage() {
   const selectedTropeParam = new URLSearchParams(hashSearch).get("selected_trope_id");
   const selectedTropeIdsParam = new URLSearchParams(hashSearch).get("selected_trope_ids");
   const canChooseInterface = roleAtLeast(user?.role, "contributor");
+  const effectiveSpecificityScope = user ? specificityScope : "both";
   const canUseFilterSets = canChooseInterface && interfaceMode === "expert";
   const canUseSingleTropeExploration = !canUseFilterSets;
 
@@ -1931,7 +1932,7 @@ export function ExplorationPage() {
     setResultMode("map");
     const timeoutId = window.setTimeout(() => {
       void requestNetwork({
-        specificity_scope: specificityScope,
+        specificity_scope: effectiveSpecificityScope,
         ...(selectedTropeIdsParam
           ? { selected_trope_ids: selectedTropeIdsParam.split(",") }
           : { selected_trope_id: selectedTropeId }),
@@ -1942,7 +1943,7 @@ export function ExplorationPage() {
     return () => {
       window.clearTimeout(timeoutId);
     };
-  }, [canUseSingleTropeExploration, selectedTropeId, selectedTropeIdsParam, threshold, specificityScope]);
+  }, [canUseSingleTropeExploration, selectedTropeId, selectedTropeIdsParam, threshold, effectiveSpecificityScope]);
 
   async function handleSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -2298,13 +2299,15 @@ export function ExplorationPage() {
           </form>
           <div className="field">
             <div className="card-row">
-              <label>Map specificity <select value={specificityScope}
-                onChange={e => setSpecificityScope(e.target.value as typeof specificityScope)}>
-                <option value="same">Same level only</option>
-                <option value="broader">Same and broader levels</option>
-                <option value="narrower">Same and narrower levels</option>
-                <option value="both">Same, broader and narrower levels</option>
-              </select></label>
+              {user ? (
+                <label>Map specificity <select value={specificityScope}
+                  onChange={e => setSpecificityScope(e.target.value as typeof specificityScope)}>
+                  <option value="same">Same level only</option>
+                  <option value="broader">Same and broader levels</option>
+                  <option value="narrower">Same and narrower levels</option>
+                  <option value="both">Same, broader and narrower levels</option>
+                </select></label>
+              ) : null}
               <label htmlFor="similarity-threshold">
                 <strong>Similarity threshold</strong>
               </label>

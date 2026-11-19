@@ -55,10 +55,25 @@
 }
 
 .ontology-active a,
-.ontology-row a {
+.ontology-row a,
+.ontology-match-name {
   text-decoration: underline;
   text-decoration-color: #91aba7;
   text-underline-offset: 0.18em;
+}
+
+.ontology-match-name {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ontology-match-name:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .ontology-active .ontology-actions {
